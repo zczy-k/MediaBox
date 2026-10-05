@@ -63,17 +63,20 @@ android {
     signingConfigs {
         val storeFilePath = signingProp("RELEASE_STORE_FILE") ?: ".key/app-release.jks"
         val storeFileResolved = rootProject.file(storeFilePath)
-        val storePassword = signingProp("RELEASE_STORE_PASSWORD")
-        val keyAlias = signingProp("RELEASE_KEY_ALIAS")
-        val keyPassword = signingProp("RELEASE_KEY_PASSWORD")
-        if (storeFileResolved.exists() && !storePassword.isNullOrEmpty()
-            && !keyAlias.isNullOrEmpty() && !keyPassword.isNullOrEmpty()
+        // 局部变量不能与 signingConfig 的属性同名：create("release") { } 内右侧会解析到
+        // 块自己的 val 属性（storePassword/storeFile/keyAlias/keyPassword），赋值得可变形参，
+        // 写成同名会报 "'val' cannot be reassigned"。
+        val storePwd = signingProp("RELEASE_STORE_PASSWORD")
+        val aliasName = signingProp("RELEASE_KEY_ALIAS")
+        val keyPwd = signingProp("RELEASE_KEY_PASSWORD")
+        if (storeFileResolved.exists() && !storePwd.isNullOrEmpty()
+            && !aliasName.isNullOrEmpty() && !keyPwd.isNullOrEmpty()
         ) {
             create("release") {
                 storeFile = storeFileResolved
-                storePassword = storePassword
-                keyAlias = keyAlias
-                keyPassword = keyPassword
+                storePassword = storePwd
+                keyAlias = aliasName
+                keyPassword = keyPwd
             }
         } else {
             logger.lifecycle("[MediaBox] 签名材料不完整，release 包将不签名（CI 会从 Secrets 注入）")
