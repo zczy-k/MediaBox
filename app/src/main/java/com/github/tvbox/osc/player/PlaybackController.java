@@ -689,9 +689,24 @@ public class PlaybackController {
         timeouts.startResolvePlayUrlTimeout(getResolvePlayUrlTimeoutMs());
     }
 
+    /** 单站取流等待上界:站点声明再大的 timeout,也不让用户等超过这个数 */
+    private static final long MAX_RESOLVE_PLAY_URL_TIMEOUT_MS = 12 * 1000L;
+
+    /**
+     * 单站取流等待窗口 = max(常量, 站点 timeout + 1),再**封顶** {@link #MAX_RESOLVE_PLAY_URL_TIMEOUT_MS}。
+     *
+     * <p>为什么要封顶:站点可在配置里声明 timeout(夹在 5~60s),不封顶时一个声明 60 的站
+     * 能让用户干等 61 秒才轮到换源 —— 在"保证能看上"的目标下,等这么久本身就算失败。
+     * 站点声明的值仍然生效(能把窗口**抬**到常量之上),只是抬不过上界。
+     *
+     * <p>为什么缺省不再是 16 秒:站点未声明时走 {@code getPlayTimeoutSeconds()} 的缺省值,
+     * 而那里是拿"少等"换"少成功"的旋钮,见 SourceBean。
+     */
     private long getResolvePlayUrlTimeoutMs() {
         if (sourceBean() == null) return PlaybackTimeouts.RESOLVE_PLAY_URL_TIMEOUT_MS;
-        return Math.max(PlaybackTimeouts.RESOLVE_PLAY_URL_TIMEOUT_MS, (sourceBean().getPlayTimeoutSeconds() + 1L) * 1000L);
+        long fromSource = (sourceBean().getPlayTimeoutSeconds() + 1L) * 1000L;
+        return Math.min(MAX_RESOLVE_PLAY_URL_TIMEOUT_MS,
+                Math.max(PlaybackTimeouts.RESOLVE_PLAY_URL_TIMEOUT_MS, fromSource));
     }
 
     public void startSwitchLinePlayTimeout() {
@@ -1400,6 +1415,11 @@ public class PlaybackController {
 
     public boolean isConfirmedAudioOnly() {
         return music.isConfirmedAudioOnly();
+    }
+
+    /** 实时是否纯音频(不含粘滞标记)。画面与"跳音乐页"类判定用它,不要用上面那个 */
+    public boolean isAudioOnlyNow() {
+        return Boolean.TRUE.equals(music.audioOnlyNow());
     }
 
     public boolean handlePlayStateForMusicSession(int playState) {

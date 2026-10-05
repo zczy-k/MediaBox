@@ -96,10 +96,21 @@ fun DetailScreen(activity: DetailActivity, vm: DetailViewModel) {
     }
     LaunchedEffect(musicWatch, musicArmed) {
         if (!musicWatch || !musicArmed) return@LaunchedEffect
+        // 连续命中才交接(300ms × 3 ≈ 1s):首帧前后几百毫秒内视频轨可能尚未上报,
+        // 单次命中就会把普通影视误判成音乐片并交接给音乐页,表现是只剩声音、没有画面。
+        val stableHitsRequired = 3
+        var hits = 0
         while (true) {
             delay(300)
-            if (!activity.musicPlaybackDetected()) continue
-            if (!activity.handOffToMusicPlayer()) continue
+            if (!activity.musicPlaybackDetected()) {
+                hits = 0
+                continue
+            }
+            if (++hits < stableHitsRequired) continue
+            if (!activity.handOffToMusicPlayer()) {
+                hits = 0
+                continue
+            }
             musicArmed = false
             return@LaunchedEffect
         }

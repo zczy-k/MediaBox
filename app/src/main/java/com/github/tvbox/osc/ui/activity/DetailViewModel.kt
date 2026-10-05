@@ -1062,9 +1062,12 @@ class DetailViewModel : ViewModel() {
     companion object {
         private val SEARCH_SEQ = java.util.concurrent.atomic.AtomicInteger(0)
 
-        private const val DETAIL_FALLBACK_DETAIL_TIMEOUT_MS = 6000L
-        private const val SOURCE_SEARCH_TIMEOUT_MS = 30_000L
-        private const val SOURCE_SEARCH_CONCURRENCY = 6
+        /** 候选站详情取超时:候选站本身慢就赶紧轮到下一个,别让用户盯着等 */
+        private const val DETAIL_FALLBACK_DETAIL_TIMEOUT_MS = 4000L
+        /** 单个候选站的同名搜索超时。原 30s:聚合订阅动辄数百站,单站卡住会拖垮整轮候选收集 */
+        private const val SOURCE_SEARCH_TIMEOUT_MS = 8_000L
+        /** 候选收集并发度。原 6 太保守,聚合订阅下一批批轮很慢;提到 12 让候选更快到齐 */
+        private const val SOURCE_SEARCH_CONCURRENCY = 12
 
         // i18n: keep —— 源侧"没有数据"的哨兵值;误翻会把空结果判成源报错,详情页提示后自动关闭
         private const val SOURCE_EMPTY_MSG = "数据列表"

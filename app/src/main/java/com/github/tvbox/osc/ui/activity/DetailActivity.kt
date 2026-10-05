@@ -185,11 +185,17 @@ class DetailActivity : BaseActivity(), PageHost {
         return isAudioContent()
     }
 
-    /** 当前内容是否可判定为音频:URL 后缀或轨道确认(纯音频三态判定见 §4.4) */
+    /**
+     * 当前内容是否可判定为音频:URL 后缀 **或实时轨道**确认(纯音频三态判定见 §4.4)。
+     *
+     * <p>必须用实时判定 `isAudioOnlyNow()`:`isConfirmedAudioOnly()` 含粘滞标记 audioOnlyConfirmed,
+     * 而它在"视频轨尚未上报"的窗口里就会被误置,之后整段会话恒为 true —— 拿它决定"要不要跳音乐页"
+     * 会把普通影视当成音乐片,表现就是只有声音、没有画面(页面已被交接给音乐播放页)。
+     */
     fun isAudioContent(): Boolean {
         val controller = PlaybackService.peek()?.controller() ?: return false
         val url = controller.webPlayUrl() ?: return false
-        return PlaybackController.looksLikeAudioUrl(url) || controller.isConfirmedAudioOnly()
+        return PlaybackController.looksLikeAudioUrl(url) || controller.isAudioOnlyNow()
     }
 
     /** 详情页手动进音乐播放页:会话还没建就先按当前集起播,再交接(影视内容交接后本页留在栈里) */

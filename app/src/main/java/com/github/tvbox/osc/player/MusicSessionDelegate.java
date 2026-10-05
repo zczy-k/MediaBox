@@ -119,6 +119,18 @@ final class MusicSessionDelegate {
     }
 
     /**
+     * <b>实时</b>是否纯音频(三态:TRUE/FALSE/null=轨道未知),不含粘滞标记。
+     *
+     * <p>与 {@link #isConfirmedAudioOnly()} 的区别正是画面/跳页类判定的正确取值口:
+     * 粘滞标记会在"视频轨尚未上报"的窗口里被误置,之后整段会话恒为 true。
+     * 拿它决定"要不要跳音乐播放页"会把普通影视当成音乐,表现为只有声音、没有画面
+     * (页面已被交接给音乐页)。
+     */
+    Boolean audioOnlyNow() {
+        return isAudioOnlyPlayback();
+    }
+
+    /**
      * 播放状态回调里的"音乐会话"部分(页面状态监听里调用)。
      *
      * @return true = 切换集期间本集已播完(仅保留会话,调用方应直接 return,不再走弹幕等后续逻辑)
@@ -269,6 +281,11 @@ final class MusicSessionDelegate {
             view.switchRenderToTexture();
         } else if (Boolean.FALSE.equals(audioOnly)) {
             view.ensureRenderViewMatchesConfig();
+            // 自愈:实时轨道已确认有视频轨,却还压着封面 ⇒ 补撤一次。
+            // 首帧那次 STATE_PLAYING 常早于视频轨上报,PlaybackEngine 那一刻按"纯音频"只揭了黑帧遮罩、
+            // **没撤封面**;而 artworkView 与渲染 Surface 同层且盖在其上 ⇒ 视频被压成一张海报(有声无画)。
+            // audioOnlyConfirmed 是粘滞标记,误置后整段会话都走纯音频分支 ⇒ 不换集时这里是唯一的自愈点。
+            view.clearArtwork();
         }
     }
 

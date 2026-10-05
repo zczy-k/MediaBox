@@ -135,8 +135,21 @@ public class SourceBean {
 
     public void setTimeout(int timeout) { this.timeout = timeout; }
 
+    /** 站点未声明 timeout 时的缺省取数/取流限时(秒) */
+    private static final int DEFAULT_PLAY_TIMEOUT_SECONDS = 8;
+
+    /**
+     * 取数 / 取流限时(秒)。站点在配置里声明了 {@code timeout} 就以它为准(夹在 5~60 之间)。
+     *
+     * <p>缺省值原为 15,而它是**真正的**换线等待上限:播放侧的取流闸是
+     * {@code max(RESOLVE_PLAY_URL_TIMEOUT_MS, 本值 + 1)} —— 15 会把闸顶到 16 秒,
+     * 压着 8 秒的常量不让它生效(只降常量等于没改)。降到 8 让两口一致。
+     *
+     * <p>同一值也用作爬虫取数的限时(见 PlayLoader),故降到 8 对"响应本就慢的源"是收紧:
+     * 慢源会更早被判失败、更早轮换 —— 这是拿"少等"换"少成功",站点需要在配置里自己声明 timeout。
+     */
     public int getPlayTimeoutSeconds() {
-        return timeout > 0 ? Math.max(5, Math.min(60, timeout)) : 15;
+        return timeout > 0 ? Math.max(5, Math.min(60, timeout)) : DEFAULT_PLAY_TIMEOUT_SECONDS;
     }
 
     public String getClickSelector() { return safeString(clickSelector); }

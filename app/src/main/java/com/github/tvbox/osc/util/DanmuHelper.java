@@ -11,8 +11,14 @@ public class DanmuHelper {
             "#ef7a82", "#ff0097", "#b0a4e3", "#4b5cc4"
     };
 
+    /**
+     * 弹幕功能已整体下线:总闸恒为 false。
+     *
+     * <p>不删调用点而焊死总闸:入口分散在播放器底栏、参数面板、设置页三处,逐个摘除要牵动
+     * UI 结构与四语文案;焊死总闸即可让加载/渲染链路全部短路,且不会破坏编译。
+     */
     public static boolean isOpen() {
-        return KV.get(HawkConfig.DANMU_OPEN, true);
+        return false;
     }
 
     public static void setOpen(boolean open) {

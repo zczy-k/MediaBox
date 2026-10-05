@@ -62,7 +62,9 @@ class SearchViewModel : ViewModel() {
     companion object {
         private val SEARCH_SEQ = java.util.concurrent.atomic.AtomicInteger(0)
 
-        private const val SEARCH_TIMEOUT_MS = 30_000L
+        /** 单站搜索超时。原 30s 与详情页换源的 SOURCE_SEARCH_TIMEOUT_MS(8s)口径差 3.75 倍,
+         *  同一个"拿片名去一个站搜"的动作不该两套标准 —— 统一为 8s,慢站早点让位 */
+        private const val SEARCH_TIMEOUT_MS = 8_000L
 
         private const val DOUBAN_HOT_URL =
             "https://movie.douban.com/j/new_search_subjects?sort=U&range=0,10&tags=&playable=1&start=0&year_range="

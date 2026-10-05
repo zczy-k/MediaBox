@@ -185,23 +185,6 @@ fun PreferenceSettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel =
                     )
                 }
                 SettingsCard(SettingsCardPosition.MIDDLE) {
-                    SettingsSwitchRow(
-                        title = stringResource(R.string.settings_danmu_switch),
-                        leadingIconRes = R.drawable.ic_pref_danmu,
-                        checked = state.danmuOpen,
-                        onCheckedChange = { vm.put(HawkConfig.DANMU_OPEN, it) },
-                    )
-                }
-                SettingsCard(SettingsCardPosition.MIDDLE) {
-                    SettingsRow(
-                        title = stringResource(R.string.settings_danmu_api),
-                        leadingIconRes = R.drawable.ic_pref_danmu_api,
-                        // 不显示接口链接本身:填过什么只有编辑弹窗里可见
-                        valueText = stringResource(if (state.danmuApi.isEmpty()) R.string.common_not_set else R.string.common_set),
-                        onClick = { danmuApiDialog = true },
-                    )
-                }
-                SettingsCard(SettingsCardPosition.MIDDLE) {
                     SettingsSliderRow(
                         title = stringResource(R.string.settings_long_press_speed),
                         leadingIconRes = R.drawable.ic_pref_long_press_speed,
