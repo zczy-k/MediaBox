@@ -82,9 +82,16 @@ final class PlaybackAttemptState {
         autoSwitchedDecodeOld = null;
     }
 
+    /**
+     * 重试阶梯里最后一次读到的 EXO 错误是网络类:彻底无路可走时据此把"断网 / 线路被墙"与
+     * "片源本身失效"分开提示。必须在内容边界复位,否则新一部明明断网却报"片源不可用"。
+     */
+    boolean lastFailureNetwork;
+
     /** 新一次播放的清场:重试阶梯 + 内核/解码自动态 + 起播标记 */
     void beginNewPlay() {
         playbackStarted = false;
+        lastFailureNetwork = false;
         playTimeoutBasePosition = 0;
         allowSwitchPlayer = true;
         hasAutoSwitchedPlayer = false;

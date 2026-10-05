@@ -248,6 +248,8 @@ final class PlaybackRetryDelegate {
             return true;
         }
         int exoErrorKind = exoLastErrorKind();
+        // 记下判据:阶梯后面可能一路换线/换源都失败,收口时只剩这里能区分"断网"与"片源废"
+        st.lastFailureNetwork = exoErrorKind == ExoPlayer.ERROR_KIND_NETWORK;
         if (exoErrorKind != ExoPlayer.ERROR_KIND_DECODE
                 && !st.hasRetriedSameUrlOnBoot && !TextUtils.isEmpty(host.webPlayUrl())) {
             st.hasRetriedSameUrlOnBoot = true;
@@ -286,14 +288,24 @@ final class PlaybackRetryDelegate {
         return tryNextLineIfEnabled();
     }
 
-    /** 自动换线开关判断(已在尝试换线时先回滚内核与解码方式) */
+    /**
+     * 换线开关判断(已在尝试换线时先回滚内核与解码方式)。
+     *
+     * <p>换线被禁用时**不能**直接 return false:换源兜底挂在 `tryNextLine` 走完所有线路之后
+     * （见 `tryNextLine` 里 nextFlag == null 的分支），禁用换线就等于把"线路耗尽"这个事件一起掐掉 ——
+     * 外部表现是线路挂了既不换线也不换源,只弹播放失败。全屏时运行时闸 `allowAutoSwitchLine`
+     * 会被 `PlaybackController.setAutoSwitchLineEnabled(false)` 关掉,所以这条通路必须独立于开关存在。
+     */
     boolean tryNextLineIfEnabled() {
         restoreAutoSwitchedPlayer();
         restoreAutoSwitchedDecode();
-        if (host.attemptState().allowAutoSwitchLine && KV.get(HawkConfig.AUTO_SWITCH_LINE, false)) return tryNextLine();
-        LOG.i("echo-autoRetry line switching disabled");
-        host.attemptState().resetAutoRetryLadder();
-        return false;
+        PlaybackAttemptState st = host.attemptState();
+        if (st.allowAutoSwitchLine && KV.get(HawkConfig.AUTO_SWITCH_LINE, false)) return tryNextLine();
+        LOG.i("echo-autoRetry line switching disabled, hand over to source fallback");
+        st.resetAutoRetryLadder();
+        st.linesExhausted();
+        PlaybackViewBridge view = host.view();
+        return view != null && view.onLinesExhausted();
     }
 
     /** 切到"下一条未尝试过且有剧集"的线路,集号按集名匹配(换线不换集) */
@@ -364,9 +376,10 @@ final class PlaybackRetryDelegate {
         PlaybackAttemptState st = host.attemptState();
         PlaybackViewBridge view = host.view();
         if (view == null) return false;
-        boolean lineFirst = !st.userPickedLine
-                && st.allowAutoSwitchLine
-                && KV.get(HawkConfig.AUTO_SWITCH_LINE, false);
+        // 卡顿时同源换线是代价最小的一跳,故这里**故意不看** allowAutoSwitchLine ——
+        // 它由全屏决定,本意是"别拿换集打断正在看的画面";可卡顿意味着画面已经废了,
+        // 再看它等于把最便宜的一跳也关掉,只剩"重新搜索 + 重取详情"这种重跳。
+        boolean lineFirst = !st.userPickedLine && KV.get(HawkConfig.AUTO_SWITCH_LINE, false);
         if (lineFirst) {
             LOG.i("echo-quality: try next line first");
             if (tryNextLine()) return true;
@@ -374,9 +387,21 @@ final class PlaybackRetryDelegate {
         LOG.i("echo-quality: try next source");
         if (view.onLinesExhausted()) return true;
         LOG.i("echo-quality: all sources and lines exhausted");
-        host.stopMusicSessionForFailedPlayback();
-        showErrorTip(PlaybackController.str(R.string.player_play_failed_all));
+        reportExhausted();
         return false;
+    }
+
+    /**
+     * 彻底无路可走时的收口提示。
+     *
+     * <p>为什么必须分流:断网/线路被墙时若统一报"片源不可用",用户会一直点换源而不知道该查网络;
+     * 反过来把片源自身失效报成"网络错误"同样误导。判据取重试阶梯里最后一次读到的 EXO 错误类型。
+     */
+    private void reportExhausted() {
+        host.stopMusicSessionForFailedPlayback();
+        boolean network = host.attemptState().lastFailureNetwork;
+        showErrorTip(PlaybackController.str(
+                network ? R.string.toast_network_error : R.string.player_play_failed_all));
     }
 
     void handleResolvePlayUrlTimeout() {
@@ -391,10 +416,7 @@ final class PlaybackRetryDelegate {
             showErrorTip(PlaybackController.str(R.string.player_get_url_timeout));
             return;
         }
-        if (!tryNextLineIfEnabled()) {
-            host.stopMusicSessionForFailedPlayback();
-            showErrorTip(PlaybackController.str(R.string.player_get_url_timeout));
-        }
+        if (!tryNextLineIfEnabled()) reportExhausted();
     }
 
     void handleResolvePlayUrlFailed(String err) {
@@ -411,8 +433,7 @@ final class PlaybackRetryDelegate {
         }
         if (tryNextLineIfEnabled()) return;
         host.cancelPlayTimeout();
-        host.stopMusicSessionForFailedPlayback();
-        showErrorTip(err);
+        reportExhausted();
     }
 
     void handleSwitchLinePlayTimeout() {
@@ -428,16 +449,10 @@ final class PlaybackRetryDelegate {
         LOG.i("echo-switchLinePlay timeout, try next line");
         host.stopParse();
         if (st.hasAutoSwitchedPlayer) {
-            if (!tryNextLineIfEnabled()) {
-                host.stopMusicSessionForFailedPlayback();
-                showErrorTip(PlaybackController.str(R.string.player_play_timeout));
-            }
+            if (!tryNextLineIfEnabled()) reportExhausted();
             return;
         }
-        if (!autoRetry()) {
-            host.stopMusicSessionForFailedPlayback();
-            showErrorTip(PlaybackController.str(R.string.player_play_timeout));
-        }
+        if (!autoRetry()) reportExhausted();
     }
 
     private void showErrorTip(String err) {

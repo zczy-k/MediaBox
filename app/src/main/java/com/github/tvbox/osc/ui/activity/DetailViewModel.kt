@@ -110,6 +110,11 @@ class DetailViewModel : ViewModel() {
     private val candidateKeys = HashSet<String>()
     private val triedKeys = HashSet<String>()
     private val usedSourceKeys = HashSet<String>()
+    /**
+     * 换源候选池上界:聚合订阅可达数百站(实测某订阅 673 个 site),全量排队会把换源拖到超时;
+     * 只取站点序前 N,其余候选靠搜索回包事件增量补进来。
+     */
+    private val fallbackPoolCap = 120
     private val semaphore = Semaphore(SOURCE_SEARCH_CONCURRENCY)
     private val pendingSearchDone = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
     private val searchCaller = SourceViewModel()
@@ -469,10 +474,14 @@ class DetailViewModel : ViewModel() {
         val myToken = searchToken
         val tokenStr = "detail_$myToken"
         val checked = SearchHelper.getSourcesForSearch()
+        // 勾选表是按"源集合"(键为 API_URL)记的,而聚合订阅会把 API_URL 换成另一个含几百项 site 的配置:
+        // 旧表里的 key 在新站表里基本对不上,直接拿去过滤会把候选池缩到 0 —— 表现为换源永远无可选项。
+        val effectiveChecked = if (checked == null || SearchHelper.isSelectionStale(checked)) null else checked
         val home = ApiConfig.get().getHomeSourceBean()
         val sources = ApiConfig.get().getSourceBeanList()
-            .filter { it.isSearchable() && it.isQuickSearch() && (checked == null || checked.containsKey(it.key)) }
+            .filter { it.isSearchable() && it.isQuickSearch() && (effectiveChecked == null || effectiveChecked.containsKey(it.key)) }
             .sortedBy { it.key != home.key }
+            .take(fallbackPoolCap)
         sourcesSearching.value = sources.isNotEmpty()
         relatedVideos.value = emptyList()
         if (sources.isEmpty()) return
@@ -633,7 +642,13 @@ class DetailViewModel : ViewModel() {
         val currentSource = ApiConfig.get().getSource(sourceKey)
         // 站点不在当前订阅(切源后残留的历史/收藏条目)时没有"当前源"可换,但同名片仍能靠聚合搜索接管
         if (currentSource != null && !currentSource.isChangeable()) return false
-        if (fallbackActive) return true
+        // 已在换源链上又收到"线路耗尽" ⇒ 刚切换过去那个候选站也挂了,必须继续往下取候选。
+        // 原来这里直接 return true 会让换源链只跳一跳,之后永久卡死在那个坏站上(既不换源也不再报错推进)。
+        if (fallbackActive) {
+            usedSourceKeys.add(sourceKey)
+            fallbackLoadingCandidate = false
+            return loadNextFallbackCandidate()
+        }
         val title = (if (vodInfo?.name.isNullOrEmpty()) vodName else vodInfo?.name).orEmpty().trim()
         if (title.isEmpty()) return false
         fallbackKeepCurrentDetail = fromLinesExhausted && vodInfo != null && !vodInfo?.seriesMap.isNullOrEmpty()
@@ -643,11 +658,16 @@ class DetailViewModel : ViewModel() {
         fallbackActive = true
         fallbackAutoSwitch = auto
         triedKeys.add(candidateKey(sourceKey, vodId))
-        loadNextFallbackCandidate()
-        return fallbackActive
+        return loadNextFallbackCandidate()
     }
 
-    private fun loadNextFallbackCandidate() {
+    /**
+     * 取下一个候选换源。
+     *
+     * @return true = 已取到候选并在加载中,或聚合搜索仍在跑(结论未定,别急着报"无有效源");
+     *         false = 候选确实耗尽 ⇒ 调用方据此把"无路可走"交回播放层,由它统一提示
+     */
+    private fun loadNextFallbackCandidate(): Boolean {
         while (true) {
             val video = synchronized(fallbackCandidates) {
                 if (fallbackCandidates.isEmpty()) null else fallbackCandidates.removeAt(0)
@@ -664,10 +684,14 @@ class DetailViewModel : ViewModel() {
             scheduleDetailTimeout()
             // 传 field 而不是捕获一次:候选站与发起请求同属一代(这一代由 loadDetail 或 rollback 定下)
             loadDetailInternal(video.id.orEmpty(), video.sourceKey.orEmpty(), detailRequestToken)
-            return
+            return true
         }
         publishSourceChips()
-        if (!sourcesSearching.value) finishFallbackWithoutResult()
+        if (!sourcesSearching.value) {
+            finishFallbackWithoutResult()
+            return false
+        }
+        return true
     }
 
     /**
@@ -689,7 +713,8 @@ class DetailViewModel : ViewModel() {
         resetEngineState(keepChips = true)
         if (!keep && rollbackManualSwitch()) return
         if (!keep && pageState.value != PageState.Ready) {
-            enterEmpty()
+            // 候选与搜索都已尽:页面留在空态,文案必须让用户看懂是"没有可用的源",而不是页面加载失败
+            enterEmpty(str(R.string.player_play_failed_all))
         }
     }
 
