@@ -12,8 +12,8 @@ on:
         type: boolean
         required: false
         default: false
-      test_build:
-        description: '自用调试包:跳过启动强制更新,并强制标为 Pre-release(不会进 releases/latest)'
+      publish_release:
+        description: '是否作为正式版发布。⚠️ 不勾 = 自用调试包(跳过强制更新、标为 Pre-release);勾上 = 正式版(强制更新、进 releases/latest)'
         type: boolean
         required: false
         default: false
@@ -116,13 +116,16 @@ jobs:
       - name: Build release APK
         # -PappVersionName 把 tag 注入 APK 的 versionName:App 内更新检查拿 tag 与本地
         # versionName 比较,两者不同源会让"永远提示有新版本"或"永远提示已最新"。
-        # test_build=true 时额外传 -PforceUpdate=false:自用调试包不该被自己的强制更新拦住。
+        # 安全默认:publish_release 不为 true 时一律当自用调试包 —— 传 -PforceUpdate=false
+        # 把启动强制更新整个编译掉,避免"只想自己测一下"却把强制更新推给所有用户(不可逆)。
         run: |
           set -euo pipefail
           EXTRA=""
-          if [ "${{ github.event.inputs.test_build }}" = "true" ]; then
-            echo "::notice::自用调试包:已关闭启动强制更新"
+          if [ "${{ github.event.inputs.publish_release }}" != "true" ]; then
+            echo "::notice::自用调试包:已关闭启动强制更新(如需正式发布请勾选 publish_release)"
             EXTRA="-PforceUpdate=false"
+          else
+            echo "::notice::正式版:启动强制更新已启用"
           fi
           ./gradlew assembleRelease --no-daemon --stacktrace \
             -PappVersionName='${{ github.event.inputs.version }}' $EXTRA
@@ -175,9 +178,9 @@ jobs:
           tag_name: ${{ github.event.inputs.version }}
           name: ${{ github.event.inputs.version }}
           files: ${{ steps.apk.outputs.path }}
-          # test_build 一并强制 Pre-release:否则调试包会进 releases/latest,
-          # 所有正式用户会被强制更新到你的调试包上(灾难性)
-          prerelease: ${{ github.event.inputs.prerelease == 'true' || github.event.inputs.test_build == 'true' }}
+          # 非正式发布一律强制 Pre-release:否则调试包会进 releases/latest,
+          # 所有正式用户会被强制更新到你的调试包上(灾难性,且不可逆)
+          prerelease: ${{ github.event.inputs.prerelease == 'true' || github.event.inputs.publish_release != 'true' }}
           fail_on_unmatched_files: true
           generate_release_notes: false
           body: ""
