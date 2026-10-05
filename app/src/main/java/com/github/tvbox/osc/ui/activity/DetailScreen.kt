@@ -45,18 +45,19 @@ import com.github.tvbox.osc.ui.components.VodCardMenu
 import com.github.tvbox.osc.ui.components.rememberVodCardMenuState
 import kotlinx.coroutines.delay
 import com.github.tvbox.osc.ui.page.jumpToSearch
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DetailScreen(activity: DetailActivity, vm: DetailViewModel) {
     val menuContext = LocalContext.current
-    val pageState by vm.pageState.collectAsState()
-    val full by vm.fullScreen.collectAsState()
-    val rotating by vm.rotating.collectAsState()
-    val revision by vm.revision.collectAsState()
-    val playSignal by vm.playSignal.collectAsState()
-    val toast by vm.toastEvent.collectAsState()
-    val finish by vm.finishEvent.collectAsState()
+    val pageState by vm.pageState.collectAsStateWithLifecycle()
+    val full by vm.fullScreen.collectAsStateWithLifecycle()
+    val rotating by vm.rotating.collectAsStateWithLifecycle()
+    val revision by vm.revision.collectAsStateWithLifecycle()
+    val playSignal by vm.playSignal.collectAsStateWithLifecycle()
+    val toast by vm.toastEvent.collectAsStateWithLifecycle()
+    val finish by vm.finishEvent.collectAsStateWithLifecycle()
     val vodMenu = rememberVodCardMenuState()
 
     val configuration = LocalConfiguration.current

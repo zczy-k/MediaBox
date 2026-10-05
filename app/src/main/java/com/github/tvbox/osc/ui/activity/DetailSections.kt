@@ -33,6 +33,7 @@ import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.ui.components.VodCard
 import com.github.tvbox.osc.ui.page.openVodCardOrDetail
 import com.github.tvbox.osc.ui.theme.filterChipColors
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 /** 分区标题前的裸图标(22dp、onSurface 着色):画稿图标与内置图标共用 */
 @Composable
@@ -58,8 +59,8 @@ internal fun SectionTitleIcon(imageVector: ImageVector) {
 @Composable
 internal fun SourceSection(vm: DetailViewModel, currentSourceName: String?, revision: Int) {
     @Suppress("UNUSED_EXPRESSION") revision
-    val sourceChips by vm.sourceChips.collectAsState()
-    val sourcesSearching by vm.sourcesSearching.collectAsState()
+    val sourceChips by vm.sourceChips.collectAsStateWithLifecycle()
+    val sourcesSearching by vm.sourcesSearching.collectAsStateWithLifecycle()
     if (!sourcesSearching && sourceChips.isEmpty()) return
     val listState = rememberLazyListState()
     LaunchedEffect(currentSourceName) {
@@ -131,7 +132,7 @@ internal fun RelatedSection(
     vm: DetailViewModel,
     onCardLongClick: (Movie.Video) -> Unit = {},
 ) {
-    val relatedVideos by vm.relatedVideos.collectAsState()
+    val relatedVideos by vm.relatedVideos.collectAsStateWithLifecycle()
     if (relatedVideos.isEmpty()) return
     Column(modifier = Modifier.padding(top = 20.dp)) {
         Row(

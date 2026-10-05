@@ -87,6 +87,7 @@ import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.github.tvbox.osc.util.KV
 import kotlinx.coroutines.launch
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 private enum class AppTab(@StringRes val labelRes: Int, @DrawableRes val icon: Int) {
     HOME(R.string.tab_home, R.drawable.ic_tab_home),
@@ -98,7 +99,7 @@ private enum class AppTab(@StringRes val labelRes: Int, @DrawableRes val icon: I
 @Composable
 fun MainScreen() {
     LaunchedEffect(Unit) { AppBootstrap.start() }
-    val boot by AppBootstrap.state.collectAsState()
+    val boot by AppBootstrap.state.collectAsStateWithLifecycle()
     Box(modifier = Modifier.fillMaxSize()) {
         MainContent()
         if (boot is AppBootstrap.Boot.Error) {

@@ -52,21 +52,22 @@ import com.github.tvbox.osc.util.KV
 import com.github.tvbox.osc.util.SearchSettings
 import kotlinx.coroutines.delay
 import com.github.tvbox.osc.ui.page.jumpToSearch
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @Composable
 fun SearchScreen(vm: SearchViewModel = viewModel()) {
     val context = LocalContext.current
     val activity = context as? android.app.Activity
-    val results by vm.results.collectAsState()
-    val running by vm.running.collectAsState()
-    val hotSearch by vm.hotSearch.collectAsState()
-    val suggest by vm.suggest.collectAsState()
+    val results by vm.results.collectAsStateWithLifecycle()
+    val running by vm.running.collectAsStateWithLifecycle()
+    val hotSearch by vm.hotSearch.collectAsStateWithLifecycle()
+    val suggest by vm.suggest.collectAsStateWithLifecycle()
     var query by remember { mutableStateOf("") }
     var selectedSource by remember { mutableStateOf<String?>(null) }
     var history by remember { mutableStateOf(KV.get(HawkConfig.SEARCH_HISTORY, ArrayList<String>())) }
-    val searchedTitle by vm.searchedTitle.collectAsState()
-    val matchMode by vm.matchMode.collectAsState()
-    val sitesEmpty by vm.sitesEmpty.collectAsState()
+    val searchedTitle by vm.searchedTitle.collectAsStateWithLifecycle()
+    val matchMode by vm.matchMode.collectAsStateWithLifecycle()
+    val sitesEmpty by vm.sitesEmpty.collectAsStateWithLifecycle()
     val vodMenu = rememberVodCardMenuState()
     var resultLayout by remember { mutableStateOf(SearchSettings.resultLayout()) }
 
@@ -91,7 +92,7 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
         }
     }
 
-    val bootState by com.github.tvbox.osc.ui.page.AppBootstrap.state.collectAsState()
+    val bootState by com.github.tvbox.osc.ui.page.AppBootstrap.state.collectAsStateWithLifecycle()
     LaunchedEffect(bootState) {
         if (bootState is com.github.tvbox.osc.ui.page.AppBootstrap.Boot.Ready && SearchViewModel.isCheckedSourcesStale()) {
             SearchViewModel.loadCheckedSources()

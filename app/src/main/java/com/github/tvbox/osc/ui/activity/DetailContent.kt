@@ -51,6 +51,7 @@ import com.github.tvbox.osc.api.ApiConfig
 import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.ui.components.VodPoster
 import com.github.tvbox.osc.ui.theme.filterChipColors
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @Composable
 internal fun DetailContent(
@@ -66,9 +67,9 @@ internal fun DetailContent(
     val currentFlag = info.playFlag
     val episodes = info.seriesMap?.get(currentFlag).orEmpty()
     val playIndex = info.playIndex
-    val qualityOptions by vm.qualityOptions.collectAsState()
-    val qualitySelected by vm.qualitySelected.collectAsState()
-    val collected by vm.collected.collectAsState()
+    val qualityOptions by vm.qualityOptions.collectAsStateWithLifecycle()
+    val qualitySelected by vm.qualitySelected.collectAsStateWithLifecycle()
+    val collected by vm.collected.collectAsStateWithLifecycle()
     var descExpanded by rememberSaveable { mutableStateOf(false) }
     var titleExpanded by rememberSaveable(info.id) { mutableStateOf(false) }
     var titleOverflow by remember(info.id) { mutableStateOf(false) }

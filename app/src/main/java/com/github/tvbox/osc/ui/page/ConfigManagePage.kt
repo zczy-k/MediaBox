@@ -80,6 +80,7 @@ import com.github.tvbox.osc.ui.components.TopBarActionBox
 import com.github.tvbox.osc.ui.components.glassSurface
 import com.github.tvbox.osc.ui.theme.cardContainer
 import com.github.tvbox.osc.util.HistoryHelper
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 private fun badgeText(name: String, url: String, emptyText: String): String = when {
     name.isNotEmpty() -> name
@@ -95,19 +96,19 @@ fun ConfigManageScreen(onNavigateBack: () -> Unit) {
     var mode by rememberSaveable { mutableStateOf(ConfigMode.Vod) }
     var addDialogOpen by remember { mutableStateOf(false) }
     var repoSheetOpen by remember { mutableStateOf(false) }
-    val vodItems by vm.vodItems.collectAsState()
-    val liveItems by vm.liveItems.collectAsState()
-    val activeUrl by vm.activeUrl.collectAsState()
-    val liveActiveUrl by vm.liveActiveUrl.collectAsState()
-    val liveFollow by vm.liveFollow.collectAsState()
+    val vodItems by vm.vodItems.collectAsStateWithLifecycle()
+    val liveItems by vm.liveItems.collectAsStateWithLifecycle()
+    val activeUrl by vm.activeUrl.collectAsStateWithLifecycle()
+    val liveActiveUrl by vm.liveActiveUrl.collectAsStateWithLifecycle()
+    val liveFollow by vm.liveFollow.collectAsStateWithLifecycle()
     /** 被看门狗停用过的源地址(黑名单):只随页内增删变化 */
-    val disabledUrls by vm.disabledUrls.collectAsState()
+    val disabledUrls by vm.disabledUrls.collectAsStateWithLifecycle()
     /** 点到黑名单里的源时先挂起,由二次确认对话框决定是否放行 */
-    val pendingSwitch by vm.pendingSwitch.collectAsState()
-    val selected by vm.selected.collectAsState()
-    val manageMode by vm.manageMode.collectAsState()
-    val editTarget by vm.editTarget.collectAsState()
-    val toastEvent by vm.toastEvent.collectAsState()
+    val pendingSwitch by vm.pendingSwitch.collectAsStateWithLifecycle()
+    val selected by vm.selected.collectAsStateWithLifecycle()
+    val manageMode by vm.manageMode.collectAsStateWithLifecycle()
+    val editTarget by vm.editTarget.collectAsStateWithLifecycle()
+    val toastEvent by vm.toastEvent.collectAsStateWithLifecycle()
 
     val isVod = mode == ConfigMode.Vod
     val currentItems = if (isVod) vodItems else liveItems

@@ -66,6 +66,7 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.flow.first
 import com.github.tvbox.osc.ui.page.jumpToSearch
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 class PartitionListActivity : BaseActivity() {
 
@@ -134,7 +135,7 @@ private fun PartitionListScreen(mode: String, title: String, sortJson: String?, 
     val context = LocalContext.current
     val vm: PartitionListVM = viewModel()
     var filterOpen by remember { mutableStateOf(false) }
-    val ui by vm.ui.collectAsState()
+    val ui by vm.ui.collectAsStateWithLifecycle()
     val vodMenu = rememberVodCardMenuState()
 
     LaunchedEffect(sortJson) {

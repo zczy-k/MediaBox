@@ -65,6 +65,7 @@ import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.bean.MovieSort
 import com.github.tvbox.osc.ui.WindowSize
 import com.github.tvbox.osc.ui.components.FilterSheet
+import com.github.tvbox.osc.ui.components.ShimmerHost
 import com.github.tvbox.osc.ui.components.SkeletonBox
 import com.github.tvbox.osc.ui.components.VodCard
 import com.github.tvbox.osc.ui.components.VodCardStyle
@@ -190,6 +191,8 @@ fun HomeGridLayout(
                 availableWidthDp = (maxWidth - 32.dp - navStart).value.toInt(),
                 minColumns = homeColumns,
             )
+            // 骨架屏共用一条动画时钟:加载态一次铺 18 个格子,不共享就是 18 条无限动画同时跑
+            ShimmerHost {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(gridColumns),
                 state = tabGridState,
@@ -318,6 +321,7 @@ fun HomeGridLayout(
                         }
                     vm.loadMorePartition(tabPartition)
                 }
+            }
             }
             }
             }

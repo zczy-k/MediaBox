@@ -51,6 +51,7 @@ import com.github.tvbox.osc.ui.components.MediaBoxBottomSheet
 import com.github.tvbox.osc.ui.components.LocalSheetDismiss
 import com.github.tvbox.osc.ui.theme.filterChipColors
 import kotlinx.coroutines.launch
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @Composable
 internal fun EpisodeRow(
@@ -165,7 +166,7 @@ private fun PillAction(iconRes: Int, text: String, onClick: () -> Unit) {
 @Composable
 internal fun EpisodeSheet(vm: DetailViewModel, revision: Int, slideFromEnd: Boolean) {
     @Suppress("UNUSED_EXPRESSION") revision
-    val show by vm.episodeSheet.collectAsState()
+    val show by vm.episodeSheet.collectAsStateWithLifecycle()
     // 面板在屏时冻结底栏自动收起（见 PlayerUiState.overlayPanelOpen）:投影随开合指令下发到播放层
     if (!show) return
     val info = vm.vodInfo ?: return
