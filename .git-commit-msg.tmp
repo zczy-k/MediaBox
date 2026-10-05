@@ -1,0 +1,13 @@
+fix(detail): 详情内容为空时不自动换源
+
+根因:兜底候选只能来自聚合搜索,而它排在 loadDetail 之后启动。
+loadNextFallbackCandidate 在"候选为空且 sourcesSearching 为 false"时会走
+finishFallbackWithoutResult -> resetEngineState,把刚设好的 fallbackActive /
+fallbackAutoSwitch 一并清掉 —— 自动接管当场失效,页面停在"暂无片源",
+底部候选列表照常刷新(所以看起来像"搜索在跑但不换源")。
+
+onDetailUnavailable 早有这个补丁(原注释:"不先补这一下,'无候选即收尾'会把自动接管
+清掉"),但 handleEmptyDetail(请求成功、内容为空)这条路上漏了。
+
+改法:抽出 ensureSourceSearchRunning(),两处共用。标题取值与 startFallbackIfNeeded
+严格一致 —— 两处不同会让 onSearchResultEvent 的同名过滤全部落空,候选进不了列表。

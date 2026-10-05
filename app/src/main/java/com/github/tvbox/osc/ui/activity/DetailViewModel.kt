@@ -310,11 +310,29 @@ class DetailViewModel : ViewModel() {
             loadNextFallbackCandidate()
             return
         }
-        // 兜底候选只能来自聚合搜索,而它排在 loadDetail 之后启动:不先补这一下,"无候选即收尾"会把自动接管清掉
-        if (vodName.isNotEmpty() && !sourcesSearching.value) startSourceSearch()
+        ensureSourceSearchRunning()
         if (!startFallbackIfNeeded(auto = true)) {
             if (!rollbackManualSwitch()) enterEmpty()
         }
+    }
+
+    /**
+     * 保证聚合搜索已在跑,再让 [startFallbackIfNeeded] 接管。
+     *
+     * <p>兜底候选只能来自聚合搜索,而它排在 loadDetail 之后启动。若不先补这一下,
+     * [loadNextFallbackCandidate] 会在"候选为空且 sourcesSearching 为 false"时走
+     * [finishFallbackWithoutResult] → [resetEngineState],把刚设好的 `fallbackActive` /
+     * `fallbackAutoSwitch` 一并清掉 —— 自动接管当场失效,页面停在"暂无片源"。
+     *
+     * <p>标题取值必须与 [startFallbackIfNeeded] 完全一致:两处不同会让
+     * [onSearchResultEvent] 的同名过滤(`it.name == searchTitle`)全部落空,候选永远进不了列表。
+     */
+    private fun ensureSourceSearchRunning() {
+        if (sourcesSearching.value) return
+        val title = (if (vodInfo?.name.isNullOrEmpty()) vodName else vodInfo?.name).orEmpty().trim()
+        if (title.isEmpty()) return
+        searchTitle = title
+        startSourceSearch()
     }
 
     fun onDetailResult(absXml: AbsXml?) {
@@ -423,8 +441,14 @@ class DetailViewModel : ViewModel() {
         if (fallbackActive) {
             fallbackLoadingCandidate = false
             loadNextFallbackCandidate()
-        } else if (!startFallbackIfNeeded(auto = true)) {
-            if (!rollbackManualSwitch()) enterEmpty()
+        } else {
+            // 与 onDetailUnavailable 同因同修:详情"请求成功但内容为空"这条路上原来没挂聚合搜索,
+            // 于是 loadNextFallbackCandidate 在候选为空时直接收尾,把自动接管清掉 ——
+            // 表现就是"详情空 → 停在暂无片源,不自动换源"(只有底部候选列表在动)。
+            ensureSourceSearchRunning()
+            if (!startFallbackIfNeeded(auto = true)) {
+                if (!rollbackManualSwitch()) enterEmpty()
+            }
         }
     }
 
