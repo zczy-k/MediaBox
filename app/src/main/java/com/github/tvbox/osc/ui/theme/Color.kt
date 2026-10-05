@@ -9,3 +9,10 @@ import androidx.compose.ui.graphics.Color
 val ColorScheme.cardContainer: Color
     get() = surfaceBright
 
+@Composable
+fun ColorScheme.filterChipColors(containerColor: Color = Color.Transparent): SelectableChipColors =
+    FilterChipDefaults.filterChipColors(
+        containerColor = containerColor,
+        selectedContainerColor = primaryContainer,
+        selectedLabelColor = onPrimaryContainer,
+    )
