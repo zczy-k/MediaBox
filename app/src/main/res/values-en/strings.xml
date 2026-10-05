@@ -505,7 +505,7 @@
     <string name="settings_about">About</string>
     <string name="settings_about_subtitle">View details</string>
     <string name="settings_about_version">Version v%1$s</string>
-    <string name="settings_about_disclaimer">This app only aggregates and displays content from the internet. It does not host, create, upload, store, or download any content, and accepts no donations, tips, or payments. It is provided for open-source learning purposes only; please uninstall it within 24 hours of installation.\n\nKeep the credits when redistributing\nhttps://github.com/CatVodTVOfficial/TVBoxOSC\nhttps://github.com/q215613905/TVBoxOS\\n\\nProject home\\nhttps://github.com/zczy-k/MediaBox</string>
+    <string name="settings_about_disclaimer">This app provides content aggregation and playback only. It does not host, create, or distribute any media. All content comes from third-party services and remains the property of its respective owners. No paid services are offered. For learning and research purposes only; please uninstall within 24 hours.</string>
 
     <!-- Settings: preferences -->
     <string name="settings_preference_title">Preferences</string>

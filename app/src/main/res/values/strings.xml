@@ -505,7 +505,7 @@
     <string name="settings_about">关于</string>
     <string name="settings_about_subtitle">查看详细信息</string>
     <string name="settings_about_version">版本 v%1$s</string>
-    <string name="settings_about_disclaimer">本软件只提供聚合展示功能，所有资源均来自互联网，软件不参与任何内置、制作、上传、储存、下载等内容，也不接受任何捐赠、打赏、付费等谋利行为，软件仅供开源学习参考, 请于安装后24小时内删除。\n\n打包分发请保留出处\nhttps://github.com/CatVodTVOfficial/TVBoxOSC\nhttps://github.com/q215613905/TVBoxOS\\n\\n本项目地址\\nhttps://github.com/zczy-k/MediaBox</string>
+    <string name="settings_about_disclaimer">本软件仅提供内容聚合与播放能力，不存储、不制作、不传播任何资源。所有内容均来自第三方网络接口，版权归各自权利人所有。软件不提供任何付费服务，仅供学习研究使用，请于安装后 24 小时内卸载。</string>
 
     <!-- 设置:偏好设置 -->
     <string name="settings_preference_title">偏好设置</string>
