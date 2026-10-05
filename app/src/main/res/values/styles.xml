@@ -1,0 +1,28 @@
+<resources>
+    <!-- Base application theme. -->
+    <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
+        <!-- Customize your theme here. -->
+        <item name="colorPrimary">@color/color_6200EE</item>
+        <item name="colorPrimaryDark">@color/color_3700B3</item>
+        <item name="colorAccent">@color/color_03DAC5</item>
+        <!-- 系统栏透明首帧预设(2026-09-15,照 示例文件/android 主题写法);
+             运行时由 enableTransparentEdgeToEdge/主题 SideEffect 再断言 -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+
+    <style name="AppTheme.NoActionBar" parent="AppTheme">
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="windowActionBar">false</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="windowNoTitle">true</item>
+        <item name="android:keepScreenOn">true</item>
+        <item name="android:windowBackground">@color/window_background</item>
+    </style>
+
+    <!-- 启动画面主题(MainActivity 专用):Android 12+ 显示静态图标 + 背景的启动画面(不带动画),
+         实际属性在 values-v31/styles.xml 覆盖;Android 11 及以下没有系统启动画面,
+         本定义与 AppTheme.NoActionBar 等价(只继承窗口背景) -->
+    <style name="AppTheme.Splash" parent="AppTheme.NoActionBar" />
+</resources>

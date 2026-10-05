@@ -1,0 +1,484 @@
+package com.github.tvbox.osc.util;
+
+import com.github.tvbox.osc.util.LOG;
+import androidx.annotation.NonNull;
+
+import com.github.tvbox.osc.api.ApiConfig;
+import com.github.tvbox.osc.bean.ProxyRule;
+import com.github.tvbox.osc.player.danmu.Parser;
+import com.github.tvbox.osc.util.net.OkProxySelector;
+import com.github.tvbox.osc.util.net.ProxyAuthenticator;
+import com.github.tvbox.osc.util.SSL.SSLSocketFactoryCompat;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.lzy.okgo.OkGo;
+import com.lzy.okgo.https.HttpsUtils;
+import com.lzy.okgo.interceptor.HttpLoggingInterceptor;
+import com.lzy.okgo.model.HttpHeaders;
+import com.github.tvbox.osc.util.KV;
+
+import java.io.File;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
+import java.security.cert.CertificateException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+
+import java.util.concurrent.TimeUnit;
+import java.util.logging.Level;
+
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.X509TrustManager;
+
+import okhttp3.Cache;
+import okhttp3.Dns;
+import okhttp3.HttpUrl;
+import okhttp3.OkHttp;
+import okhttp3.OkHttpClient;
+import okhttp3.dnsoverhttps.DnsOverHttps;
+
+import xyz.doikki.videoplayer.exo.ExoMediaSourceHelper;
+
+
+public class OkGoHelper {
+    public static final long DEFAULT_MILLISECONDS = 10000;      //默认的超时时间
+
+    // 内置doh json
+    /** App 内置 DoH(2026-09-12 起不再只是"兜底":始终置于 [getDohConfigArray] 列表**最前**,接口项去重后追加在后) */
+    private static final String dnsConfigJson = "["
+            + "{\"name\": \"腾讯\", \"url\": \"https://doh.pub/dns-query\"}," // i18n: keep(DNS 配置数据)
+            + "{\"name\": \"阿里\", \"url\": \"https://dns.alidns.com/dns-query\"}," // i18n: keep(DNS 配置数据)
+            + "{\"name\": \"360\", \"url\": \"https://doh.360.cn/dns-query\"}"
+            + "]";
+    static OkHttpClient ItvClient = null;
+    private static OkProxySelector proxySelector = null;
+    private static ProxyAuthenticator proxyAuthenticator = null;
+
+    public static synchronized OkProxySelector proxySelector() {
+        if (proxySelector == null) proxySelector = new OkProxySelector();
+        return proxySelector;
+    }
+
+    public static synchronized ProxyAuthenticator proxyAuthenticator() {
+        if (proxyAuthenticator == null) proxyAuthenticator = new ProxyAuthenticator(proxySelector());
+        return proxyAuthenticator;
+    }
+
+    public static synchronized void setProxyList(List<ProxyRule> proxyRules) {
+        proxySelector().clear();
+        if (proxyRules != null && !proxyRules.isEmpty()) proxySelector().addAll(proxyRules);
+        com.github.catvod.net.OkHttp.reset();
+    }
+
+    static void initExoOkHttpClient() {
+        OkHttpClient base = getDefaultClient();
+        OkHttpClient.Builder builder = base != null ? base.newBuilder() : new OkHttpClient.Builder();
+        HttpLoggingInterceptor loggingInterceptor = new HttpLoggingInterceptor("OkExoPlayer");
+
+        loggingInterceptor.setPrintLevel(HttpLoggingInterceptor.Level.NONE);
+        loggingInterceptor.setColorLevel(Level.OFF);
+        builder.addInterceptor(loggingInterceptor);
+
+        builder.retryOnConnectionFailure(true);
+        builder.followRedirects(true);
+        builder.followSslRedirects(true);
+        builder.proxySelector(proxySelector());
+        builder.proxyAuthenticator(proxyAuthenticator());
+
+
+        try {
+            setOkHttpSsl(builder);
+        } catch (Throwable th) {
+            LOG.e("OkGoHelper", th);
+        }
+
+//        builder.dns(dnsOverHttps);
+        builder.dns(new CustomDns());
+        ItvClient=builder.build();
+
+        ExoMediaSourceHelper.getInstance(AppContextHolder.context()).setOkClient(ItvClient);
+    }
+
+    // DNS 解析在 OkHttp 线程读,init/reloadDns 在主线程写
+    public static volatile DnsOverHttps dnsOverHttps = null;
+
+    // ⚠️ 配置解析在 IO 协程写、设置页在主线程 mapIndexed 遍历:必须整体替换引用,不能原地 clear/add
+    public static volatile List<String> dnsHttpsList = Collections.emptyList();
+
+    public static boolean is_doh = false;
+    // 配置解析可能在 IO 线程写、DNS 解析在 OkHttp 线程读,需 volatile 保证可见性
+    public static volatile Map<String, String> myHosts = null;
+
+    /**
+     * 合并后的 DoH 配置数组(**唯一数据源**,2026-09-12 用户定稿):
+     * App 内置项(腾讯/阿里/360)在前,接口配置的 doh 项按 url 去重后追加在后;
+     * 接口未提供 doh 时就只有内置那三条(与原兜底行为一致)。
+     * ⚠️ 显示列表 [dnsHttpsList] 与取值 [getDohUrl] / [initDnsOverHttps] 都按下标映射本数组
+     * (下标 = 弹窗位置 - 1),三者必须同源 —— 任何一处单独解析 JSON 都会导致选中的项取到别人的 URL。
+     * ⚠️ 本次把内置项提到最前会使"已选中的下标"指向另一台 DoH(名称与 URL 仍一致,不会串号),
+     * 把 DoH 关着(下标 0)的用户不受影响。
+     */
+    public static JsonArray getDohConfigArray() {
+        JsonArray merged = new JsonArray();
+        Set<String> keys = new HashSet<>();
+        try {
+            appendDohItems(merged, keys, JsonParser.parseString(dnsConfigJson).getAsJsonArray());
+        } catch (Exception e) {
+            LOG.e("OkGoHelper", e);
+        }
+        appendDohItems(merged, keys, parseDohArray(KV.get(HawkConfig.DOH_JSON, "")));
+        return merged;
+    }
+
+    /** 接口传来的 doh 字段可能为空或格式异常;异常时返回 null(退化为只用内置项,不影响启动) */
+    private static JsonArray parseDohArray(String json) {
+        if (json == null || json.isEmpty()) return null;
+        try {
+            return JsonParser.parseString(json).getAsJsonArray();
+        } catch (Exception e) {
+            LOG.e("OkGoHelper", e);
+            return null;
+        }
+    }
+
+    /** 按 url 去重追加(url 缺失时退回 name);同 url 以先加入者为准 = 内置项优先(接口同 url 项被跳过) */
+    private static void appendDohItems(JsonArray target, Set<String> keys, JsonArray source) {
+        if (source == null) return;
+        for (int i = 0; i < source.size(); i++) {
+            JsonElement element = source.get(i);
+            if (element == null || !element.isJsonObject()) continue;
+            JsonObject item = element.getAsJsonObject();
+            String key = item.has("url") ? item.get("url").getAsString()
+                    : (item.has("name") ? item.get("name").getAsString() : null);
+            if (key == null || !keys.add(key)) continue;
+            target.add(item);
+        }
+    }
+
+    public static String getDohUrl(int type) {
+        JsonArray jsonArray = getDohConfigArray();
+        if (type >= 1 && type <= jsonArray.size()) {
+            JsonObject dnsConfig = jsonArray.get(type - 1).getAsJsonObject();
+            return dnsConfig.has("url") ? dnsConfig.get("url").getAsString() : "";
+        }
+        return "";
+    }
+
+    public static void applyDohConfig(String dohJson) {
+        String pinned = getDohUrl(KV.get(HawkConfig.DOH_URL, 0));
+        KV.put(HawkConfig.DOH_JSON, dohJson);
+        JsonArray merged = getDohConfigArray();
+
+        List<String> list = new ArrayList<>();
+        list.add("关闭"); // i18n: keep(DNS 选项索引锚点,显示由设置页映射资源)
+        for (int i = 0; i < merged.size(); i++) {
+            JsonObject dnsConfig = merged.get(i).getAsJsonObject();
+            String name = dnsConfig.has("name") ? dnsConfig.get("name").getAsString() : "Unknown Name";
+            list.add(name);
+        }
+        dnsHttpsList = list;
+
+        int index = indexOfDohUrl(merged, pinned);
+        if (index >= 0) {
+            KV.put(HawkConfig.DOH_URL, index + 1);
+        } else if (KV.get(HawkConfig.DOH_URL, 0) > merged.size()) {
+            KV.put(HawkConfig.DOH_URL, 0);
+        }
+        refreshHosts();
+    }
+
+    static int indexOfDohUrl(JsonArray merged, String url) {
+        if (merged == null || url == null || url.isEmpty()) return -1;
+        for (int i = 0; i < merged.size(); i++) {
+            JsonElement element = merged.get(i);
+            if (element == null || !element.isJsonObject()) continue;
+            JsonObject item = element.getAsJsonObject();
+            String key = item.has("url") ? item.get("url").getAsString()
+                    : (item.has("name") ? item.get("name").getAsString() : null);
+            if (url.equals(key)) return i;
+        }
+        return -1;
+    }
+
+    /** 刷新 hosts 快照:CustomDns.lookup 只在 myHosts 为 null(首次刷新前)时才回落读 ApiConfig,写完必须显式刷新 */
+    public static void refreshHosts() {
+        myHosts = ApiConfig.get().getMyHost();
+    }
+
+    private static List<InetAddress> DohIps(JsonArray ips) {
+        List<InetAddress> inetAddresses = new ArrayList<>();
+        if (ips != null) {
+            for (int j = 0; j < ips.size(); j++) {
+                try {
+                    InetAddress inetAddress = InetAddress.getByName(ips.get(j).getAsString());
+                    inetAddresses.add(inetAddress);  // 添加到 List 中
+                } catch (Exception e) {
+                    LOG.e("OkGoHelper", e);  // 处理无效的 IP 字符串
+                }
+            }
+        }
+        return inetAddresses;
+    }
+
+    static void initDnsOverHttps() {
+        Integer dohSelector=KV.get(HawkConfig.DOH_URL, 0);
+        JsonArray ips=null;
+        try {
+            List<String> list = new ArrayList<>();
+            list.add("关闭"); // i18n: keep(DNS 选项索引锚点,显示由设置页映射资源)
+            JsonArray jsonArray = getDohConfigArray();
+            if(dohSelector>jsonArray.size()) {
+                KV.put(HawkConfig.DOH_URL, 0);
+                dohSelector = 0;
+            }
+            for (int i = 0; i < jsonArray.size(); i++) {
+                JsonObject dnsConfig = jsonArray.get(i).getAsJsonObject();
+                String name = dnsConfig.has("name") ? dnsConfig.get("name").getAsString() : "Unknown Name";
+                list.add(name);
+                if(dohSelector==(i+1))ips = dnsConfig.has("ips") ? dnsConfig.getAsJsonArray("ips") : null;
+            }
+            dnsHttpsList = list;
+        } catch (Exception e) {
+            LOG.e("OkGoHelper", e);
+        }
+
+        OkHttpClient.Builder builder = new OkHttpClient.Builder();
+        builder.proxySelector(proxySelector());
+        builder.proxyAuthenticator(proxyAuthenticator());
+        HttpLoggingInterceptor loggingInterceptor = new HttpLoggingInterceptor("OkExoPlayer");
+        loggingInterceptor.setPrintLevel(HttpLoggingInterceptor.Level.NONE);
+        loggingInterceptor.setColorLevel(Level.OFF);
+        builder.addInterceptor(loggingInterceptor);
+        try {
+            setOkHttpSsl(builder);
+        } catch (Throwable th) {
+            LOG.e("OkGoHelper", th);
+        }
+        builder.cache(new Cache(new File(AppContextHolder.context().getCacheDir().getAbsolutePath(), "dohcache"), 100 * 1024 * 1024));
+        OkHttpClient dohClient = builder.build();
+        String dohUrl = getDohUrl(KV.get(HawkConfig.DOH_URL, 0));
+//        if (!dohUrl.isEmpty()) is_doh = true;
+//        LOG.i("echo-initDnsOverHttps dohUrl:"+dohUrl);
+//        LOG.i("echo-initDnsOverHttps ips:"+ips);
+        // 官方 okhttp-dnsoverhttps 的 Builder 要求 url 非空 ⇒ "关闭" 时直接置空实例(调用方已判空回落到 Dns.SYSTEM)
+        dnsOverHttps = dohUrl.isEmpty() ? null
+                : new DnsOverHttps.Builder().client(dohClient).url(HttpUrl.get(dohUrl)).bootstrapDnsHosts((ips != null && !dohUrl.equals("https://doh.pub/dns-query")) ? DohIps(ips) : null).build();
+    }
+
+    // 自定义 DNS 解析器
+    static class CustomDns implements Dns {
+        private  ConcurrentHashMap<String, List<InetAddress>> map;
+        private final String excludeIps = "2409:8087:6c02:14:100::14,2409:8087:6c02:14:100::18,39.134.108.253,39.134.108.245";
+
+        // 接收外部注入的 DoH 实例
+        public CustomDns() {
+        }
+        @NonNull
+        @Override
+        public List<InetAddress> lookup(@NonNull String hostname) throws UnknownHostException {
+            String originalHost = hostname;
+            Map<String, String> hosts = myHosts;
+            if (hosts == null) hosts = ApiConfig.get().getMyHost();
+            if(hosts != null && !hosts.isEmpty() && hosts.containsKey(hostname)) {
+                hostname=hosts.get(hostname);
+            }
+            assert hostname != null;
+            if (isValidIpAddress(hostname)) {
+                return Collections.singletonList(InetAddress.getByName(hostname));
+            }
+            else {
+                Dns dns = dnsOverHttps != null ? dnsOverHttps : Dns.SYSTEM;
+                return  dns.lookup(hostname);
+            }
+        }
+
+        public synchronized void mapHosts(Map<String,String> hosts) throws UnknownHostException {
+            map=new ConcurrentHashMap<>();
+            for (Map.Entry<String, String> entry : hosts.entrySet()) {
+                String key = entry.getKey();
+                String value = entry.getValue();
+                if(isValidIpAddress(value)){
+                    map.put(key,Collections.singletonList(InetAddress.getByName(value)));
+                }else {
+                    map.put(key,getAllByName(value));
+                }
+            }
+        }
+
+        private List<InetAddress> getAllByName(String host) {
+            try {
+                // 获取所有与主机名关联的 IP 地址
+                InetAddress[] allAddresses = InetAddress.getAllByName(host);
+                if(excludeIps.isEmpty())return Arrays.asList(allAddresses);
+                // 创建一个列表用于存储有效的 IP 地址
+                List<InetAddress> validAddresses = new ArrayList<>();
+                Set<String> excludeIpsSet = new HashSet<>();
+                for (String ip : excludeIps.split(",")) {
+                    excludeIpsSet.add(ip.trim());  // 添加到集合，去除多余的空格
+                }
+                for (InetAddress address : allAddresses) {
+                    if (!excludeIpsSet.contains(address.getHostAddress())) {
+                        validAddresses.add(address);
+                    }
+                }
+                return validAddresses;
+            } catch (Exception e) {
+                return new ArrayList<>();
+            }
+        }
+
+        //简单判断减少开销
+        private boolean isValidIpAddress(String str) {
+            if (str.indexOf('.') > 0) return isValidIPv4(str);
+            return str.indexOf(':') > 0;
+        }
+
+        private boolean isValidIPv4(String str) {
+            String[] parts = str.split("\\.");
+            if (parts.length != 4) return false;
+            for (String part : parts) {
+                try {
+                    Integer.parseInt(part);
+                } catch (NumberFormatException e) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    // 爬虫/JS 请求在后台线程读,init/reloadDns 在主线程写
+    static volatile OkHttpClient defaultClient = null;
+    static volatile OkHttpClient noRedirectClient = null;
+
+    public static OkHttpClient getDefaultClient() {
+        return defaultClient;
+    }
+
+    public static OkHttpClient getNoRedirectClient() {
+        return noRedirectClient;
+    }
+
+    public static OkHttpClient getItvClient() {
+        return ItvClient;
+    }
+
+    public static void init() {
+        initDnsOverHttps();
+
+        OkHttpClient.Builder builder = new OkHttpClient.Builder();
+        HttpLoggingInterceptor loggingInterceptor = new HttpLoggingInterceptor("OkGo");
+
+        loggingInterceptor.setPrintLevel(HttpLoggingInterceptor.Level.NONE);
+        loggingInterceptor.setColorLevel(Level.OFF);
+
+        //builder.retryOnConnectionFailure(false);
+
+        builder.addInterceptor(loggingInterceptor);
+
+        builder.readTimeout(DEFAULT_MILLISECONDS, TimeUnit.MILLISECONDS);
+        builder.writeTimeout(DEFAULT_MILLISECONDS, TimeUnit.MILLISECONDS);
+        builder.connectTimeout(DEFAULT_MILLISECONDS, TimeUnit.MILLISECONDS);
+
+        builder.dns(new CustomDns());
+        builder.proxySelector(proxySelector());
+        builder.proxyAuthenticator(proxyAuthenticator());
+        try {
+            setOkHttpSsl(builder);
+        } catch (Throwable th) {
+            LOG.e("OkGoHelper", th);
+        }
+
+        HttpHeaders.setUserAgent("okhttp/" + OkHttp.VERSION);
+
+        OkHttpClient okHttpClient = builder.build();
+        // 原在 initPicasso 内设置(非 Picasso 专属):提升每主机并发上限
+        okHttpClient.dispatcher().setMaxRequestsPerHost(10);
+        OkGo.getInstance().setOkHttpClient(okHttpClient);
+
+        defaultClient = okHttpClient;
+
+        builder.followRedirects(false);
+        builder.followSslRedirects(false);
+        noRedirectClient = builder.build();
+
+        initExoOkHttpClient();
+    }
+
+    public static synchronized void reloadDns() {
+        initDnsOverHttps();
+
+        OkHttpClient.Builder builder = new OkHttpClient.Builder();
+        HttpLoggingInterceptor loggingInterceptor = new HttpLoggingInterceptor("OkGo");
+
+        loggingInterceptor.setPrintLevel(HttpLoggingInterceptor.Level.NONE);
+        loggingInterceptor.setColorLevel(Level.OFF);
+
+        builder.addInterceptor(loggingInterceptor);
+
+        builder.readTimeout(DEFAULT_MILLISECONDS, TimeUnit.MILLISECONDS);
+        builder.writeTimeout(DEFAULT_MILLISECONDS, TimeUnit.MILLISECONDS);
+        builder.connectTimeout(DEFAULT_MILLISECONDS, TimeUnit.MILLISECONDS);
+
+        builder.dns(new CustomDns());
+        builder.proxySelector(proxySelector());
+        builder.proxyAuthenticator(proxyAuthenticator());
+        try {
+            setOkHttpSsl(builder);
+        } catch (Throwable th) {
+            LOG.e("OkGoHelper", th);
+        }
+
+        HttpHeaders.setUserAgent("okhttp/" + OkHttp.VERSION);
+
+        OkHttpClient okHttpClient = builder.build();
+        // 与 init 同步:漏掉这行会让每主机并发上限退回默认 5
+        okHttpClient.dispatcher().setMaxRequestsPerHost(10);
+        OkGo.getInstance().setOkHttpClient(okHttpClient);
+
+        defaultClient = okHttpClient;
+
+        builder.followRedirects(false);
+        builder.followSslRedirects(false);
+        noRedirectClient = builder.build();
+
+        initExoOkHttpClient();
+        Parser.resetHttpClient();
+        com.github.catvod.net.OkHttp.resetClient();
+    }
+
+    private static synchronized void setOkHttpSsl(OkHttpClient.Builder builder) {
+        try {
+            // 自定义一个信任所有证书的TrustManager，添加SSLSocketFactory的时候要用到
+            final X509TrustManager trustAllCert =
+                    new X509TrustManager() {
+                        @Override
+                        public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authType) throws CertificateException {
+                        }
+
+                        @Override
+                        public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authType) throws CertificateException {
+                        }
+
+                        @Override
+                        public java.security.cert.X509Certificate[] getAcceptedIssuers() {
+                            return new java.security.cert.X509Certificate[]{};
+                        }
+                    };
+            final SSLSocketFactory sslSocketFactory = new SSLSocketFactoryCompat(trustAllCert);
+            builder.sslSocketFactory(sslSocketFactory, trustAllCert);
+            builder.hostnameVerifier(HttpsUtils.UnSafeHostnameVerifier);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+}

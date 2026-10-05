@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- AppTheme(Manifest 主题) -->
+    <color name="color_6200EE">#6200EE</color>
+    <color name="color_3700B3">#3700B3</color>
+    <color name="color_03DAC5">#03DAC5</color>
+
+    <color name="window_background">#F3EDF7</color>
+
+    <!-- 字幕文本色(PlayContainer) -->
+    <color name="color_FFFFFF">#ffffffff</color>
+    <color name="color_FFB6C1">#FFB6C1</color>
+</resources>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 12+ 系统启动画面(MainActivity 用;Android 11 及以下走 values/styles.xml 的等价定义):
+         只有静态图标(MediaBox 圆角方框+播放三角)+ 随深浅模式的背景,**不设 windowSplashScreenAnimationDuration、无动画** ——
+         应用首帧就绪后系统立即撤掉启动画面,不存在"等动画播完"从而延后看到内容的可能 -->
+    <style name="AppTheme.Splash" parent="AppTheme.NoActionBar">
+        <item name="android:windowSplashScreenBackground">@color/window_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon_mediabox</item>
+    </style>
+</resources>

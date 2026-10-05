@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 深色模式窗口背景(M3 surfaceContainer 基线);窗口背景必须不透明,理由见 values/colors.xml -->
+    <color name="window_background">#211F26</color>
+
+    <!-- 自适应图标背景(深色模式):ic_launcher / ic_launcher_round 均引用该色,
+         与窗口背景同色使图标与 App 深色主题一致;前景蓝色渐变柱在深底上仍可见 -->
+    <color name="ic_launcher_background">#211F26</color>
+</resources>

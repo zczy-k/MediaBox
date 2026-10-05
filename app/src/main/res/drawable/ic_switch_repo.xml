@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MediaBox 图标 · switch_repo (tools/rebrand_icons.py) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M480,180q-160,0 -280,110 -110,110 -110,270 0,170 120,285 110,105 270,105 170,0 285,-115 105,-105 105,-275h-90q0,120 -80,205 -80,85 -220,85 -130,0 -215,-85 -80,-85 -80,-215 0,-125 85,-210 80,-85 215,-85 100,0 175,50l-110,110h340V160l-80,80q-90,-60 -215,-60Z" />
+</vector>

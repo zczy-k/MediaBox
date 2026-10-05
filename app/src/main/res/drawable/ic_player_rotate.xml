@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MediaBox 图标 · player_rotate (tools/rebrand_icons.py) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M480,180q-160,0 -270,110T100,560h90q0,-120 85,-205 80,-85 205,-85 130,0 215,85 80,85 80,205 0,120 -85,205 -80,85 -205,85v90q160,0 270,-110t110,-270h-90q0,-120 -85,-205 -80,-85 -205,-85 -130,0 -215,85 -80,85 -80,205 0,120 85,205 80,85 205,85Z" />
+</vector>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MediaBox 图标 · light_mode (tools/rebrand_icons.py) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M480,480m-180,0a180,180 0 1,0 360,0a180,180 0 1,0 -360,0M430,60h100v140H430ZM430,760h100v140H430ZM60,430h140v100H60ZM760,430h140v100H760ZM170,270l70,70 -100,100 -70,-70ZM820,270l-70,70 100,100 70,-70ZM170,690l-70,-70 100,-100 70,70ZM820,690l-70,-70 -100,100 70,70Z" />
+</vector>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MediaBox 图标 · repeat (tools/rebrand_icons.py) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M200,360q0,-80 80,-80h400v-80l200,160 -200,160v-80H320q-40,0 -40,40v80ZM760,600q0,80 -80,80H280v80L80,600l200,-160v80h360q40,0 40,-40v-80Z" />
+</vector>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MediaBox 图标 · theme_liquid_glass (tools/rebrand_icons.py) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M480,120q-320,0 -320,300v300q0,140 140,140h360q140,0 140,-140V420q0,-300 -320,-300ZM480,220q220,0 220,220v220q0,60 -60,60H320q-60,0 -60,-60V440q0,-220 220,-220Z" />
+</vector>

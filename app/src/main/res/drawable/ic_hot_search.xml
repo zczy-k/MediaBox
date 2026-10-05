@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MediaBox 图标 · hot_search (tools/rebrand_icons.py) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M480,120q60,120 0,220t0,200q0,-80 60,-140t60,-140q120,60 120,220 0,120 -90,200t-90,160 -90,-160 -90,-160 0,-80 90,-200t90,-200Z" />
+</vector>

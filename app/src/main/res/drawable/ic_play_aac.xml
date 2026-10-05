@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MediaBox 图标 · play_aac (tools/rebrand_icons.py) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M400,640q-50,0 -85,-35t-35,-85q0,-50 35,-85t85,-35q25,0 46,9v-269l220,-50v295q0,50 -35,85t-85,35q-25,0 -46,-9v89q0,50 -35,85t-85,35ZM620,120h60v240h-60ZM700,180h60v180h-60Z" />
+</vector>

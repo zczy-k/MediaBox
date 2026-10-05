@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MediaBox 图标 · pref_incognito (tools/rebrand_icons.py) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M320,240h320q-60,90 -60,180t60,180H320q-70,0 -120,-50t-50,-130 0,-120 50,-180 50,-60 120,-60ZM640,240q60,90 60,180t-60,180h-50v-360ZM440,300h80v360h-80Z" />
+</vector>

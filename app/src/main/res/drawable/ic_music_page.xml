@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- MediaBox 图标 · music_page (tools/rebrand_icons.py) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="960"
+    android:viewportHeight="960">
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M400,720q-60,0 -100,-40t-40,-100q0,-60 40,-100t100,-40q30,0 55,11v-341l260,-60v350q0,60 -40,100t-100,40q-30,0 -55,-11v101q0,60 -40,100t-100,40Z" />
+</vector>

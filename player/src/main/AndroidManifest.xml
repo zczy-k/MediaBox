@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+        2026-09-13 权限梳理:本模块原先声明的一批权限全项目零引用,已删除 ——
+        READ_PHONE_STATE(唯一使用者 ScreenUtils.checkIsPhone 已改造为不需要电话权限)、
+        GET_TASKS(Android 5+ 已废弃)、ACCESS_FINE_LOCATION(DLNA 组播锁不需要定位)、
+        REQUEST_INSTALL_PACKAGES(应用内自更新链早已删除)、
+        READ/WRITE_EXTERNAL_STORAGE(存储权限统一由 app 模块声明,且带 maxSdkVersion=32)。
+        保留项都有实际使用者:INTERNET / ACCESS_NETWORK_STATE 播放与 DLNA、
+        ACCESS_WIFI_STATE + CHANGE_WIFI_MULTICAST_STATE(DLNACastManager 组播锁)、
+        WAKE_LOCK(MusicPlaybackService 的 PARTIAL_WAKE_LOCK)。
+    -->
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+</manifest>
