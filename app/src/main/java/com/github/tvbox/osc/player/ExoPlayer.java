@@ -104,15 +104,41 @@ public class ExoPlayer extends ExoMediaPlayer {
         return preferSoftwareDecode;
     }
 
+    /**
+     * 视频解码器选择器。
+     *
+     * <p>软解偏好沿用上游语义({@code PREFER_SOFTWARE} / {@code DEFAULT}),但补一层**硬件解码器
+     * 优先排序**:部分 ROM 的 MediaCodec 列表会把软件解码器(如 {@code OMX.google.*} /
+     * {@code c2.android.*})排在硬件之前,而上游 {@code MediaCodecSelector.DEFAULT} 只做
+     * "能用即可"的筛选、不保证顺序,导致 4K / AV1 源被挑中软解 → 掉帧。
+     *
+     * <p>排序规则:硬件加速的排在前面,同组内保持上游原顺序(stable)。{@code MediaCodecInfo}
+     * 在 media3 1.11.1 的公开 API 里没有直接的 isHardwareAccelerated(),用名称前缀判定 ——
+     * 系统软解命名固定为 {@code OMX.google.} / {@code c2.android.} / {@code OMX.ffmpeg.},
+     * 厂商硬解一律带自家前缀(如 {@code OMX.qcom.} / {@code OMX.MTK.} / {@code c2.qti.})。
+     */
     private static final MediaCodecSelector EXO_VIDEO_CODEC_SELECTOR =
             (mimeType, requiresSecureDecoder, requiresTunnelingDecoder) -> {
                 List<MediaCodecInfo> infos =
                         (preferSoftwareDecode ? MediaCodecSelector.PREFER_SOFTWARE : MediaCodecSelector.DEFAULT)
                                 .getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder);
+                // 只在"偏好硬解"时重排;用户显式选软解时不动,尊重其选择
+                if (!preferSoftwareDecode && infos.size() > 1) {
+                    infos = new ArrayList<>(infos);
+                    infos.sort((a, b) -> Boolean.compare(isSoftwareCodec(b), isSoftwareCodec(a)));
+                }
                 LOG.i("echo-exo-selector: mime=" + mimeType + " preferSoft=" + preferSoftwareDecode
                         + " count=" + infos.size() + " first=" + (infos.isEmpty() ? "none" : infos.get(0).name));
                 return infos;
             };
+
+    /** 系统软件解码器的固定命名前缀;厂商硬解不带这些前缀 */
+    private static boolean isSoftwareCodec(MediaCodecInfo info) {
+        String name = info.name;
+        return name.startsWith("OMX.google.")
+                || name.startsWith("c2.android.")
+                || name.startsWith("OMX.ffmpeg.");
+    }
 
     public static final int ERROR_KIND_UNKNOWN = 0;
     public static final int ERROR_KIND_NETWORK = 1;
