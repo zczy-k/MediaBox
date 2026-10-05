@@ -21,8 +21,7 @@ val MediaBoxSeedArgb: Int = 0xFF1B6EF3.toInt()
 
 val MediaBoxPaletteStyle: PaletteStyle = PaletteStyle.TonalSpot
 
-/** 主题配置:只剩"明暗模式"和"纯黑"两个维度 */
+/** 主题配置:只剩"明暗模式"一个维度 */
 data class ThemeConfig(
     val mode: Int,
-    val pureBlack: Boolean,
 )

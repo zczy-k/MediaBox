@@ -163,7 +163,6 @@ public class HawkConfig {
     public static final String LIVE_SUBSCRIBE_LIST = "live_subscribe_list";
     // 主题设置(2026-09-11,照搬 示例文件/android 主题设置页)
     public static final String THEME_MODE = "theme_mode"; //0 跟随系统 1 浅色 2 深色
-    public static final String THEME_PURE_BLACK = "theme_pure_black"; //深色模式下容器色压成纯黑(仅深色生效)
     // 液态玻璃参数已固定为编译期常量(见 ui/theme/LiquidGlassState.kt),不再走 KV,故无对应键。
     // 迅雷下载库的伪造设备标识(2026-09-15 由独立 SharedPreferences `rand_thunder_id` 迁入 KV,该 SP 与其 xml 已废弃)
     public static final String THUNDER_IMEI = "thunder_imei";

@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version / tag (e.g. v1.0.0)'
+        description: 'Release version / tag (e.g. v1.0.1) —— 同时作为 APK 的 versionName'
         required: true
-        default: 'v1.0.0'
+        default: 'v1.0.1'
       prerelease:
         description: '标记为 Pre-release'
         type: boolean
@@ -109,7 +109,9 @@ jobs:
           echo "::notice::签名材料已从 Secrets 还原"
 
       - name: Build release APK
-        run: ./gradlew assembleRelease --no-daemon --stacktrace
+        # -PappVersionName 把 tag 注入 APK 的 versionName:App 内更新检查拿 tag 与本地
+        # versionName 比较,两者不同源会让"永远提示有新版本"或"永远提示已最新"
+        run: ./gradlew assembleRelease --no-daemon --stacktrace -PappVersionName='${{ github.event.inputs.version }}'
 
       - name: Rename & verify APK
         id: apk

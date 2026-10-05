@@ -131,7 +131,6 @@ public final class KVKeySpec implements KVDecoder.TypeRegistry {
         register(HawkConfig.DANMU_OPEN, false);
         register(HawkConfig.DANMU_RANDOM_COLOR, false);
         register(HawkConfig.DANMU_API_USE_DEFAULT, false);
-        register(HawkConfig.THEME_PURE_BLACK, false);
 
         // ---- float ----
         register(HawkConfig.DANMU_SPEED, 0f);

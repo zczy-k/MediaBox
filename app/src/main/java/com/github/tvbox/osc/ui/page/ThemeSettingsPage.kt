@@ -25,7 +25,6 @@ import com.github.tvbox.osc.ui.components.SegmentOption
 import com.github.tvbox.osc.ui.components.SettingsCard
 import com.github.tvbox.osc.ui.components.SettingsCardPosition
 import com.github.tvbox.osc.ui.components.SettingsGroup
-import com.github.tvbox.osc.ui.components.SettingsSwitchRow
 import com.github.tvbox.osc.ui.components.TopBarActionBox
 import com.github.tvbox.osc.ui.theme.AppThemeState
 import com.github.tvbox.osc.ui.theme.ThemeMode
@@ -65,7 +64,7 @@ fun ThemeSettingsScreen(onNavigateBack: () -> Unit) {
             Spacer(Modifier.height(topPad - 20.dp))
 
             SettingsGroup(title = stringResource(R.string.theme_color)) {
-                SettingsCard(SettingsCardPosition.FIRST) {
+                SettingsCard(SettingsCardPosition.SINGLE) {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -76,13 +75,6 @@ fun ThemeSettingsScreen(onNavigateBack: () -> Unit) {
                             onModeSelected = { AppThemeState.setMode(it) },
                         )
                     }
-                }
-                SettingsCard(SettingsCardPosition.LAST) {
-                    SettingsSwitchRow(
-                        title = stringResource(R.string.theme_pure_black),
-                        checked = config.pureBlack,
-                        onCheckedChange = { AppThemeState.setPureBlack(it) },
-                    )
                 }
             }
 

@@ -85,6 +85,9 @@
     <string name="update_download_failed">Download failed, network error</string>
     <string name="update_no_apk">This release has no downloadable APK</string>
     <string name="update_close">Close</string>
+    <string name="force_update_title">Update available</string>
+    <string name="force_update_message">You are on v%1$s. Version v%2$s is required to keep using the app.</string>
+    <string name="force_update_now">Update now</string>
     <string name="settings_subtitle_enabled">Enable subtitles</string>
     <string name="settings_subtitle_enabled_subtitle">When off, subtitles are neither loaded nor shown</string>
     <string name="settings_subtitle_sources">Subtitle sources</string>
@@ -396,7 +399,6 @@
     <string name="theme_mode_auto">Auto</string>
     <string name="theme_mode_light">Light</string>
     <string name="theme_mode_dark">Dark</string>
-    <string name="theme_pure_black">Pure black</string>
 
     <!-- Settings: playback -->
     <string name="settings_play_kernel">Player Engine</string>

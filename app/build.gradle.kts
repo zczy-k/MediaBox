@@ -24,6 +24,28 @@ fun signingProp(name: String): String? =
             }
         ?: (project.findProperty(name) as String?)?.takeIf { it.isNotEmpty() }
 
+/**
+ * 版本号来源:CI 由 `-PappVersionName=vX.Y.Z` 注入(取自 Release tag,与 tag 同源 ——
+ * 这样 App 内更新检查拿 tag 与本地 versionName 比较才成立);本地构建用下面的默认值。
+ */
+val appVersionName: String = (project.findProperty("appVersionName") as String?)
+    ?.removePrefix("v")
+    ?.removePrefix("V")
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+    ?: "1.0.1"
+
+/**
+ * versionCode 由 versionName 推导,不再手工维护 —— 避免"发了新版本忘了加 versionCode"
+ * 导致新包装不上旧包(系统要求 versionCode 严格递增)。
+ * 1.2.3 → 10203;每段最多取两位(超出截断),保证单调递增。
+ */
+fun versionCodeOf(name: String): Int {
+    val parts = name.split('.', '-', '_')
+    fun seg(i: Int) = parts.getOrNull(i)?.filter { it.isDigit() }?.take(2)?.toIntOrNull() ?: 0
+    return seg(0) * 10_000 + seg(1) * 100 + seg(2)
+}
+
 android {
     namespace = "com.github.tvbox.osc"
     compileSdk = libs.versions.compileSdk.get().toInt()
@@ -33,8 +55,8 @@ android {
         applicationId = "com.zczy.mediabox"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = libs.versions.targetSdk.get().toInt()
-        versionCode = 24
-        versionName = "1.0.0"
+        versionCode = versionCodeOf(appVersionName)
+        versionName = appVersionName
         multiDexEnabled = true
         ndk {
             abiFilters += setOf("arm64-v8a")

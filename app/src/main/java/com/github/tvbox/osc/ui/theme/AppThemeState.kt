@@ -23,17 +23,11 @@ object AppThemeState {
 
     private fun load(): ThemeConfig = ThemeConfig(
         mode = KV.get(HawkConfig.THEME_MODE, ThemeMode.FOLLOW_SYSTEM),
-        pureBlack = KV.get(HawkConfig.THEME_PURE_BLACK, false),
     )
 
     fun setMode(mode: Int) {
         KV.put(HawkConfig.THEME_MODE, mode)
         current = current.copy(mode = mode)
-    }
-
-    fun setPureBlack(enabled: Boolean) {
-        KV.put(HawkConfig.THEME_PURE_BLACK, enabled)
-        current = current.copy(pureBlack = enabled)
     }
 
     fun isDark(systemDark: Boolean): Boolean = when (current.mode) {

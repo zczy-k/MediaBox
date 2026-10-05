@@ -48,8 +48,7 @@ fun MediaBoxTheme(
     }
 
     // 固定蓝色基调:深浅各一套方案,懒算一次后常驻(不再跟随壁纸取色,也不再受自定义色影响)
-    val baseScheme = AppThemeState.scheme(darkTheme)
-    val colorScheme = if (darkTheme && config.pureBlack) baseScheme.toPureBlack() else baseScheme
+    val colorScheme = AppThemeState.scheme(darkTheme)
 
     if (manageStatusBarIcons) {
         ApplyAppThemeBars(isDark = darkTheme)
@@ -108,7 +107,7 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 @Composable
 private fun MediaBoxThemeLightPreview() {
     MediaBoxTheme(
-        config = ThemeConfig(ThemeMode.LIGHT, pureBlack = false),
+        config = ThemeConfig(ThemeMode.LIGHT),
     ) {
         Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
             Text("MediaBox")
@@ -120,7 +119,7 @@ private fun MediaBoxThemeLightPreview() {
 @Composable
 private fun MediaBoxThemeDarkPreview() {
     MediaBoxTheme(
-        config = ThemeConfig(ThemeMode.DARK, pureBlack = false),
+        config = ThemeConfig(ThemeMode.DARK),
     ) {
         Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
             Text("MediaBox")

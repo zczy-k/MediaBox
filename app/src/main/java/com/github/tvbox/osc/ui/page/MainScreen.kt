@@ -68,6 +68,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.github.tvbox.osc.R
 import com.github.tvbox.osc.server.ControlManager
 import com.github.tvbox.osc.ui.activity.LivePlayActivity
+import com.github.tvbox.osc.ui.components.ForceUpdateGate
 import com.github.tvbox.osc.ui.components.MediaBoxAlertDialog
 import com.github.tvbox.osc.ui.components.LocalGlassPauseRecording
 import com.github.tvbox.osc.ui.components.LocalSheetDismissThen
@@ -105,6 +106,9 @@ fun MainScreen() {
         if (boot is AppBootstrap.Boot.Error) {
             BootErrorDialog((boot as AppBootstrap.Boot.Error).msg)
         }
+        // 启动时的强制更新闸门:查到新版本就拦在这里,必须更新完才能继续用。
+        // 放在最后 —— 它的层级要高于正常内容(与启动失败弹窗同级,互不遮挡的场景由状态决定)
+        ForceUpdateGate()
     }
 }
 

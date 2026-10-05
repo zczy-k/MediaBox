@@ -85,6 +85,9 @@
     <string name="update_download_failed">下載失敗，網路連線錯誤</string>
     <string name="update_no_apk">該版本沒有可下載的安裝檔</string>
     <string name="update_close">關閉</string>
+    <string name="force_update_title">發現新版本</string>
+    <string name="force_update_message">目前版本 v%1$s，必須更新到 v%2$s 後才能繼續使用</string>
+    <string name="force_update_now">立即更新</string>
     <string name="settings_subtitle_enabled">啟用字幕</string>
     <string name="settings_subtitle_enabled_subtitle">關閉後播放時不載入、不顯示字幕</string>
     <string name="settings_subtitle_sources">字幕來源</string>
@@ -396,7 +399,6 @@
     <string name="theme_mode_auto">自動</string>
     <string name="theme_mode_light">淺色</string>
     <string name="theme_mode_dark">深色</string>
-    <string name="theme_pure_black">純黑模式</string>
 
     <!-- 設定:播放設定 -->
     <string name="settings_play_kernel">播放核心</string>
