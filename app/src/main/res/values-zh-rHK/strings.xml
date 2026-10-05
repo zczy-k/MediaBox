@@ -42,8 +42,6 @@
     <string name="dialog_api_url_hint">請輸入 API 地址</string>
     <string name="live_repo_entry_not_deletable">倉庫列表來自倉庫地址，不能單獨刪除</string>
     <string name="settings_search_threads">搜尋線程</string>
-    <string name="settings_github">訪問 GitHub 儲存庫</string>
-    <string name="settings_github_subtitle">訪問項目原始碼儲存庫</string>
     <string name="player_rotate_portrait">旋轉到縱向</string>
     <string name="toast_local_config_read_failed">讀取本地設定失敗</string>
     <string name="toast_local_source_unreadable">本地源檔案讀不到\n請開啟「所有檔案存取」後重試（或重新匯入本地源）</string>

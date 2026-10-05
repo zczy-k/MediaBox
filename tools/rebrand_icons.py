@@ -165,7 +165,7 @@ MAP = {
     "preload_duration": "clock", "preload_next": "next",
     "repeat": "repeat", "repeat_one": "repeat_one", "search_history": "history",
     "settings_about": "info", "settings_api": "api", "settings_doh": "tunnel",
-    "settings_github": "github", "settings_history": "history",
+"settings_history": "history",
     "settings_play": "play_box", "settings_preference": "tune",
     "settings_start": "home", "settings_theme": "palette",
     "subscribe_add": "add", "subscribe_source": "api", "switch_repo": "refresh",

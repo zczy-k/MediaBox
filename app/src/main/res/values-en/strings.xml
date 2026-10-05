@@ -75,7 +75,7 @@
     <string name="subtitle_switch_off">Subtitles: off (tap to turn on)</string>
     <string name="settings_group_subtitle">Subtitles</string>
     <string name="settings_check_update">Check for updates</string>
-    <string name="settings_check_update_subtitle">Fetch the latest release from GitHub</string>
+    <string name="settings_check_update_subtitle">Check whether a new version is available</string>
     <string name="update_checking">Checking for updates…</string>
     <string name="update_latest">You are on the latest version</string>
     <string name="update_check_failed">Update check failed, please check your network</string>
@@ -506,8 +506,6 @@
     <string name="settings_about_subtitle">View details</string>
     <string name="settings_about_version">Version v%1$s</string>
     <string name="settings_about_disclaimer">This app only aggregates and displays content from the internet. It does not host, create, upload, store, or download any content, and accepts no donations, tips, or payments. It is provided for open-source learning purposes only; please uninstall it within 24 hours of installation.\n\nKeep the credits when redistributing\nhttps://github.com/CatVodTVOfficial/TVBoxOSC\nhttps://github.com/q215613905/TVBoxOS\\n\\nProject home\\nhttps://github.com/zczy-k/MediaBox</string>
-    <string name="settings_github">Visit GitHub Repository</string>
-    <string name="settings_github_subtitle">Open the project source repository</string>
 
     <!-- Settings: preferences -->
     <string name="settings_preference_title">Preferences</string>

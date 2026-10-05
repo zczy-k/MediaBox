@@ -2,9 +2,6 @@
 
 package com.github.tvbox.osc.ui.page
 
-import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import android.os.SystemClock
 import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
@@ -400,24 +397,15 @@ fun SettingsPage(
                         onClick = { aboutSheet = true },
                     )
                 }
-            
-                    SettingsCard(SettingsCardPosition.MIDDLE) {
-                        SettingsRow(
-title = stringResource(R.string.settings_check_update),
+                SettingsCard(SettingsCardPosition.LAST) {
+                    SettingsRow(
+                        title = stringResource(R.string.settings_check_update),
                         subtitle = stringResource(R.string.settings_check_update_subtitle),
                         iconRes = R.drawable.ic_switch_repo,
-                            valueText = versionName,
-                            onClick = startUpdateCheck,
-                        )
-                    }
-                    SettingsCard(SettingsCardPosition.LAST) {
-                        SettingsRow(
-                            title = stringResource(R.string.settings_github),
-                            subtitle = stringResource(R.string.settings_github_subtitle),
-                            iconRes = R.drawable.ic_settings_github,
-                            onClick = { openExternalUrl(context, GITHUB_REPO_URL) },
-                        )
-                    }
+                        valueText = versionName,
+                        onClick = startUpdateCheck,
+                    )
+                }
             }
         }
     }
@@ -518,16 +506,6 @@ private fun AboutSheet(versionName: String, onDismiss: () -> Unit) {
                 modifier = Modifier.padding(top = 8.dp),
             )
         }
-    }
-}
-
-private const val GITHUB_REPO_URL = "https://github.com/zczy-k/MediaBox"
-
-private fun openExternalUrl(context: Context, url: String) {
-    try {
-        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-    } catch (e: Exception) {
-        Toast.makeText(context, context.getString(R.string.toast_no_app_for_link), Toast.LENGTH_SHORT).show()
     }
 }
 
