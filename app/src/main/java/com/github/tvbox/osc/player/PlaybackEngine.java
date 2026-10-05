@@ -170,6 +170,9 @@ public final class PlaybackEngine implements PlaybackHostApi {
                 // 预载排期、进度落盘、媒体会话、弹幕启动一概不参与 —— 否则会拿上一部点播的
                 // vod 去更新通知/预载(错内容)或把直播画面当成点播起播
                 if (liveMode) return;
+                // 播放质量看门狗:能播但持续卡顿 → 换线 / 换源。
+                // 放在 liveMode 短路之后 —— 直播页有自己的换源状态机,不该被点播这套判据打扰
+                controller.onPlayStateForQuality(playState);
                 if (playState == VideoView.STATE_PLAYING) {
                     // 纯音频渲染兜底(2026-09-13):URL 预判漏网(无后缀音乐直链)时,轨道信息就绪后补切
                     controller.ensureAudioOnlyRender();
@@ -539,6 +542,8 @@ public final class PlaybackEngine implements PlaybackHostApi {
         if (page != null) page.onServiceStopped();
         // 桥切回无页面桥:否则已释放的控制器仍指向那个页面,后续迟到的超时消息会把提示/错误弹到已销毁的页面上
         controller.setViewBridge(headlessView);
+        // 质量看门狗停表:引擎已释放,再触发换线/换源会把动作打到已销毁的页面上
+        controller.stopQualityWatchdog();
         controller.onHostDestroy();
         // 强制再收一次会话:`stopMusicSession()` 走的是带**归属守卫**的 stopSession,
         // 而此时 owner 往往还是那个页面(守卫拒停)⇒ 通知与 wake/wifi 锁会残留。释放路径必须绕过守卫。

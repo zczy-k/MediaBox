@@ -566,11 +566,39 @@ public class PlaybackController {
     /** 尝试/换线/解码/会话标记状态(见 PlaybackAttemptState) */
     private final PlaybackAttemptState st = new PlaybackAttemptState();
 
+    /**
+     * 播放质量看门狗:能播但持续卡顿 → 换线 / 换源。
+     *
+     * <p>判据与滞回见 {@link PlaybackQualityWatchdog};处置策略见
+     * {@link PlaybackRetryDelegate#handlePlaybackTooSlow()}。
+     * 直播模式不参与(直播页有自己的换源状态机)。
+     */
+    private final PlaybackQualityWatchdog quality = new PlaybackQualityWatchdog(new PlaybackQualityWatchdog.Host() {
+        @Override
+        public int playState() {
+            PlaybackViewBridge v = view;
+            return v == null ? -1 : v.currentPlayState();
+        }
+
+        @Override
+        public long position() {
+            PlaybackViewBridge v = view;
+            return v == null ? -1L : v.currentPosition();
+        }
+
+        @Override
+        public void onPlaybackTooSlow() {
+            retry.handlePlaybackTooSlow();
+        }
+    });
+
     // -------------------- 状态开关(供页面在既有流程点调用) --------------------
 
     /** 新一次播放的清场:重试阶梯 + 内核/解码自动态 + 起播标记(内容边界标记仍在调用方) */
     public void beginNewPlay() {
         st.beginNewPlay();
+        // 内容边界:质量看门狗重新计(换集/换源/重播后不该继承上一段的劣质累计)
+        quality.reset();
         // 新内容开始 ⇒ 上一条"播完待撤会话"的判定作废(否则那条迟到的消息会打到本次新会话上)
         timeouts.cancelPendingCompletionDrop();
         // 换内容(换集/换线/换源/重播)⇒ 上一次确认的"纯音频"作废,由新内容自己重新确认
@@ -1227,6 +1255,24 @@ public class PlaybackController {
      */
     public void onPlayerStateForPreload(int playState) {
         preload.onPlayerState(playState);
+    }
+
+    /**
+     * 播放状态变化驱动"播放质量看门狗"(页面状态回调里调用;直播模式由调用方短路)。
+     * 只有 PLAYING / BUFFERING 才计时 —— 暂停、播完、空闲时位置本就不动,计入会把暂停误判成卡顿。
+     */
+    public void onPlayStateForQuality(int playState) {
+        quality.onPlayState(playState);
+    }
+
+    /** 内容 / 线路 / 片源边界:清质量看门狗的累计与位置基准(冷却期不动) */
+    public void resetQualityWatchdog() {
+        quality.reset();
+    }
+
+    /** 页面销毁 / 引擎释放:停表(否则 Handler 会在无人接收时继续空转) */
+    public void stopQualityWatchdog() {
+        quality.stop();
     }
 
     /** 切集/换线/换源/重播:作废在途预解析与预载数据(稳定播放后重新评估) */

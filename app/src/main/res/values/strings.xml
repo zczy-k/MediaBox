@@ -515,6 +515,7 @@
     <string name="player_switch_line">线路切换至%1$s</string>
     <string name="player_get_url_timeout">获取播放地址超时</string>
     <string name="player_play_timeout">播放超时</string>
+    <string name="player_play_failed_all">已轮询完所有片源与线路，均无法流畅播放</string>
     <string name="player_get_info_error">获取播放信息错误</string>
     <string name="player_getting_info">正在获取播放信息</string>
     <string name="player_play_url_empty">获取播放地址为空</string>

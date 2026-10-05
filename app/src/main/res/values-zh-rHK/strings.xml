@@ -33,6 +33,7 @@
     <string name="toast_folder_data_missing">文件夾數據缺失，無法打開</string>
     <string name="player_get_url_timeout">獲取播放地址超時</string>
     <string name="player_play_timeout">播放超時</string>
+    <string name="player_play_failed_all">已輪詢完所有片源與線路，均無法流暢播放</string>
     <string name="player_get_info_error">獲取播放資訊錯誤</string>
     <string name="player_getting_info">正在獲取播放資訊</string>
     <string name="player_play_url_empty">獲取播放地址為空</string>

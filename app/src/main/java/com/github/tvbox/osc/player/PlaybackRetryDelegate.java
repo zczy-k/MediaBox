@@ -346,6 +346,39 @@ final class PlaybackRetryDelegate {
         return true;
     }
 
+    /**
+     * 播放质量看门狗判定"当前线路 / 片源持续卡顿"时的处置。
+     *
+     * <p>策略:
+     * <ol>
+     *   <li>开了「自动换线」→ 先在同一片源内换下一条线路(代价小,优先);</li>
+     *   <li>没开「自动换线」、或同源线路已轮完 → 换到下一个片源;</li>
+     *   <li>片源与线路都轮完 → 明确报播放失败,不再无休止地换。</li>
+     * </ol>
+     *
+     * <p>用户手动点过线路({@code userPickedLine})时不覆盖其选择,直接走换源。
+     *
+     * @return true = 已接管(换线或换源);false = 全部轮完,已报失败
+     */
+    boolean handlePlaybackTooSlow() {
+        PlaybackAttemptState st = host.attemptState();
+        PlaybackViewBridge view = host.view();
+        if (view == null) return false;
+        boolean lineFirst = !st.userPickedLine
+                && st.allowAutoSwitchLine
+                && KV.get(HawkConfig.AUTO_SWITCH_LINE, false);
+        if (lineFirst) {
+            LOG.i("echo-quality: try next line first");
+            if (tryNextLine()) return true;
+        }
+        LOG.i("echo-quality: try next source");
+        if (view.onLinesExhausted()) return true;
+        LOG.i("echo-quality: all sources and lines exhausted");
+        host.stopMusicSessionForFailedPlayback();
+        showErrorTip(PlaybackController.str(R.string.player_play_failed_all));
+        return false;
+    }
+
     void handleResolvePlayUrlTimeout() {
         PlaybackAttemptState st = host.attemptState();
         if (retryWithFreshResolve("resolveTimeout")) return;

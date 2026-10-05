@@ -601,7 +601,16 @@ class DetailViewModel : ViewModel() {
         pageState.value = PageState.Empty(msg)
     }
 
-    fun startFallbackAfterLinesExhausted(): Boolean = startFallbackIfNeeded(auto = true, fromLinesExhausted = true)
+    /**
+     * 线路耗尽后的换源入口(播放侧在"所有线路试完"或"质量看门狗判定持续卡顿"时调用)。
+     *
+     * <p>与 [onDetailUnavailable] / [handleEmptyDetail] 同因:候选只能来自聚合搜索,
+     * 不先保证搜索在跑,[loadNextFallbackCandidate] 会在候选为空时直接收尾并清掉自动接管。
+     */
+    fun startFallbackAfterLinesExhausted(): Boolean {
+        ensureSourceSearchRunning()
+        return startFallbackIfNeeded(auto = true, fromLinesExhausted = true)
+    }
 
     private fun startFallbackIfNeeded(auto: Boolean, fromLinesExhausted: Boolean = false): Boolean {
         val currentSource = ApiConfig.get().getSource(sourceKey)
