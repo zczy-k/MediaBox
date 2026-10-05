@@ -499,7 +499,7 @@ class DetailViewModel : ViewModel() {
             }
             if (tokenStr == currentTokenStr()) {
                 sourcesSearching.value = false
-                if (fallbackAutoSwitch && !fallbackLoadingCandidate) loadNextFallbackCandidate()
+                if (shouldAutoTakeOver()) loadNextFallbackCandidate()
             }
         }
     }
@@ -519,7 +519,7 @@ class DetailViewModel : ViewModel() {
             if (fresh.isNotEmpty()) {
                 synchronized(fallbackCandidates) { fallbackCandidates.addAll(fresh) }
                 publishSourceChips()
-                if (fallbackAutoSwitch && !fallbackLoadingCandidate) loadNextFallbackCandidate()
+                if (shouldAutoTakeOver()) loadNextFallbackCandidate()
             }
             val related = videos.filter {
                 !it.id.isNullOrEmpty() && it.name?.trim() != searchTitle
@@ -536,6 +536,23 @@ class DetailViewModel : ViewModel() {
     }
 
     private fun currentTokenStr(): String = "detail_$searchToken"
+
+    /**
+     * 现在是否该由"聚合搜索候选"自动接管当前页面。
+     *
+     * <p><b>为什么不只看 `fallbackAutoSwitch`</b>:它是可变标记,而 [loadNextFallbackCandidate]
+     * 在"候选为空且搜索未在跑"时会走 [finishFallbackWithoutResult] → [resetEngineState],
+     * 把刚置上的 `fallbackAutoSwitch` 清掉。一旦清掉就**永久失去接管能力** ——
+     * 外部表现正是"底部候选列表一直在刷新、却永远不自动切过去"。
+     *
+     * <p>补一条不依赖该标记的判据:**详情页停在空态 = 当前源取不到内容**,这时有候选就该换。
+     * 这条判据由 `pageState` 直接决定,不受任何标记清场影响。
+     *
+     * <p>不会造成反复切换:`candidateKeys` 在 `resetEngineState(keepChips = true)` 里**不清**,
+     * 已见过的候选进不了 `fresh`,`onSearchResultEvent` 不会为同一批候选重复触发。
+     */
+    private fun shouldAutoTakeOver(): Boolean =
+        !fallbackLoadingCandidate && (fallbackAutoSwitch || pageState.value is PageState.Empty)
 
     private fun publishSourceChips() {
         val candidates = synchronized(fallbackCandidates) { fallbackCandidates.toList() }
