@@ -125,11 +125,13 @@ jobs:
           APKSIGNER="$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -name apksigner -type f | sort -r | head -n1)"
           echo "apksigner: $APKSIGNER"
           if [ -n "$APKSIGNER" ]; then
-            # 必须是已签名包,且 signer 与 Secrets 里的别名一致(防止误用别 keystore)
+            # 必须是已签名包;再确认 signer 的 DN 里有 MediaBox(防止误用别keystore)。
+            # 注意比对的是证书 DN(CN=MediaBox),不是 key alias —— 两者不必同名,
+            # 早先按别名小写 mediabox 匹配导致好包被判失败。
             CERTS="$("$APKSIGNER" verify --print-certs "$OUT")" || { echo "::error::APK 签名校验失败"; exit 1; }
             echo "$CERTS"
-            echo "$CERTS" | grep -q "mediabox" \
-              || { echo "::error::signer 与 Secrets 别名不符(期望包含 mediabox)"; exit 1; }
+            echo "$CERTS" | grep -qi "mediabox" \
+              || { echo "::error::signer DN 与预期不符(期望包含 MediaBox)"; exit 1; }
           else
             echo "::warning::未找到 apksigner，跳过签名校验"
           fi
