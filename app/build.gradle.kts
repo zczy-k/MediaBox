@@ -46,6 +46,18 @@ fun versionCodeOf(name: String): Int {
     return seg(0) * 10_000 + seg(1) * 100 + seg(2)
 }
 
+/**
+ * 是否启用"启动强制更新"闸门。
+ *
+ * <p>默认 true —— 正式发布包必须强制更新。CI 构建**自用调试包**时传 `-PforceUpdate=false`
+ * 关掉,否则新版本一发布,自己装的调试包也会被自己的强制更新弹窗拦住。
+ *
+ * <p>另外代码里还有一层 `BuildConfig.DEBUG` 判断(Android Studio 直接跑的包永不检查),
+ * 与本值相互独立。
+ */
+val forceUpdateEnabled: Boolean =
+    (project.findProperty("forceUpdate") as String?)?.toBooleanStrictOrNull() ?: true
+
 android {
     namespace = "com.github.tvbox.osc"
     compileSdk = libs.versions.compileSdk.get().toInt()
@@ -57,6 +69,8 @@ android {
         targetSdk = libs.versions.targetSdk.get().toInt()
         versionCode = versionCodeOf(appVersionName)
         versionName = appVersionName
+        // 启动强制更新闸门的开关(见 forceUpdateEnabled 注释):CI 测试包用 -PforceUpdate=false 关掉
+        buildConfigField("boolean", "FORCE_UPDATE_ENABLED", forceUpdateEnabled.toString())
         multiDexEnabled = true
         ndk {
             abiFilters += setOf("arm64-v8a")

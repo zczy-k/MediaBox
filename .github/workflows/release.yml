@@ -12,6 +12,11 @@ on:
         type: boolean
         required: false
         default: false
+      test_build:
+        description: '自用调试包:跳过启动强制更新,并强制标为 Pre-release(不会进 releases/latest)'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -110,8 +115,17 @@ jobs:
 
       - name: Build release APK
         # -PappVersionName 把 tag 注入 APK 的 versionName:App 内更新检查拿 tag 与本地
-        # versionName 比较,两者不同源会让"永远提示有新版本"或"永远提示已最新"
-        run: ./gradlew assembleRelease --no-daemon --stacktrace -PappVersionName='${{ github.event.inputs.version }}'
+        # versionName 比较,两者不同源会让"永远提示有新版本"或"永远提示已最新"。
+        # test_build=true 时额外传 -PforceUpdate=false:自用调试包不该被自己的强制更新拦住。
+        run: |
+          set -euo pipefail
+          EXTRA=""
+          if [ "${{ github.event.inputs.test_build }}" = "true" ]; then
+            echo "::notice::自用调试包:已关闭启动强制更新"
+            EXTRA="-PforceUpdate=false"
+          fi
+          ./gradlew assembleRelease --no-daemon --stacktrace \
+            -PappVersionName='${{ github.event.inputs.version }}' $EXTRA
 
       - name: Rename & verify APK
         id: apk
@@ -161,7 +175,9 @@ jobs:
           tag_name: ${{ github.event.inputs.version }}
           name: ${{ github.event.inputs.version }}
           files: ${{ steps.apk.outputs.path }}
-          prerelease: ${{ github.event.inputs.prerelease == 'true' }}
+          # test_build 一并强制 Pre-release:否则调试包会进 releases/latest,
+          # 所有正式用户会被强制更新到你的调试包上(灾难性)
+          prerelease: ${{ github.event.inputs.prerelease == 'true' || github.event.inputs.test_build == 'true' }}
           fail_on_unmatched_files: true
           generate_release_notes: false
           body: ""

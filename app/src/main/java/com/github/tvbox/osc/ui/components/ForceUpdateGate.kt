@@ -14,6 +14,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import com.github.tvbox.osc.BuildConfig
 import com.github.tvbox.osc.R
 import com.github.tvbox.osc.util.DefaultConfig
 import com.github.tvbox.osc.util.UpdateChecker
@@ -34,6 +35,12 @@ import com.github.tvbox.osc.util.UpdateChecker
  */
 @Composable
 fun ForceUpdateGate() {
+    // 三层闸门的第一、二层(第三层是 GitHub 的 prerelease 标记,见 release.yml):
+    // ① DEBUG 包:Android Studio 直接跑的,永不检查 —— 编译期常量,分支固定;
+    // ② FORCE_UPDATE_ENABLED = false:CI 构建的自用调试包(-PforceUpdate=false)。
+    // 两者都是编译期常量,早退不会造成"分支不稳定"的重组问题。
+    if (BuildConfig.DEBUG || !BuildConfig.FORCE_UPDATE_ENABLED) return
+
     val context = LocalContext.current
     var state by remember { mutableStateOf<ForceUpdateState?>(null) }
     // 网络回调在 OkHttp 线程,Compose 状态只能回主线程改
