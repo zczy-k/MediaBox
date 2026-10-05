@@ -74,11 +74,16 @@ public class App extends Application {
         QuickJSLoader.init();
         // Coil 单例:海报地址约定的请求头注入(Compose UI 图片管线)
         com.github.tvbox.osc.ui.components.VodImages.INSTANCE.init(this);
-        FileUtils.cleanPlayerCache();
-        // 「清除缓存」遗留的 Exo 视频缓存清理(2026-09-13):clearCache 不直接删该目录(进程级 SimpleCache
-        // 常驻,直删会"内存索引/磁盘失配"),改为启动早期删除 —— 必须早于首次 getSharedCache,且目录删除
-        // 属耗时 IO,放后台线程(无待清理标记时仅一次 exists() 检查,零开销)
-        new Thread(FileUtils::purgeExoCacheIfPending, "exo-cache-purge").start();
+        // 迅雷缓存清理与 Exo 缓存清理合并到同一条后台线程:
+        // cleanPlayerCache 是递归删目录(迅雷下载缓存可能上千个文件),原来直接跑在主线程上,
+        // 与紧邻的 purgeExoCacheIfPending 处理方式不一致(后者作者已注释"目录删除属耗时 IO"并放后台)。
+        // 两者都只是"启动时清理",不参与任何初始化时序,放后台无副作用。
+        // ⚠️ purgeExoCacheIfPending 必须排在前面:它须尽量早于首次 getSharedCache(见其方法注释),
+        //    把 cleanPlayerCache 放前面会平白推迟它。
+        new Thread(() -> {
+            FileUtils.purgeExoCacheIfPending();
+            FileUtils.cleanPlayerCache();
+        }, "startup-cache-purge").start();
     }
 
     private void initParams() {

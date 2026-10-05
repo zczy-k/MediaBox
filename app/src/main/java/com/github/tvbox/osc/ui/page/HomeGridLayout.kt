@@ -221,7 +221,11 @@ fun HomeGridLayout(
                 verticalArrangement = Arrangement.spacedBy(HomeGridItemSpacing),
             ) {
                 if (tabSort != null && tabSort.filters.isNotEmpty()) {
-                    item(key = "chips_${tabSort.id}", span = { GridItemSpan(maxLineSpan) }) {
+                    item(
+                        key = "chips_${tabSort.id}",
+                        span = { GridItemSpan(maxLineSpan) },
+                        contentType = "chips",
+                    ) {
                         Box(
                             modifier = Modifier.padding(
                                 top = (HomeGridItemSpacing - HomeGridContentTopPadding).coerceAtLeast(0.dp),
@@ -235,7 +239,11 @@ fun HomeGridLayout(
                 }
                 when (tabPartition?.state) {
                     null -> if (sorts.isEmpty()) {
-                        item(key = "no_sort", span = { GridItemSpan(maxLineSpan) }) {
+                        item(
+                            key = "no_sort",
+                            span = { GridItemSpan(maxLineSpan) },
+                            contentType = "hint",
+                        ) {
                             if (sortLoadFailed) {
                                 HomeGridHint(
                                     text = stringResource(R.string.common_load_failed_network),
@@ -246,16 +254,20 @@ fun HomeGridLayout(
                             }
                         }
                     } else {
-                        items(HomeGridSkeletonCount) { HomeGridSkeleton(titleLine, posterAspectRatio) }
+                        items(HomeGridSkeletonCount, contentType = { "skeleton" }) {
+                            HomeGridSkeleton(titleLine, posterAspectRatio)
+                        }
                     }
 
-                    HomeViewModel.PartitionState.Idle, HomeViewModel.PartitionState.Loading -> items(HomeGridSkeletonCount) {
-                        HomeGridSkeleton(titleLine, posterAspectRatio)
-                    }
+                    HomeViewModel.PartitionState.Idle, HomeViewModel.PartitionState.Loading ->
+                        items(HomeGridSkeletonCount, contentType = { "skeleton" }) {
+                            HomeGridSkeleton(titleLine, posterAspectRatio)
+                        }
 
                     HomeViewModel.PartitionState.Empty -> item(
                         key = "empty_$tabId",
                         span = { GridItemSpan(maxLineSpan) },
+                        contentType = "hint",
                     ) {
                         HomeGridHint(text = stringResource(R.string.common_empty_content))
                     }
@@ -263,6 +275,7 @@ fun HomeGridLayout(
                     HomeViewModel.PartitionState.Error -> item(
                         key = "error_$tabId",
                         span = { GridItemSpan(maxLineSpan) },
+                        contentType = "hint",
                     ) {
                         HomeGridHint(
                             text = stringResource(R.string.common_load_failed_network),
@@ -276,6 +289,7 @@ fun HomeGridLayout(
                         itemsIndexed(
                             videos,
                             key = { index, video -> "${index}_${video.id}_${video.name}" },
+                            contentType = { _, _ -> "poster" },
                         ) { _, video ->
                             VodCard(
                                 video = video,
