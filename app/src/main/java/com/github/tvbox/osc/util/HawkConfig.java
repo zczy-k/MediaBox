@@ -162,20 +162,9 @@ public class HawkConfig {
     // 与点播源分开存储 —— 同一链接若同时用作点播与直播,应让直播保持"跟随"(LIVE_API_URL 空),不必重复录入
     public static final String LIVE_SUBSCRIBE_LIST = "live_subscribe_list";
     // 主题设置(2026-09-11,照搬 示例文件/android 主题设置页)
-    public static final String THEME_SOURCE = "theme_source"; //0 跟随系统取色 1 自定义种子色
     public static final String THEME_MODE = "theme_mode"; //0 跟随系统 1 浅色 2 深色
-    public static final String THEME_SEED = "theme_seed"; //自定义种子色 ARGB
-    public static final String THEME_PALETTE_STYLE = "theme_palette_style"; //PaletteStyle 枚举名
     public static final String THEME_PURE_BLACK = "theme_pure_black"; //深色模式下容器色压成纯黑(仅深色生效)
-    // 液态玻璃(2026-09-13,照搬 示例文件/android):blur 需 API 31+,lens 需 API 33+,低版本回退 M3 栏。
-    // 2026-09-16 用户定稿:无总开关,两个作用域开关各自控制(默认都开);blur/distortion 两档参数共用。
-    // 原总开关键 `liquid_glass_enabled` 已删除(存量值不再读取,无迁移)
-    public static final String LIQUID_GLASS_NAVBAR = "liquid_glass_navbar"; //底部导航栏是否玻璃
-    public static final String LIQUID_GLASS_CONTROLS = "liquid_glass_controls"; //应用控件(顶栏等)是否玻璃
-    public static final String LIQUID_GLASS_BLUR = "liquid_glass_blur"; //模糊强度 dp(0~40,默认 20)
-    public static final String LIQUID_GLASS_DISTORTION = "liquid_glass_distortion"; //折射强度 dp(0~30,默认 30)
-    public static final String LIQUID_GLASS_TRANSLUCENCY = "liquid_glass_translucency"; //通透度(0~1,默认 0.5)
-    public static final String LIQUID_GLASS_DISPERSION = "liquid_glass_dispersion"; //色散彩虹边开关(默认开,7 次采样偏贵)
+    // 液态玻璃参数已固定为编译期常量(见 ui/theme/LiquidGlassState.kt),不再走 KV,故无对应键。
     // 迅雷下载库的伪造设备标识(2026-09-15 由独立 SharedPreferences `rand_thunder_id` 迁入 KV,该 SP 与其 xml 已废弃)
     public static final String THUNDER_IMEI = "thunder_imei";
     public static final String THUNDER_MAC = "thunder_mac";

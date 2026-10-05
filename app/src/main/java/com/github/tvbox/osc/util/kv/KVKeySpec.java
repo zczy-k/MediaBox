@@ -69,7 +69,6 @@ public final class KVKeySpec implements KVDecoder.TypeRegistry {
         register(HawkConfig.LIVE_API_URL, "");
         register(HawkConfig.REMOTE_TVBOX, "");
         register(HawkConfig.DANMU_API, "");
-        register(HawkConfig.THEME_PALETTE_STYLE, "");
         // 画质参数(调色)预置名(PicturePreset 枚举名)
         register(HawkConfig.PICTURE_PRESET, "");
         register(HawkConfig.ANIME4K_TIER, "");
@@ -101,11 +100,7 @@ public final class KVKeySpec implements KVDecoder.TypeRegistry {
         register(HawkConfig.PRELOAD_DURATION, 0);
         register(HawkConfig.EXO_CACHE_SIZE_MB, 0);
         register(HawkConfig.DANMU_MAX_LINE, 0);
-        register(HawkConfig.THEME_SOURCE, 0);
         register(HawkConfig.THEME_MODE, 0);
-        register(HawkConfig.THEME_SEED, 0);
-        register(HawkConfig.LIQUID_GLASS_BLUR, 0);
-        register(HawkConfig.LIQUID_GLASS_DISTORTION, 0);
         register(HawkConfig.COLLECT_COLUMNS, 0);
         register(HawkConfig.HOME_COLUMNS, 0);
         register(HawkConfig.HOME_POSTER_RATIO_MODE, "");
@@ -136,15 +131,9 @@ public final class KVKeySpec implements KVDecoder.TypeRegistry {
         register(HawkConfig.DANMU_OPEN, false);
         register(HawkConfig.DANMU_RANDOM_COLOR, false);
         register(HawkConfig.DANMU_API_USE_DEFAULT, false);
-        register(HawkConfig.LIQUID_GLASS_NAVBAR, false);
-        register(HawkConfig.LIQUID_GLASS_CONTROLS, false);
-        register(HawkConfig.LIQUID_GLASS_DISPERSION, false);
         register(HawkConfig.THEME_PURE_BLACK, false);
 
         // ---- float ----
-        register(HawkConfig.LIQUID_GLASS_BLUR, 0f);
-        register(HawkConfig.LIQUID_GLASS_DISTORTION, 0f);
-        register(HawkConfig.LIQUID_GLASS_TRANSLUCENCY, 0f);
         register(HawkConfig.DANMU_SPEED, 0f);
         register(HawkConfig.DANMU_ALPHA, 0f);
         register(HawkConfig.DANMU_SIZE_SCALE, 0f);

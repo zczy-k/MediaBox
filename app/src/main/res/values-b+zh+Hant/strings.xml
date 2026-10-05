@@ -293,9 +293,6 @@
     <string name="collect_delete_selected_message">確定取消收藏選中的 %1$d 部影片嗎？</string>
 
     <!-- 主題:取色 -->
-    <string name="theme_brightness_value">亮度 %1$d%%</string>
-    <string name="theme_initial_color">初始顏色</string>
-    <string name="theme_current_color">目前顏色</string>
     <string name="music_episodes">音樂選集</string>
     <string name="music_previous">上一首</string>
     <string name="music_next">下一首</string>
@@ -394,41 +391,12 @@
 
     <!-- 設定:主題設定 -->
     <string name="theme_color">主題顏色</string>
-    <string name="theme_app_effects">應用效果</string>
-    <string name="theme_liquid_glass">液態玻璃效果</string>
-    <string name="theme_liquid_glass_hint">Android 13 以上支援液態玻璃</string>
     <string name="theme_reset">重設</string>
-    <string name="theme_nav_bar">底部導覽</string>
-    <string name="theme_app_controls">應用程式控制項</string>
-    <string name="theme_blur">模糊效果</string>
-    <string name="theme_distortion">扭曲效果</string>
-    <string name="theme_translucency">通透度</string>
-    <string name="theme_dispersion">邊緣色散</string>
-    <string name="theme_custom_color">自訂顏色</string>
-    <string name="theme_custom_theme">自訂主題</string>
     <string name="theme_mode">主題模式</string>
     <string name="theme_mode_auto">自動</string>
     <string name="theme_mode_light">淺色</string>
     <string name="theme_mode_dark">深色</string>
     <string name="theme_pure_black">純黑模式</string>
-    <string name="theme_palette_style">配色風格</string>
-    <string name="theme_seed_red">紅色</string>
-    <string name="theme_seed_orange">橘色</string>
-    <string name="theme_seed_yellow">黃色</string>
-    <string name="theme_seed_green">綠色</string>
-    <string name="theme_seed_cyan">青色</string>
-    <string name="theme_seed_blue">藍色</string>
-    <string name="theme_seed_purple">紫色</string>
-    <string name="theme_seed_pink">粉色</string>
-    <string name="theme_style_tonal_spot">柔和</string>
-    <string name="theme_style_vibrant">鮮豔</string>
-    <string name="theme_style_expressive">表現力</string>
-    <string name="theme_style_neutral">中性</string>
-    <string name="theme_style_monochrome">單色</string>
-    <string name="theme_style_fidelity">保真</string>
-    <string name="theme_style_content">內容</string>
-    <string name="theme_style_rainbow">彩虹</string>
-    <string name="theme_style_fruit_salad">水果沙拉</string>
 
     <!-- 設定:播放設定 -->
     <string name="settings_play_kernel">播放核心</string>

@@ -293,9 +293,6 @@
     <string name="collect_delete_selected_message">Remove %1$d selected favorites?</string>
 
     <!-- Theme: color picker -->
-    <string name="theme_brightness_value">Brightness %1$d%%</string>
-    <string name="theme_initial_color">Initial color</string>
-    <string name="theme_current_color">Current color</string>
     <string name="music_episodes">Playlist</string>
     <string name="music_previous">Previous</string>
     <string name="music_next">Next</string>
@@ -394,41 +391,12 @@
 
     <!-- Settings: theme -->
     <string name="theme_color">Theme Color</string>
-    <string name="theme_app_effects">App Effects</string>
-    <string name="theme_liquid_glass">Liquid Glass</string>
-    <string name="theme_liquid_glass_hint">Liquid Glass requires Android 13 or later</string>
     <string name="theme_reset">Reset</string>
-    <string name="theme_nav_bar">Bottom Navigation</string>
-    <string name="theme_app_controls">App Controls</string>
-    <string name="theme_blur">Blur</string>
-    <string name="theme_distortion">Distortion</string>
-    <string name="theme_translucency">Translucency</string>
-    <string name="theme_dispersion">Edge Dispersion</string>
-    <string name="theme_custom_color">Custom Color</string>
-    <string name="theme_custom_theme">Custom Theme</string>
     <string name="theme_mode">Theme Mode</string>
     <string name="theme_mode_auto">Auto</string>
     <string name="theme_mode_light">Light</string>
     <string name="theme_mode_dark">Dark</string>
     <string name="theme_pure_black">Pure black</string>
-    <string name="theme_palette_style">Color Style</string>
-    <string name="theme_seed_red">Red</string>
-    <string name="theme_seed_orange">Orange</string>
-    <string name="theme_seed_yellow">Yellow</string>
-    <string name="theme_seed_green">Green</string>
-    <string name="theme_seed_cyan">Cyan</string>
-    <string name="theme_seed_blue">Blue</string>
-    <string name="theme_seed_purple">Purple</string>
-    <string name="theme_seed_pink">Pink</string>
-    <string name="theme_style_tonal_spot">Tonal Spot</string>
-    <string name="theme_style_vibrant">Vibrant</string>
-    <string name="theme_style_expressive">Expressive</string>
-    <string name="theme_style_neutral">Neutral</string>
-    <string name="theme_style_monochrome">Monochrome</string>
-    <string name="theme_style_fidelity">Fidelity</string>
-    <string name="theme_style_content">Content</string>
-    <string name="theme_style_rainbow">Rainbow</string>
-    <string name="theme_style_fruit_salad">Fruit Salad</string>
 
     <!-- Settings: playback -->
     <string name="settings_play_kernel">Player Engine</string>

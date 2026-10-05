@@ -121,7 +121,7 @@ fun MusicPlayerScreen(
     val darkTheme = AppThemeState.isDark(isSystemInDarkTheme())
     val colorScheme = seed?.let { argb ->
         remember(argb, darkTheme) {
-            AppThemeState.customScheme(argb, darkTheme, AppThemeState.config.style)
+            AppThemeState.coverScheme(argb, darkTheme)
         }
     } ?: MaterialTheme.colorScheme
 

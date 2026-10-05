@@ -14,19 +14,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RippleConfiguration
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.core.view.WindowCompat
-import com.materialkolor.PaletteStyle
 
 internal fun ComponentActivity.enableTransparentEdgeToEdge() {
     enableEdgeToEdge(
@@ -53,18 +47,8 @@ fun MediaBoxTheme(
         else -> isSystemInDarkTheme()
     }
 
-    val context = LocalContext.current
-    val baseScheme = when {
-        config.source == ThemeSource.CUSTOM -> remember(config.seedArgb, darkTheme, config.style) {
-            AppThemeState.customScheme(config.seedArgb, darkTheme, config.style)
-        }
-
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-
-        darkTheme -> darkColorScheme()
-        else -> lightColorScheme()
-    }
+    // 固定蓝色基调:深浅各一套方案,懒算一次后常驻(不再跟随壁纸取色,也不再受自定义色影响)
+    val baseScheme = AppThemeState.scheme(darkTheme)
     val colorScheme = if (darkTheme && config.pureBlack) baseScheme.toPureBlack() else baseScheme
 
     if (manageStatusBarIcons) {
@@ -124,7 +108,7 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 @Composable
 private fun MediaBoxThemeLightPreview() {
     MediaBoxTheme(
-        config = ThemeConfig(ThemeSource.CUSTOM, ThemeMode.LIGHT, DefaultSeedArgb, PaletteStyle.TonalSpot, pureBlack = false),
+        config = ThemeConfig(ThemeMode.LIGHT, pureBlack = false),
     ) {
         Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
             Text("MediaBox")
@@ -136,7 +120,7 @@ private fun MediaBoxThemeLightPreview() {
 @Composable
 private fun MediaBoxThemeDarkPreview() {
     MediaBoxTheme(
-        config = ThemeConfig(ThemeSource.CUSTOM, ThemeMode.DARK, DefaultSeedArgb, PaletteStyle.TonalSpot, pureBlack = false),
+        config = ThemeConfig(ThemeMode.DARK, pureBlack = false),
     ) {
         Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
             Text("MediaBox")

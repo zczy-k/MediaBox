@@ -6,13 +6,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import com.github.tvbox.osc.util.HawkConfig
-import com.materialkolor.PaletteStyle
-import com.materialkolor.dynamicColorScheme
 import com.github.tvbox.osc.util.KV
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import java.util.concurrent.ConcurrentHashMap
+import com.materialkolor.dynamicColorScheme
 
+/**
+ * 主题状态:固定蓝色 + 明暗模式 + 纯黑。
+ *
+ * 原版有三张缓存表(自定义色、预览色、深浅各一套),切色/切风格时每次都要重算并广播重组。
+ * 现在只有浅/深两套方案,首次用到时算一次即常驻,后续切换是纯引用比较。
+ */
 object AppThemeState {
 
     private var current by mutableStateOf(load())
@@ -20,32 +22,13 @@ object AppThemeState {
     val config: ThemeConfig get() = current
 
     private fun load(): ThemeConfig = ThemeConfig(
-        source = KV.get(HawkConfig.THEME_SOURCE, ThemeSource.SYSTEM),
         mode = KV.get(HawkConfig.THEME_MODE, ThemeMode.FOLLOW_SYSTEM),
-        seedArgb = KV.get(HawkConfig.THEME_SEED, DefaultSeedArgb),
-        style = runCatching { PaletteStyle.valueOf(KV.get(HawkConfig.THEME_PALETTE_STYLE, "")) }
-            .getOrDefault(DefaultPaletteStyle),
         pureBlack = KV.get(HawkConfig.THEME_PURE_BLACK, false),
     )
-
-    fun setSource(source: Int) {
-        KV.put(HawkConfig.THEME_SOURCE, source)
-        current = current.copy(source = source)
-    }
 
     fun setMode(mode: Int) {
         KV.put(HawkConfig.THEME_MODE, mode)
         current = current.copy(mode = mode)
-    }
-
-    fun setSeed(argb: Int) {
-        KV.put(HawkConfig.THEME_SEED, argb)
-        current = current.copy(seedArgb = argb)
-    }
-
-    fun setStyle(style: PaletteStyle) {
-        KV.put(HawkConfig.THEME_PALETTE_STYLE, style.name)
-        current = current.copy(style = style)
     }
 
     fun setPureBlack(enabled: Boolean) {
@@ -59,21 +42,27 @@ object AppThemeState {
         else -> systemDark
     }
 
-    private val schemeCache = ConcurrentHashMap<Triple<Int, Boolean, PaletteStyle>, ColorScheme>()
+    private var lightCache: ColorScheme? = null
 
-    fun customScheme(seedArgb: Int, isDark: Boolean, style: PaletteStyle): ColorScheme =
-        schemeCache.getOrPut(Triple(seedArgb, isDark, style)) {
-            dynamicColorScheme(seedColor = Color(seedArgb), isDark = isDark, style = style)
+    private var darkCache: ColorScheme? = null
+
+    /** 固定种子,深浅各一份,懒算一次 */
+    fun scheme(isDark: Boolean): ColorScheme {
+        if (isDark) {
+            darkCache?.let { return it }
+            return dynamicColorScheme(Color(MediaBoxSeedArgb), isDark = true, style = MediaBoxPaletteStyle)
+                .also { darkCache = it }
         }
-
-    private val previewCache = ConcurrentHashMap<Pair<Int, PaletteStyle>, ColorScheme>()
-
-    suspend fun previewScheme(seedArgb: Int, style: PaletteStyle): ColorScheme {
-        previewCache[seedArgb to style]?.let { return it }
-        return withContext(Dispatchers.Default) {
-            previewCache.getOrPut(seedArgb to style) {
-                dynamicColorScheme(seedColor = Color(seedArgb), isDark = false, style = style)
-            }
-        }
+        lightCache?.let { return it }
+        return dynamicColorScheme(Color(MediaBoxSeedArgb), isDark = false, style = MediaBoxPaletteStyle)
+            .also { lightCache = it }
     }
+
+    /** 音乐页按封面取色渲染用:配色风格固定,只换种子;按 (种子,深浅) 缓存,切歌不重算 */
+    private val coverCache = HashMap<Pair<Int, Boolean>, ColorScheme>()
+
+    fun coverScheme(seedArgb: Int, isDark: Boolean): ColorScheme =
+        coverCache.getOrPut(seedArgb to isDark) {
+            dynamicColorScheme(Color(seedArgb), isDark = isDark, style = MediaBoxPaletteStyle)
+        }
 }
