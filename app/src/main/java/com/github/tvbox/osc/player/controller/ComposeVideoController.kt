@@ -1149,10 +1149,22 @@ class ComposeVideoController @JvmOverloads constructor(
     }
 
 
+    /**
+     * 顶栏系统时间格式。
+     * SimpleDateFormat 非线程安全,但 [refreshSystemInfo] 只由 PlayerOverlay 的
+     * LaunchedEffect 在主线程按 1s 轮询调用,不存在并发。
+     */
+    private val sysTimeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+
     override fun refreshSystemInfo() {
         val wrapper = mControlWrapper ?: return
-        state.sysTime = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-        readBattery()
+        // 系统时间与电量只在顶栏可见时才有读者(PlayerTopBar 的读取点都带 sysTimeVisible 判断),
+        // 隐藏时跳过 —— 省掉每秒一次的 SimpleDateFormat 分配与 BatteryManager 的 binder 调用。
+        // 顶栏显示后最多滞后一拍(1s),与改动前"1s 轮询"的刷新粒度一致。
+        if (state.sysTimeVisible) {
+            state.sysTime = sysTimeFormat.format(Date())
+            readBattery()
+        }
         val speed = runCatching { wrapper.tcpSpeed }.getOrDefault(0L)
         state.netSpeedTopRight = PlayerHelper.getDisplaySpeed(speed, true)
         state.netSpeedCenter = PlayerHelper.getDisplaySpeed(speed, false)

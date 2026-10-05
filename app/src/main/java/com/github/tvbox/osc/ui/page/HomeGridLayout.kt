@@ -191,8 +191,16 @@ fun HomeGridLayout(
                 availableWidthDp = (maxWidth - 32.dp - navStart).value.toInt(),
                 minColumns = homeColumns,
             )
-            // 骨架屏共用一条动画时钟:加载态一次铺 18 个格子,不共享就是 18 条无限动画同时跑
-            ShimmerHost {
+            // 骨架屏共用一条动画时钟:加载态一次铺 18 个格子,不共享就是 18 条无限动画同时跑。
+            // active 必须按真实加载态给 —— 常驻会让动画在内容就绪后仍每帧推进,应用进不了空闲。
+            // 条件与下面 when 里"真的铺骨架"的两支严格一致(null 且 sorts 非空 / Idle / Loading)。
+            val shimmerActive = when {
+                tabPartition == null -> sorts.isNotEmpty()
+                tabPartition.state == HomeViewModel.PartitionState.Idle -> true
+                tabPartition.state == HomeViewModel.PartitionState.Loading -> true
+                else -> false
+            }
+            ShimmerHost(active = shimmerActive) {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(gridColumns),
                 state = tabGridState,

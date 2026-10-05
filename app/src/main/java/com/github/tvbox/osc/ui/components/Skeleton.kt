@@ -33,9 +33,19 @@ import kotlin.math.hypot
  */
 internal val LocalShimmerProgress = compositionLocalOf<State<Float>?> { null }
 
-/** 把内部所有骨架屏接到同一条动画时钟上。包住列表/网格即可,真实内容不受影响。 */
+/**
+ * 把内部所有骨架屏接到同一条动画时钟上。包住列表/网格即可,真实内容不受影响。
+ *
+ * [active] 为 false 时**不建动画** —— `rememberInfiniteTransition` 一旦建了就会一直推进,
+ * 若常驻包在内容外层,内容加载完后动画仍每帧调度,应用永远进不了空闲。因此由调用方
+ * 按"当前是否真的在显示骨架"传入;为 false 时只透传 content,不产生任何开销。
+ */
 @Composable
-fun ShimmerHost(content: @Composable () -> Unit) {
+fun ShimmerHost(active: Boolean = true, content: @Composable () -> Unit) {
+    if (!active) {
+        content()
+        return
+    }
     val transition = rememberInfiniteTransition(label = "shimmer")
     val progress = transition.animateFloat(
         initialValue = 0f,
