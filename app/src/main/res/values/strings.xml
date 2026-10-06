@@ -375,6 +375,7 @@
     <string name="detail_expand">展开</string>
     <string name="detail_quality">清晰度</string>
     <string name="detail_line">线路</string>
+    <string name="detail_line_index">线路%1$d</string>
     <string name="detail_episodes">选集</string>
     <string name="detail_episodes_of">%1$s 选集</string>
     <string name="detail_order_asc">正序</string>

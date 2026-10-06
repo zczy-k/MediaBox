@@ -162,6 +162,19 @@ private fun PillAction(iconRes: Int, text: String, onClick: () -> Unit) {
     }
 }
 
+/**
+ * 线路 chip 的显示名:「线路N」,实测到画质时再补「 · 1080P」。
+ *
+ * <p>画质取的是**实测值**([DetailViewModel.lineQualityHeights]),不是站点自报的 flag ——
+ * flag 常写成假的清晰度,有的还直接带站名/域名。没测到就只显示序号,不编。
+ */
+@Composable
+private fun lineLabel(index: Int, flagName: String?, heights: Map<String, Int>): String {
+    val base = stringResource(R.string.detail_line_index, index + 1)
+    val suffix = LineLabelPolicy.qualitySuffix(flagName?.let { heights[it] } ?: 0)
+    return if (suffix.isEmpty()) base else "$base · $suffix"
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 internal fun EpisodeSheet(vm: DetailViewModel, revision: Int, slideFromEnd: Boolean) {
@@ -174,6 +187,7 @@ internal fun EpisodeSheet(vm: DetailViewModel, revision: Int, slideFromEnd: Bool
     val currentFlag = info.playFlag
     val episodes = info.seriesMap?.get(currentFlag).orEmpty()
     val playIndex = info.playIndex
+    val lineHeights by vm.lineQualityHeights.collectAsStateWithLifecycle()
 
     val groupCount = when {
         episodes.size > 400 -> 120
@@ -216,17 +230,19 @@ internal fun EpisodeSheet(vm: DetailViewModel, revision: Int, slideFromEnd: Bool
     ) {
         val dismissAnimated = LocalSheetDismiss.current
         Column(modifier = Modifier.fillMaxWidth()) {
-            // 侧滑面板只要剧集:线路切换归详情页的 chips 行
+            // 线路切换入口只剩这一处(详情页的「线路」区已下线);横屏全屏走侧滑面板,那一版只列剧集
             if (flags.size > 1 && !slideFromEnd) {
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    itemsIndexed(flags, key = { i, f -> "${i}_${f.name}" }) { _, flag ->
+                    itemsIndexed(flags, key = { i, f -> "${i}_${f.name}" }) { index, flag ->
                         FilterChip(
                             selected = flag.name == currentFlag,
                             onClick = { vm.onFlagClick(flag.name ?: "") },
-                            label = { Text(flag.name ?: "") },
+                            // 不再显示站点自报的 flag 名(常见假的"1080P/蓝光",有的还带站名/域名):
+                            // 只给"线路序号 + 实测画质",没测到就只给序号 —— 宁缺勿假。
+                            label = { Text(lineLabel(index, flag.name, lineHeights)) },
                             shape = RoundedCornerShape(20.dp),
                             colors = MaterialTheme.colorScheme.filterChipColors(),
                         )

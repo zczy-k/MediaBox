@@ -47,7 +47,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.github.tvbox.osc.R
-import com.github.tvbox.osc.api.ApiConfig
 import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.ui.components.VodPoster
 import com.github.tvbox.osc.ui.theme.filterChipColors
@@ -63,7 +62,6 @@ internal fun DetailContent(
     val info = vm.vodInfo ?: return
     @Suppress("UNUSED_EXPRESSION") revision
 
-    val flags = info.seriesFlags.orEmpty()
     val currentFlag = info.playFlag
     val episodes = info.seriesMap?.get(currentFlag).orEmpty()
     val playIndex = info.playIndex
@@ -73,9 +71,6 @@ internal fun DetailContent(
     var descExpanded by rememberSaveable { mutableStateOf(false) }
     var titleExpanded by rememberSaveable(info.id) { mutableStateOf(false) }
     var titleOverflow by remember(info.id) { mutableStateOf(false) }
-
-    val currentSource = ApiConfig.get().getSource(vm.firstsourceKey)
-    val displaySourceName = currentSource?.name ?: vm.firstsourceKey
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),

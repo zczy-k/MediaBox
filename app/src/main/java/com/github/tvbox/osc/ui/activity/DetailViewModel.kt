@@ -76,6 +76,14 @@ class DetailViewModel : ViewModel() {
 
     val pageState = MutableStateFlow<PageState>(PageState.Loading)
     val header = MutableStateFlow(DetailHeader())
+
+    /**
+     * 线路 flag → **实测**高度(像素);没有实测值的线路不会出现在这里。
+     *
+     * <p>只服务选集面板的线路标签显示(见 [LineLabelPolicy]),**不参与任何选线决策** ——
+     * 决策走 `VideoQualityMemory.lookupAll` + `VideoQualityPolicy`。
+     */
+    val lineQualityHeights = MutableStateFlow<Map<String, Int>>(emptyMap())
     val revision = MutableStateFlow(0)
     val fullScreen = MutableStateFlow(false)
     val rotating = MutableStateFlow(false)
@@ -284,6 +292,25 @@ class DetailViewModel : ViewModel() {
         if (header.value != next) header.value = next
     }
 
+    /**
+     * 刷新"每条线路的实测画质",供选集面板显示「线路N · 1080P」。
+     *
+     * <p>时机选在详情就绪与打开选集面板:实测值由播放层在起播后回写,用户第二次打开面板时
+     * 就能看到真实档位;而放在这两个点上,不会随重组反复读记忆(那是一次 JSON 全量解析)。
+     */
+    private fun publishLineQualityHeights() {
+        val info = vodInfo ?: return
+        val siteOrder = info.seriesMap?.keys?.toList().orEmpty()
+        // 单线路没有可切换对象、面板也不显示线路行:省掉这次记忆全量解析(常见情形)
+        if (siteOrder.size <= 1) {
+            if (lineQualityHeights.value.isNotEmpty()) lineQualityHeights.value = emptyMap()
+            return
+        }
+        val heights = VideoQualityMemory.lookupAll(sourceKey, vodId, siteOrder)
+            .associate { it.flag to it.height }
+        if (lineQualityHeights.value != heights) lineQualityHeights.value = heights
+    }
+
     fun requestPlay() {
         playSignal.value += 1
     }
@@ -296,6 +323,8 @@ class DetailViewModel : ViewModel() {
 
     /** 面板开合同时投影给播放底栏(冻结自动收起,见 `PlayerUiState.overlayPanelOpen`) */
     fun showEpisodeSheet() {
+        // 面板要显示线路标签,打开这一刻刷新一次实测画质(起播后回写的值到这时才可能变)
+        publishLineQualityHeights()
         episodeSheet.value = true
         sendCommand(PlaybackCommand.SetEpisodeSheetOpen(true))
     }
@@ -505,6 +534,7 @@ class DetailViewModel : ViewModel() {
                     }
                 }
                 vodInfo = info
+                publishLineQualityHeights()
                 if (searchTitle.isEmpty() && !info.name.isNullOrEmpty()) {
                     searchTitle = info.name.trim()
                     startSourceSearch()

@@ -375,6 +375,7 @@
     <string name="detail_expand">展開</string>
     <string name="detail_quality">畫質</string>
     <string name="detail_line">線路</string>
+    <string name="detail_line_index">線路%1$d</string>
     <string name="detail_episodes">選集</string>
     <string name="detail_episodes_of">%1$s 選集</string>
     <string name="detail_order_asc">正序</string>
