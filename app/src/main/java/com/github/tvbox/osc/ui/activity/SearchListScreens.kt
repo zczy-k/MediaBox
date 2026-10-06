@@ -74,9 +74,12 @@ internal fun SearchListResults(
     // ⚠️ 匿名标签:按**筛选前的稳定顺序**编号,而不是用真实站名。
     // 真实站名一旦渲染出来(标题行/筛选 chip/分区页大标题),就等于把 App 的源清单摊给用户。
     // 编号必须跟着 sourceKey 走,否则筛选一换,序号会跳。
-    val anonymousLabelOf = remember(done) {
-        val prefix = stringResource(R.string.common_source_anonymous_prefix)
-        done.mapIndexed { index, r -> r.sourceKey to SourceIdentityMask.anonymousLabel(index, prefix) }.toMap()
+    // ⚠️ stringResource 是 @Composable,必须**先在 Composable 作用域求值**再传进 remember ——
+    // 直接写 remember { stringResource(...) } 编译不过("@Composable invocations can only
+    // happen from the context of a @Composable function",v1.0.24 构建 37492586746 踩过)。
+    val anonPrefix = stringResource(R.string.common_source_anonymous_prefix)
+    val anonymousLabelOf = remember(done, anonPrefix) {
+        done.mapIndexed { index, r -> r.sourceKey to SourceIdentityMask.anonymousLabel(index, anonPrefix) }.toMap()
     }
     LazyColumn(
         state = listState,
