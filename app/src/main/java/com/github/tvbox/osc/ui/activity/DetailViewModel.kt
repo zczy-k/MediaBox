@@ -122,6 +122,13 @@ class DetailViewModel : ViewModel() {
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val navStack = DetailNavStack()
     private var searchJob: Job? = null
+    /** 异步补齐其余线路画质的小任务;换片/重开面板时取消,避免上一部的探测结果串到新内容 */
+    private var qualityProbeJob: Job? = null
+    /**
+     * 触发过画质探测的源 key 锚点:只有"用户看过这部片"(记忆里有数据)才允许探测其余线路,
+     * 纯新片不探。避免任何时候打开详情都触发一批无意义请求。
+     */
+    private var qualityProbeAnchor: String? = null
     private var detailBuildToken = 0
 
     /**
@@ -311,6 +318,71 @@ class DetailViewModel : ViewModel() {
         if (lineQualityHeights.value != heights) lineQualityHeights.value = heights
     }
 
+    /**
+     * 异步补齐**其余线路**的实测画质,让「线路N · 1080P」不只出现在"用户恰好播过的那条"。
+     *
+     * <p>为什么必须有这个:实测画质只在你**真正播过**某条线路时才会写入(见
+     * [MusicSessionDelegate.maybeRememberMeasuredQuality])。不补齐的话,绝大多数线路永远没有
+     * 数据,标签就退化成纯序号 —— 用户看到的是一个没用的"线路1/2/3",而我们明明已经有能力
+     * 在几百毫秒内测出真实分辨率。
+     *
+     * <p>为什么不阻塞 UI:探测是网络请求(每条 ≤256KB、超时 [VideoQualityProbe.PROBE_TIMEOUT_MS]),
+     * 放这里只更新 [lineQualityHeights],面板/详情区下次重组时自然带上新值。用户看到的是
+     * "标签先是序号、几百毫秒后补上画质",而不是"打开面板卡一下"。
+     *
+     * <p>三条约束,少一条就会伤到"更快开始播放"这个总目标:
+     * <ul>
+     *   <li>**只在有记忆时才探测**(即 [qualityProbeAnchor] 非空)—— 全新影片没有任何记忆,
+     *       说明用户还没看过这部,探测它对当前播放毫无意义,纯浪费流量;</li>
+     *   <li>**只探没测过的**,已测过的直接跳过(不重复请求);</li>
+     *   <li>只在 `shouldProbeOnFirstWatch` 档位下进行 —— "速度优先"档的用户明确不要这类额外请求。</li>
+     * </ul>
+     */
+    private fun probeMissingLineQualities() {
+        val info = vodInfo ?: return
+        val siteOrder = info.seriesMap?.keys?.toList().orEmpty()
+        if (siteOrder.size <= 1) return
+        // 只认"用户看过这部片"的锚点:有记忆才说明这个会话与这部片有关
+        val anchor = qualityProbeAnchor ?: return
+        if (anchor != sourceKey || vodId.isEmpty()) return
+        val mode = DeviceCapability.QualityMode.current()
+        if (!mode.shouldProbeOnFirstWatch) return
+        val remembered = VideoQualityMemory.lookupAll(sourceKey, vodId, siteOrder)
+        val missing = siteOrder.filter { flag -> remembered.none { it.flag == flag } }
+        if (missing.isEmpty()) return
+        // 并发探测会同时打多个请求,只在小批量下做(3 条最坏 768KB);再多就交给起播链路按需探测
+        val targets = missing.take(3)
+        val headers = probeHeaders(sourceKey)
+        val probe = VideoQualityProbe()
+        val siteKey = sourceKey
+        val vod = vodId
+        val list = info.seriesMap
+        val currentList = list?.get(info.playFlag)
+        val index = if (currentList.isNullOrEmpty()) 0 else info.playIndex.coerceIn(0, currentList.size - 1)
+        qualityProbeJob?.cancel()
+        qualityProbeJob = viewModelScope.launch {
+            val probed = withTimeoutOrNull(LineQualityProbeBudget.totalMs) {
+                LineQualitySelector.probeVariantsParallel(
+                    flags = targets,
+                    resolve = { flag -> directUrlOf(list?.get(flag), index) },
+                    probe = { url -> probe.probe(url, headers) },
+                )
+            }.orEmpty()
+            probed.forEach { v ->
+                if (v.flag.isEmpty()) return@forEach
+                VideoQualityMemory.record(siteKey, vod, v)
+            }
+            // 会话可能已经换片/换源:那时刷新会把新内容的画质写进来
+            if (siteKey != sourceKey || vod != vodId) return@launch
+            publishLineQualityHeights()
+        }
+    }
+
+    /** 探测预算:单条 800ms(见 VideoQualityProbe),留一倍余量给并发调度 */
+    private object LineQualityProbeBudget {
+        const val totalMs = 2000L
+    }
+
     fun requestPlay() {
         playSignal.value += 1
     }
@@ -325,6 +397,8 @@ class DetailViewModel : ViewModel() {
     fun showEpisodeSheet() {
         // 面板要显示线路标签,打开这一刻刷新一次实测画质(起播后回写的值到这时才可能变)
         publishLineQualityHeights()
+        // 面板是用户真正会盯着看的地方,在这里补齐其余线路画质(异步,只补没测过的)
+        probeMissingLineQualities()
         episodeSheet.value = true
         sendCommand(PlaybackCommand.SetEpisodeSheetOpen(true))
     }
@@ -350,6 +424,12 @@ class DetailViewModel : ViewModel() {
         sourceKey = key.orEmpty()
         firstsourceKey = sourceKey
         usedSourceKeys.add(firstsourceKey)
+        // 换片/换源:上一部片的画质探测锚点与在途探测都不再适用(探测结果按 站点|片id|flag 存,
+        // 不会串片,但白探一轮新片是浪费),这里一并清掉
+        qualityProbeJob?.cancel()
+        qualityProbeJob = null
+        qualityProbeAnchor = null
+        lineQualityHeights.value = emptyMap()
         collected.value = RoomDataManger.isVodCollect(sourceKey, vodId)
         if (DetailResponseGuard.isUnloadableTarget(vodId, ApiConfig.get().getSource(sourceKey) == null)) {
             onDetailUnavailable()
@@ -535,6 +615,14 @@ class DetailViewModel : ViewModel() {
                 }
                 vodInfo = info
                 publishLineQualityHeights()
+                // 用户看过这部片(记忆里有画质)才把锚点记上,后续打开面板才允许探测其余线路;
+                // 换片/换源都要清,否则上一部的锚点会让新片白探一轮
+                qualityProbeAnchor = if (VideoQualityMemory.lookupAll(recordKey, recordId, siteOrder).isNotEmpty()) {
+                    recordKey
+                } else {
+                    null
+                }
+                probeMissingLineQualities()
                 if (searchTitle.isEmpty() && !info.name.isNullOrEmpty()) {
                     searchTitle = info.name.trim()
                     startSourceSearch()
@@ -1016,6 +1104,9 @@ class DetailViewModel : ViewModel() {
 
     fun destroyEngine() {
         cancelDetailTimeout()
+        qualityProbeJob?.cancel()
+        qualityProbeJob = null
+        qualityProbeAnchor = null
         OkGo.getInstance().cancelTag("detail")
         OkGo.getInstance().cancelTag("search")
     }
