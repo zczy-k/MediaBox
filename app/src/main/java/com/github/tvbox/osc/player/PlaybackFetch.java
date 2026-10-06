@@ -160,6 +160,17 @@ final class PlaybackFetch {
                     if (view != null) view.showParse(false);
                     if (view != null) controller.playUrl(playUrl + url, headers);
                 }
+                // 解析链已产出可直接播放的地址 ⇒ 顺手测一次画质挂点(ResolvedUrlQualityProbe)。
+                // 只在"不解析"分支做:parse=1 时上面的 url 是待解析地址,探了必然失败;
+                // jx=1/多码率数组也一并跳过 —— 前者要过嗅探,后者不是单一直链。
+                // 内核实测(VideoSizeGate)会在真正起播后再覆盖成真值,这里只是把"看过就有"提前。
+                if (!parse && !jx && view != null && url.indexOf('[') < 0) {
+                    VodInfo vod = controller.vod();
+                    if (vod != null && !TextUtils.isEmpty(vod.id)) {
+                        ResolvedUrlQualityProbe.probeAsync(
+                                controller.sourceKey(), vod.id, flag, playUrl + url, headers);
+                    }
+                }
                 if (TextUtils.isEmpty(danmaku)) {
                     checkDanmu("", null);
                     searchDanmu("");

@@ -314,14 +314,28 @@ class DetailViewModel : ViewModel() {
     }
 
     /**
-     * 异步补齐**其余线路**的实测画质,让「线路N · 1080P」不只出现在"用户恰好播过的那条"。
+     * 异步补齐**直连型线路**的实测画质,让「线路N · 1080P」不只出现在"用户恰好播过的那条"。
      *
      * <p>为什么必须有这个:实测画质只在你**真正播过**某条线路时才会写入(见
      * [MusicSessionDelegate.maybeRememberMeasuredQuality])。不补齐的话,绝大多数线路永远没有
      * 数据,标签就退化成纯序号 —— 用户看到的是一个没用的"线路1/2/3",而我们明明已经有能力
      * 在几百毫秒内测出真实分辨率。
      *
-     * <p>为什么不阻塞 UI:探测是网络请求(每条 ≤256KB、超时 [VideoQualityProbe.PROBE_TIMEOUT_MS]),
+     * <p>**只碰直连型线路**([directUrlOf] 与 `PlayLoader.shouldDirectPlay` 同口径):
+     * 爬虫型线路的地址要先跑 `playerContent` 才有,每条 1~3 秒且
+     * [com.github.tvbox.osc.sourcedata.PlayLoader] **完全没有解析缓存**,主动去爬等于
+     * 凭空多付 N 次解析 —— 与"更快开始播放"直接冲突。爬虫型线路改由
+     * [com.github.tvbox.osc.player.ResolvedUrlQualityProbe] 在**解析反正要跑**的那一刻顺手测,
+     * 总请求数不增加,且完全不占用起播时间。
+     *
+     * <p>所以两类线路的画质来源不同,口径也不同:
+     * <ul>
+     *   <li>直连型:打开面板几百毫秒内就有;</li>
+     *   <li>爬虫型:**看过一次之后**才有,第二次打开这部片时全部带画质。</li>
+     * </ul>
+     * 这不是妥协 —— 没解析过的线路就是没数据,编一个出来只会让用户点进去发现不对。
+     *
+     * <p>不阻塞 UI:探测是网络请求(每条 ≤256KB、超时 [VideoQualityProbe.PROBE_TIMEOUT_MS]),
      * 放这里只更新 [lineQualityHeights],面板/详情区下次重组时自然带上新值。用户看到的是
      * "标签先是序号、几百毫秒后补上画质",而不是"打开面板卡一下"。
      *

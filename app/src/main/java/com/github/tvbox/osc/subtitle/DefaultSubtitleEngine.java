@@ -39,12 +39,15 @@ import com.github.tvbox.osc.subtitle.model.Time;
 import com.github.tvbox.osc.util.FileUtils;
 import com.github.tvbox.osc.util.LOG;
 import com.github.tvbox.osc.util.MD5;
+import com.github.tvbox.osc.util.SubtitleCacheJanitor;
 import com.github.tvbox.osc.util.SubtitleHelper;
 
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.TreeMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import xyz.doikki.videoplayer.player.AbstractPlayer;
 
@@ -58,6 +61,12 @@ public class DefaultSubtitleEngine implements SubtitleEngine {
     private static final int REFRESH_INTERVAL = 100;
 
     private Handler mWorkHandler;
+
+    /**
+     * 字幕缓存裁剪的专用单线程(懒建)。与 {@link #mWorkHandler} 分开的原因见
+     * {@link #trimSubtitleCacheAsync} —— 后者在主线程上,不能承载文件 IO。
+     */
+    private ExecutorService subtitleTrimExecutor;
     @Nullable
     private List<Subtitle> mSubtitles;
     private UIRenderTask mUIRenderTask;
@@ -121,6 +130,12 @@ public class DefaultSubtitleEngine implements SubtitleEngine {
                     String subtitleFile = subtitleFileCacheDir + subtitleLoadSuccessResult.fileName;
                     File cacheSubtitleFile = new File(subtitleFile);
                     boolean writeResult = FileUtils.writeSimple(subtitleLoadSuccessResult.content.getBytes(), cacheSubtitleFile);
+                    // 写完立刻裁剪:本目录是全 App 唯一无上限的缓存(文件名由服务端下发、不会互相覆盖),
+                    // 只靠启动时裁剪的话,单次使用内就能堆出几百个文件。
+                    // 回调本身已在子线程,但仍交给专用线程串行做,避免与其它集次的裁剪互相抢文件。
+                    if (writeResult) {
+                        trimSubtitleCacheAsync();
+                    }
                     if (writeResult && playSubtitleCacheKey != null) {
                         CacheManager.save(MD5.string2MD5(getPlaySubtitleCacheKey()), subtitleFile);
                     }
@@ -140,6 +155,38 @@ public class DefaultSubtitleEngine implements SubtitleEngine {
 
     public void setMergeSameTime(boolean mergeSameTime) {
         this.mergeSameTime = mergeSameTime;
+    }
+
+    /**
+     * 字幕落盘后异步裁剪缓存目录。
+     *
+     * <p>⚠️ **不能用 {@link #mWorkHandler}**:它是 {@code Looper.getMainLooper()} 上的
+     * Handler(只做字幕文本的定时刷新),发过去等于在主线程做目录递归 IO。
+     * 裁剪是"扫几百个文件 + 删最旧的那些",必须走独立线程。
+     *
+     * <p>用**单**线程而不是每集新建:一个 App 生命周期内只建一次,后续复用;
+     * 裁剪本身幂等,重复执行无副作用。
+     */
+    private void trimSubtitleCacheAsync() {
+        final App app = App.getInstance();
+        if (app == null) return;
+        ExecutorService es = subtitleTrimExecutor;
+        if (es == null || es.isShutdown()) {
+            es = Executors.newSingleThreadExecutor(r -> new Thread(r, "subtitle-cache-trim"));
+            subtitleTrimExecutor = es;
+        }
+        try {
+            es.execute(() -> {
+                try {
+                    int removed = SubtitleCacheJanitor.trim(app.getCacheDir());
+                    if (removed > 0) LOG.i("echo-sub cache trim: removed " + removed);
+                } catch (Throwable t) {
+                    LOG.d("DefaultSubtitleEngine", "trim failed: " + t.getMessage());
+                }
+            });
+        } catch (Throwable ignored) {
+            // 裁剪纯属 housekeeping,拒绝执行也只是缓存又多了几个文件,绝不影响字幕
+        }
     }
 
     private List<Subtitle> buildSubtitles(TreeMap<Integer, Subtitle> captions) {
@@ -257,6 +304,10 @@ public class DefaultSubtitleEngine implements SubtitleEngine {
     public void destroy() {
         Log.d(TAG, "destroy: ");
         stopWorkThread();
+        if (subtitleTrimExecutor != null) {
+            subtitleTrimExecutor.shutdown();
+            subtitleTrimExecutor = null;
+        }
         reset();
 
     }
