@@ -622,16 +622,22 @@ public class ExoPlayer extends ExoMediaPlayer {
      * 统一按"0 = 内核还没报出尺寸"判断,让 -1 漏过去会被当成有效尺寸参与排序。
      */
     private static void fillVideoQuality(TrackInfoBean bean, Format format) {
-        int width = format.width;
-        int height = format.height;
+        // 三个字段在 media3 不同版本里分别是 int 与 Integer,统一先接成 Integer 再判空:
+        // 直接写 `format.bitrate == null` 在 int 上会报 "bad operand types for binary operator '=='"
+        // (CI 实证),而直接拆箱在 Integer 为 null 时会 NPE。
+        Integer rawWidth = format.width;
+        Integer rawHeight = format.height;
+        Integer rawBitrate = format.bitrate;
+        int width = rawWidth != null && rawWidth > 0 ? rawWidth : 0;
+        int height = rawHeight != null && rawHeight > 0 ? rawHeight : 0;
         if (format.rotationDegrees == 90 || format.rotationDegrees == 270) {
             int rotated = width;
             width = height;
             height = rotated;
         }
-        bean.width = width > 0 ? width : 0;
-        bean.height = height > 0 ? height : 0;
-        bean.bitrate = format.bitrate == null ? 0 : format.bitrate;
+        bean.width = width;
+        bean.height = height;
+        bean.bitrate = rawBitrate != null && rawBitrate > 0 ? rawBitrate : 0;
         bean.codecs = format.codecs == null ? "" : format.codecs;
     }
 
