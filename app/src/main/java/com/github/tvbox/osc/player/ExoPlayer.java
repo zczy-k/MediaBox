@@ -116,6 +116,9 @@ public class ExoPlayer extends ExoMediaPlayer {
      * 在 media3 1.11.1 的公开 API 里没有直接的 isHardwareAccelerated(),用名称前缀判定 ——
      * 系统软解命名固定为 {@code OMX.google.} / {@code c2.android.} / {@code OMX.ffmpeg.},
      * 厂商硬解一律带自家前缀(如 {@code OMX.qcom.} / {@code OMX.MTK.} / {@code c2.qti.})。
+     *
+     * <p>名称识别与排序口径收在 {@link VideoCodecOrder}:这层判据曾把比较器参数写反,
+     * 结果"硬件优先"实际排成了软件在前 —— 抽出来才能用纯 JVM 单测锁住方向。
      */
     private static final MediaCodecSelector EXO_VIDEO_CODEC_SELECTOR =
             (mimeType, requiresSecureDecoder, requiresTunnelingDecoder) -> {
@@ -125,20 +128,12 @@ public class ExoPlayer extends ExoMediaPlayer {
                 // 只在"偏好硬解"时重排;用户显式选软解时不动,尊重其选择
                 if (!preferSoftwareDecode && infos.size() > 1) {
                     infos = new ArrayList<>(infos);
-                    infos.sort((a, b) -> Boolean.compare(isSoftwareCodec(b), isSoftwareCodec(a)));
+                    infos.sort((a, b) -> VideoCodecOrder.compareHardwareFirst(a.name, b.name));
                 }
                 LOG.i("echo-exo-selector: mime=" + mimeType + " preferSoft=" + preferSoftwareDecode
                         + " count=" + infos.size() + " first=" + (infos.isEmpty() ? "none" : infos.get(0).name));
                 return infos;
             };
-
-    /** 系统软件解码器的固定命名前缀;厂商硬解不带这些前缀 */
-    private static boolean isSoftwareCodec(MediaCodecInfo info) {
-        String name = info.name;
-        return name.startsWith("OMX.google.")
-                || name.startsWith("c2.android.")
-                || name.startsWith("OMX.ffmpeg.");
-    }
 
     public static final int ERROR_KIND_UNKNOWN = 0;
     public static final int ERROR_KIND_NETWORK = 1;
