@@ -308,8 +308,32 @@ final class PlaybackRetryDelegate {
         LOG.i("echo-autoRetry line switching disabled, hand over to source fallback");
         st.resetAutoRetryLadder();
         st.linesExhausted();
+        return handOverToSourceFallback();
+    }
+
+    /**
+     * 线路耗尽、把处置交回换源链。
+     *
+     * <p>换源同样给一句阶段反馈(不含源名),否则用户只看到"正在获取播放信息"一直转,
+     * 分不清后台是在重试当前地址、还是在换线路、还是已经换到别的来源去了。
+     */
+    private boolean handOverToSourceFallback() {
+        showStageTip(R.string.player_trying_other_source);
         PlaybackViewBridge view = host.view();
         return view != null && view.onLinesExhausted();
+    }
+
+    /**
+     * 阶段反馈:换线/换源这类"后台在推进"的时刻给一句提示,让等待不再是死转圈。
+     *
+     * <p>**绝不带源名或线路名** —— 换源/换线已自动化,暴露"现在用的是哪个站/哪条线路"
+     * 既是多余信息,也与错误文案已做的源身份脱敏口径不一致(见 SourceIdentityMask)。
+     */
+    private void showStageTip(int resId) {
+        PlaybackViewBridge view = host.view();
+        if (view == null || !view.isPageAlive()) return;
+        final PlaybackViewBridge aliveView = view;
+        view.runOnUi(() -> aliveView.showTip(PlaybackController.str(resId), true, false));
     }
 
     /**
@@ -375,7 +399,9 @@ final class PlaybackRetryDelegate {
         PlaybackViewBridge view = host.view();
         final long preProgress = Math.max(savedProgress, view == null ? 0 : view.currentPosition());
         LOG.i(logPrefix + ": switch line " + vod.playFlag + " -> " + targetFlag);
-        // 换线全程静默:换源/换线已自动化,提示"正在切换线路:xxx"既刷屏又泄露线路身份
+        // 给一句"在动"的阶段反馈,但**不带线路名/序号**:名字会泄露用的是哪条线路,
+        // 而序号在换源后会重置回 1,反而让人以为"怎么又从头开始"。
+        showStageTip(R.string.player_trying_other_line);
         vod.playFlag = targetFlag;
         vod.playIndex = nextIndex;
         st.onLineSwitched();
@@ -412,11 +438,10 @@ final class PlaybackRetryDelegate {
                 break;
             }
         }
-        PlaybackViewBridge view = host.view();
         if (nextFlag == null) {
             LOG.i("echo-autoRetry all lines exhausted");
             st.linesExhausted();
-            return view != null && view.onLinesExhausted();
+            return handOverToSourceFallback();
         }
         return switchLineTo(nextFlag, nextIndex, "echo-autoRetry switch line");
     }
@@ -451,7 +476,7 @@ final class PlaybackRetryDelegate {
             if (tryNextLine()) return true;
         }
         LOG.i("echo-quality: try next source");
-        if (view.onLinesExhausted()) return true;
+        if (handOverToSourceFallback()) return true;
         LOG.i("echo-quality: all sources and lines exhausted");
         reportExhausted();
         return false;
