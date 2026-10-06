@@ -63,7 +63,15 @@ class DetailViewModel : ViewModel() {
         data object Ready : PageState
     }
 
-    data class SourceChip(val key: String, val name: String)
+    /**
+     * 换源候选的展示条目。
+     *
+     * <p>**刻意不带 name 字段** —— 产品要求"任何情况下用户都看不到有哪些源"。
+     * 以前这里是 `SourceChip(key, ApiConfig.get().getSource(key)?.name ?: key)`,
+     * 把真实站名直接塞进 StateFlow,详情页空态下方的候选行就是它渲染的。
+     * 现在只保留 [key] 作为点击回调的凭据,标签文本一律匿名(见 [sourceLabelFor]).
+     */
+    data class SourceChip(val key: String)
 
     /**
      * 详情加载期间就能展示的已知信息(片名 / 海报)。
@@ -447,6 +455,44 @@ class DetailViewModel : ViewModel() {
         pageState.value = PageState.Loading
         armDetailWatchdog(key)
         sourceViewModel.getDetail(sourceKey, vodId, false, requestToken)
+        // 详情照旧请求当前源;聚合搜索**并行**预热,不等它出结果。
+        // 目的只有一个:把"当前源没有这部剧"的兜底从 20~45 秒压到秒级(见 [prewarmSourceSearch])
+        prewarmSourceSearch()
+    }
+
+    /**
+     * 详情请求发出后,延迟 [SOURCE_SEARCH_PREWARM_DELAY_MS] 预热聚合搜索。
+     *
+     * <p>**要解决的问题**:换源候选只能来自聚合搜索,而它原先**只在当前源失败之后**才启动
+     * ([ensureSourceSearchRunning])。当前源失败要先等详情看门狗(20~45 秒,
+     * 见 [DetailLoadWatchdog])才判定失败,于是用户盯着"寻找中"白等几十秒 ——
+     * 这正是"打开有些影片总是先卡在这个界面"的成因:不是搜索慢,是**启动得太晚**。
+     *
+     * <p>**为什么延迟而不是立刻发**:当前源绝大多数情况是能取到的,立刻发等于每次点卡片
+     * 都惊动上百个站,流量与并发都白扔。延迟一小会儿再发,命中"当前源能取到"时搜索早已超时收工、
+     * 用户全程无感;只有真慢到超时的那些才刚好赶上兜底时机。
+     *
+     * <p>**为什么不改判定逻辑**:只改启动时机。[ensureSourceSearchRunning] 仍然保留 ——
+     * 它是"延迟期间搜索已收工"或"标题彼时还没拿到"的兜底,两条路径都指向同一个
+     * [startSourceSearch],而后者用 `sourcesSearching && searchTitle == title` 自去重,
+     * 所以重复调用不会发出第二轮搜索。
+     *
+     * <p>换片/换源时 [prewarmSourceSearch] 开头就 `removeCallbacks(sourceSearchPrewarm)`,
+     * 旧片的预热不会残留。刻意**不**借用 `cancelDetailTimeout()`(它走的是
+     * `removeCallbacksAndMessages(null)`)—— 那是"连本 Handler 全部回调一起清"的粗粒度收口,
+     * 预热这种良性任务没这个必要,顺带把它捎上只是增加耦合。
+     */
+    private fun prewarmSourceSearch() {
+        mainHandler.removeCallbacks(sourceSearchPrewarm)
+        val title = (if (vodInfo?.name.isNullOrEmpty()) vodName else vodInfo?.name).orEmpty().trim()
+        if (title.isEmpty()) return
+        mainHandler.postDelayed(sourceSearchPrewarm, SOURCE_SEARCH_PREWARM_DELAY_MS)
+    }
+
+    private val sourceSearchPrewarm = Runnable {
+        // 详情已经拿到内容就不必再找替代源了:省掉这一整轮搜索
+        if (pageState.value is PageState.Ready) return@Runnable
+        ensureSourceSearchRunning()
     }
 
     /**
@@ -634,6 +680,8 @@ class DetailViewModel : ViewModel() {
                 publishHeader()
                 if (!playingList.isNullOrEmpty()) switchSnapshot = null
                 pageState.value = PageState.Ready
+                // 当前源已取到:聚合搜索预热没有存在意义了,直接撤掉(省一整轮上百站搜索)
+                mainHandler.removeCallbacks(sourceSearchPrewarm)
                 bumpRevision()
                 // 仅在已有多个同名源且当前源有多条线路时预检;单源/单线路直接起播,不等待。
                 // 传 detailBuildToken 快照:探测期间换了片的话,快照与当前值就不相等了。
@@ -805,12 +853,19 @@ class DetailViewModel : ViewModel() {
         val candidates = synchronized(fallbackCandidates) { fallbackCandidates.toList() }
         sourceChips.value = candidates
             .filter { !usedSourceKeys.contains(it.sourceKey) && it.sourceKey != sourceKey }
-            .map { video ->
-                val key = video.sourceKey.orEmpty()
-                SourceChip(key, ApiConfig.get().getSource(key)?.name ?: key)
-            }
+            .map { video -> SourceChip(video.sourceKey.orEmpty()) }
             .distinctBy { it.key }
     }
+
+    /**
+     * 候选源的**匿名**展示名。**必须**只依赖列表下标,不能碰 `ApiConfig.getSource(key).name` ——
+     * 那个名字就是要藏起来的身份信息。返回空串表示"这一行什么都不用显示"(调用方跳过该 chip)。
+     */
+    fun sourceLabelFor(index: Int): String =
+        SourceIdentityMask.anonymousLabel(index, str(R.string.common_source_anonymous_prefix))
+
+    /** 详情页候选源那一行的分区标题。同样不能带任何源身份信息。 */
+    fun sourceSectionTitle(): String = str(R.string.detail_switch_source)
 
     fun candidateForKey(key: String): Movie.Video? =
         synchronized(fallbackCandidates) { fallbackCandidates.firstOrNull { it.sourceKey == key } }
@@ -833,6 +888,15 @@ class DetailViewModel : ViewModel() {
      * <p>只探**直连型**线路:`VodSeries.url` 以 http 开头才探(与 `PlayLoader.shouldDirectPlay` 同口径)。
      * 需要爬虫 `playerContent` 才能拿到真地址的线路一律跳过 —— 那条路要 1~3 秒/条,不能挡起播。
      * 探不到就静默降级,绝不阻塞播放。
+     *
+     * <p><b>所以"画质优先"的真实覆盖面 = 直连型线路</b>。爬虫型线路的画质由另一条路径积累:
+     * 起播时 [ResolvedUrlQualityProbe] 复用解析结果测一次,看过一次之后记忆里就有真值,
+     * 下次打开这部片时 [VideoQualityMemory.lookupAll] 直接可用、零延迟参与本函数的选择。
+     *
+     * <p><b>探测失败不会"退化成按 flag 名猜"</b>:探测不成功的线路被
+     * [LineQualitySelector.probeVariantsParallel] 的 `filterNotNull` 整条剔除,不会带着
+     * 空分辨率进入 [VideoQualityPolicy.pickBest]。最终保持**站点原始顺序**起播,
+     * 这正是期望行为 —— 按名字猜画质是错的(站点常把"4K"写在 540P 地址上)。
      */
     private suspend fun applyFirstWatchProbe(
         info: VodInfo,
@@ -872,8 +936,21 @@ class DetailViewModel : ViewModel() {
                 resolve = { flag -> directUrlOf(seriesMap[flag], index) },
                 probe = { url -> probe.probe(url, headers) },
             )
-        } ?: return
-        val chosen = VideoQualityPolicy.pickBest(remembered + probed, cap)?.flag
+        }
+        // 三种结局都记日志:这是"画质优先到底有没有生效"的唯一可观测点。
+        // 探不到(probed 为 null)时按站点原序起播 —— **不是**按 flag 名猜,
+        // 见 VideoQualityPolicy 的类注释:站点把"4K"写在 540P 地址上是常事。
+        if (probed == null) {
+            LOG.i("echo-quality probe-timeout lines=" + flagsToProbe.size + " mode=" + mode.name)
+            return
+        }
+        val pool = remembered + probed
+        val chosen = VideoQualityPolicy.pickBest(pool, cap)?.flag
+        LOG.i(
+            "echo-quality decide mode=" + mode.name + " pool=" + pool.size +
+                " probed=" + probed.size + " -> " + (chosen ?: "none") +
+                " (was " + (currentFlag ?: "null") + ")"
+        )
         if (chosen.isNullOrEmpty() || chosen == currentFlag) return
         // 等待期间可能换了片/进了换源链:那时再写 vodInfo 会把新内容顶掉
         if (token != detailBuildToken || sourceKey != siteKey || info.playFlag != currentFlag) return
@@ -1407,6 +1484,15 @@ class DetailViewModel : ViewModel() {
         private const val SOURCE_SEARCH_TIMEOUT_MS = 8_000L
         /** 候选收集并发度。原 6 太保守,聚合订阅下一批批轮很慢;提到 12 让候选更快到齐 */
         private const val SOURCE_SEARCH_CONCURRENCY = 12
+        /**
+         * 详情发出后延迟多久预热聚合搜索(毫秒)。
+         *
+         * <p>取值权衡:必须**短于**详情看门狗的最短时限(20s,[DetailLoadWatchdog.MIN_TIMEOUT_MS]),
+         * 否则"当前源没这部剧"时兜底仍要等看门狗先判失败,等于没优化;又要**足够长**,
+         * 让"当前源正常返回"的绝大多数点击在预热触发前就已经 Ready,搜索压根不用发。
+         * 1.5s 的依据:站内有本地命中缓存的详情多在几百毫秒内回,1.5s 已是宽松余量。
+         */
+        private const val SOURCE_SEARCH_PREWARM_DELAY_MS = 1500L
 
         // i18n: keep —— 源侧"没有数据"的哨兵值;误翻会把空结果判成源报错,详情页提示后自动关闭
         private const val SOURCE_EMPTY_MSG = "数据列表"

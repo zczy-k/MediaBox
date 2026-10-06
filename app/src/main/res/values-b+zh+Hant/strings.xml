@@ -194,6 +194,7 @@
     <string name="common_cast">投放</string>
     <string name="common_refresh">重新整理</string>
     <string name="common_empty_content">暫無內容</string>
+    <string name="common_source_anonymous_prefix">源</string>
     <string name="common_load_failed_network">載入失敗，請檢查網路</string>
     <string name="common_play">播放</string>
     <string name="common_pause">暫停</string>

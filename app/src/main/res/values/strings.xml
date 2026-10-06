@@ -194,6 +194,9 @@
     <string name="common_cast">投屏</string>
     <string name="common_refresh">刷新</string>
     <string name="common_empty_content">暂无内容</string>
+    <!-- 候选源的匿名标签前缀(源 1 / 源 2 …)。刻意不写任何"这是某某站"的解释:
+         产品要求用户看不到 App 有哪些源,这一行只用于让用户能口头指代"第 N 个那条线路"。 -->
+    <string name="common_source_anonymous_prefix">源</string>
     <string name="common_load_failed_network">加载失败，请检查网络</string>
     <string name="common_play">播放</string>
     <string name="common_pause">暂停</string>

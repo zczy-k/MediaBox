@@ -26,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,6 +39,7 @@ import com.github.tvbox.osc.R
 import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.ui.components.VodCard
 import com.github.tvbox.osc.ui.theme.filterChipColors
+import com.github.tvbox.osc.util.SourceIdentityMask
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 @Composable
@@ -69,6 +71,13 @@ internal fun SearchListResults(
         }.distinctUntilChanged().collect { if (it) onLoadMore() }
     }
     val shown = if (selectedSource == null) done else done.filter { it.sourceKey == selectedSource }
+    // ⚠️ 匿名标签:按**筛选前的稳定顺序**编号,而不是用真实站名。
+    // 真实站名一旦渲染出来(标题行/筛选 chip/分区页大标题),就等于把 App 的源清单摊给用户。
+    // 编号必须跟着 sourceKey 走,否则筛选一换,序号会跳。
+    val anonymousLabelOf = remember(done) {
+        val prefix = stringResource(R.string.common_source_anonymous_prefix)
+        done.mapIndexed { index, r -> r.sourceKey to SourceIdentityMask.anonymousLabel(index, prefix) }.toMap()
+    }
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
@@ -107,7 +116,7 @@ internal fun SearchListResults(
                                             if (selectedSource == result.sourceKey) null else result.sourceKey,
                                         )
                                     },
-                                    label = { Text(result.sourceName) },
+                                    label = { Text(anonymousLabelOf[result.sourceKey].orEmpty()) },
                                     shape = RoundedCornerShape(20.dp),
                                     colors = MaterialTheme.colorScheme.filterChipColors(),
                                 )
@@ -126,7 +135,7 @@ internal fun SearchListResults(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = result.sourceName,
+                        text = anonymousLabelOf[result.sourceKey].orEmpty(),
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onSurface,
                         modifier = Modifier.weight(1f),
@@ -136,7 +145,13 @@ internal fun SearchListResults(
                             .clip(RoundedCornerShape(18.dp))
                             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.7f))
                             .clickable {
-                                PartitionListActivity.startForSearch(context, result.videos, result.sourceName)
+                                // 传匿名标签而非真实站名:这个标题会渲染成分区列表页的大标题,
+                                // 传站名等于从二级页面再泄露一次(同一个词的第二个出口)。
+                                PartitionListActivity.startForSearch(
+                                    context,
+                                    result.videos,
+                                    anonymousLabelOf[result.sourceKey].orEmpty(),
+                                )
                             }
                             .padding(horizontal = 8.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,

@@ -11,7 +11,6 @@ import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.compose.ui.platform.ComposeView
 import com.github.tvbox.osc.R
-import com.github.tvbox.osc.api.ApiConfig
 import com.github.tvbox.osc.base.BaseActivity
 import com.github.tvbox.osc.ui.components.SheetHostScaffold
 import com.github.tvbox.osc.bean.VodInfo
@@ -338,7 +337,10 @@ class MusicPlayerActivity : BaseActivity(), PlaybackPage {
     private fun refreshMeta() {
         val series = vod.seriesMap?.get(vod.playFlag)?.getOrNull(vod.playIndex)
         val title = vod.name.orEmpty().ifBlank { getString(R.string.music_default_name) }
-        val sourceName = ApiConfig.get().getSource(sourceKey)?.name.orEmpty()
+        // ⚠️ 不再取 ApiConfig.getSource(sourceKey).name:那个胶囊原本直接显示真实站名。
+        // 产品要求任何情况下看不到有哪些源 ⇒ 改成固定匿名标签("源"),不携带任何站身份信息。
+        // 保留这个胶囊纯粹是顶栏视觉配平,它不再是任何"来源信息"的载体。
+        val sourceName = getString(R.string.common_source_anonymous_prefix)
         ui.title = title
         ui.subtitle = series?.name?.takeIf { it.isNotBlank() }.orEmpty()
         ui.sourceName = sourceName

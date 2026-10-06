@@ -242,7 +242,7 @@ fun DetailScreen(activity: DetailActivity, vm: DetailViewModel) {
                             retryText = "",
                             modifier = Modifier.weight(1f),
                         )
-                        SourceSection(vm, currentSourceName = null, revision = revision)
+                        SourceSection(vm, revision = revision)
                     }
                 }
 

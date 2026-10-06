@@ -61,4 +61,30 @@ class SourceIdentityMaskTest {
         val once = SourceIdentityMask.mask("err https://x.com/a")
         assertEquals(once, SourceIdentityMask.mask(once))
     }
+
+    @Test
+    fun anonymousLabel_usesOneBasedIndex() {
+        assertEquals("源 1", SourceIdentityMask.anonymousLabel(0, "源"))
+        assertEquals("源 3", SourceIdentityMask.anonymousLabel(2, "源"))
+    }
+
+    @Test
+    fun anonymousLabel_fallsBackToBareNumberWhenPrefixBlank() {
+        assertEquals("1", SourceIdentityMask.anonymousLabel(0, "   "))
+        assertEquals("1", SourceIdentityMask.anonymousLabel(0, ""))
+    }
+
+    @Test
+    fun anonymousLabel_negativeIndex_returnsEmpty() {
+        assertEquals("", SourceIdentityMask.anonymousLabel(-1, "源"))
+    }
+
+    @Test
+    fun anonymousLabel_carriesNoSourceIdentity() {
+        // 标签只由下标与前缀构成,不含任何站名/域名成分 —— 这是"不泄露"的根因
+        val label = SourceIdentityMask.anonymousLabel(1, "源")
+        assertFalse(label.contains("影视"))
+        assertFalse(label.contains("资源"))
+        assertFalse(label.contains("."))
+    }
 }

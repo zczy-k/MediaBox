@@ -62,6 +62,7 @@ import com.github.tvbox.osc.ui.components.VodPoster
 import com.github.tvbox.osc.ui.theme.cardContainer
 import kotlinx.coroutines.flow.distinctUntilChanged
 import com.github.tvbox.osc.util.SearchSettings
+import com.github.tvbox.osc.util.SourceIdentityMask
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -222,11 +223,19 @@ internal fun RailResults(
             )
         }.distinctUntilChanged().collect { if (it) onLoadMore() }
     }
+    // 匿名标签:与 SearchListResults 同一口径(按 sourceKey 编号,不含真实站名)。
+    // 行内 siteName 也走这里 —— 竖排轨道名 + 行内标注是两个独立的泄露口,必须一起封。
+    val anonymousLabelOf = remember(results) {
+        val prefix = stringResource(R.string.common_source_anonymous_prefix)
+        results.mapIndexed { index, r -> r.sourceKey to SourceIdentityMask.anonymousLabel(index, prefix) }.toMap()
+    }
     val rows = remember(results, selectedSource) {
         results
             .filter { it.videos.isNotEmpty() && (selectedSource == null || it.sourceKey == selectedSource) }
             .sortedBy { it.arrivedAt }
-            .flatMap { result -> result.videos.map { result.sourceName to it } }
+            .flatMap { result ->
+                result.videos.map { (anonymousLabelOf[result.sourceKey].orEmpty()) to it }
+            }
     }
 
     LaunchedEffect(selectedSource) {
@@ -250,7 +259,7 @@ internal fun RailResults(
             }
             items(results, key = { "rail_${it.sourceKey}" }) { result ->
                 SearchRailItem(
-                    name = result.sourceName,
+                    name = anonymousLabelOf[result.sourceKey].orEmpty(),
                     pending = result.state == SearchViewModel.ResultState.Pending,
                     queued = result.state == SearchViewModel.ResultState.Queued,
                     selected = selectedSource == result.sourceKey,

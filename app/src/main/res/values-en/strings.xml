@@ -194,6 +194,7 @@
     <string name="common_cast">Cast</string>
     <string name="common_refresh">Refresh</string>
     <string name="common_empty_content">Nothing here yet</string>
+    <string name="common_source_anonymous_prefix">Source</string>
     <string name="common_load_failed_network">Failed to load. Check your network</string>
     <string name="common_play">Play</string>
     <string name="common_pause">Pause</string>

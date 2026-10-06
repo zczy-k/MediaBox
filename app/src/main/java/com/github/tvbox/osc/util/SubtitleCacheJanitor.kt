@@ -63,7 +63,8 @@ object SubtitleCacheJanitor {
             if (ordered[idx].delete()) removed++
         }
         if (removed > 0) {
-            LOG.i("SubtitleCacheJanitor", "trim zimu: removed " + removed + " of " + files.size)
+            // 注意:本仓 LOG.i 只有单参重载,别写成 LOG.i(tag, msg) —— 会编译失败
+            LOG.i("SubtitleCacheJanitor trim zimu: removed " + removed + " of " + files.size)
         }
         return removed
     }
@@ -85,7 +86,7 @@ object SubtitleCacheJanitor {
             if (ordered[idx].delete()) removed++
         }
         if (removed > 0) {
-            LOG.i("SubtitleCacheJanitor", "trim subtitle copies: removed " + removed + " of " + files.size)
+            LOG.i("SubtitleCacheJanitor trim copies: removed " + removed + " of " + files.size)
         }
         return removed
     }

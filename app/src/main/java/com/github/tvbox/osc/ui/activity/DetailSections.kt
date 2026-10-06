@@ -56,15 +56,30 @@ internal fun SectionTitleIcon(imageVector: ImageVector) {
     )
 }
 
+/**
+ * 详情页的换源分区。
+ *
+ * <p>⚠️ **这里绝不显示任何真实站名**。产品要求:任何情况下用户都不能看到 App 有哪些源。
+ * 以前这里直接把 `SourceChip.name`(= `ApiConfig.getSource(key).name`)渲染成 FilterChip 标签,
+ * 于是空态"暂无片源"下方会冒出一排真实站名 —— 这就是被用户截图拍到的泄露。
+ * 现在标签一律由 [DetailViewModel.sourceLabelFor] 按**下标**生成(`源 1`/`源 2`…),
+ * 与站名无关;`currentSourceName` 参数已彻底删除(唯一调用方本来就传 null,留着就是定时炸弹)。
+ *
+ * <p>候选 chip 仍然可点,点走的是 [DetailViewModel.switchSource] —— 手动换源的能力保留,
+ * 只是不再告诉用户"你正在换到哪个站"。换源全自动化下这才是正确形态:
+ * 提示既刷屏又泄露身份(与 [DetailViewModel.stopPlaybackForSwitch] 静默换源同一口径)。
+ */
 @Composable
-internal fun SourceSection(vm: DetailViewModel, currentSourceName: String?, revision: Int) {
+internal fun SourceSection(vm: DetailViewModel, revision: Int) {
     @Suppress("UNUSED_EXPRESSION") revision
     val sourceChips by vm.sourceChips.collectAsStateWithLifecycle()
     val sourcesSearching by vm.sourcesSearching.collectAsStateWithLifecycle()
-    if (!sourcesSearching && sourceChips.isEmpty()) return
+    // 搜索中且还没有候选时,整行不渲染 —— 过去这里会先画出标题 + 空的换源行,
+    // 正是截图里"暂无片源下面挂着一个孤零零的换源"的成因。
+    if (sourceChips.isEmpty()) return
     val listState = rememberLazyListState()
-    LaunchedEffect(currentSourceName) {
-        if (currentSourceName != null) listState.scrollToItem(0)
+    LaunchedEffect(sourceChips.size) {
+        if (sourceChips.isNotEmpty()) listState.scrollToItem(0)
     }
     Column(
         modifier = Modifier
@@ -80,7 +95,7 @@ internal fun SourceSection(vm: DetailViewModel, currentSourceName: String?, revi
         ) {
             SectionTitleIcon(painterResource(R.drawable.ic_detail_switch_source))
             Text(
-                text = stringResource(R.string.detail_switch_source),
+                text = vm.sourceSectionTitle(),
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier
@@ -100,22 +115,14 @@ internal fun SourceSection(vm: DetailViewModel, currentSourceName: String?, revi
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (currentSourceName != null) {
-                item(key = "current") {
-                    FilterChip(
-                        selected = true,
-                        onClick = {},
-                        label = { Text(currentSourceName) },
-                        shape = RoundedCornerShape(20.dp),
-                        colors = MaterialTheme.colorScheme.filterChipColors(),
-                    )
-                }
-            }
-            itemsIndexed(sourceChips, key = { _, c -> c.key }) { _, chip ->
+            // 标签只由下标生成(源 1 / 源 2 …),**不含真实站名** —— 见本函数 KDoc
+            itemsIndexed(sourceChips, key = { _, c -> c.key }) { index, chip ->
+                val label = vm.sourceLabelFor(index)
+                if (label.isEmpty()) return@itemsIndexed
                 FilterChip(
                     selected = false,
                     onClick = { vm.candidateForKey(chip.key)?.let { vm.switchSource(it) } },
-                    label = { Text(chip.name) },
+                    label = { Text(label) },
                     shape = RoundedCornerShape(20.dp),
                     colors = MaterialTheme.colorScheme.filterChipColors(
                         containerColor = MaterialTheme.colorScheme.surfaceContainer,
