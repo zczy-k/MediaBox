@@ -812,8 +812,10 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
             return;
         }
         // 源身份不外泄:错误串可能原样带着接口地址/站名(换源自动化后这是最后一道泄露口),
-        // 统一在这里脱敏 —— 所有失败提示都经过本方法,是唯一的收口点
-        err = SourceIdentityMask.mask(err);
+        // 统一在这里脱敏 —— 所有失败提示都经过本方法,是唯一的收口点。
+        // 不能回写参数 err:方法开头的主线程转发 lambda 捕获了 err,重赋值会破坏
+        // effectively final,整个方法编译不过(v1.0.8 CI 实证)。
+        final String maskedErr = SourceIdentityMask.mask(err);
         if (scheduler.isPlaybackStarted()) {
             scheduler.cancelPlayTimeout();
             hideTipOnUiThread();
@@ -826,18 +828,18 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
             if (pageHost != null && pageHost.onPlaybackLinesExhausted()) return;
             scheduler.stopMusicSessionForFailedPlayback();
             if (!isAttached()) return;
-            setTip(err, false, true);
+            setTip(maskedErr, false, true);
             if (finish) {
-                Toast.makeText(mContext, err, Toast.LENGTH_SHORT).show();
+                Toast.makeText(mContext, maskedErr, Toast.LENGTH_SHORT).show();
             }
             return;
         }
         if (!scheduler.autoRetry()) {
             scheduler.stopMusicSessionForFailedPlayback();
             if (!isAttached()) return;
-            setTip(err, false, true);
+            setTip(maskedErr, false, true);
             if (finish) {
-                Toast.makeText(mContext, err, Toast.LENGTH_SHORT).show();
+                Toast.makeText(mContext, maskedErr, Toast.LENGTH_SHORT).show();
             }
         }
     }
