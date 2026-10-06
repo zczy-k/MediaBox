@@ -268,10 +268,13 @@ internal fun DetailContent(
         // 「线路」区:手动换线入口。标签是「线路N + 实测画质」,不暴露站点自报的 flag 名,
         // 也不会泄露源身份;更关键的是用户手动选过之后播放侧会记 userPickedLine 而不再自动换线,
         // 这个意图要有入口才成立(见 DetailLineSection 的说明)。
-        // 单线路不显示:没有可切换对象,一行只有一个 chip 的「线路」区是噪声
-        if ((info.seriesFlags?.size ?: 0) > 1) {
+        // 单线路不显示:没有可切换对象,一行只有一个 chip 的「线路」区是噪声。
+        // flags / currentFlag **必须显式传进去**:vodInfo 是普通 var,不是 StateFlow,
+        // 若在组合内部读它,参数不变时 Compose 会跳过重组 ⇒ 点完线路"视频换了但选中态不换"
+        val lineFlags = info.seriesFlags.orEmpty()
+        if (lineFlags.size > 1) {
             item(key = "lines") {
-                DetailLineSection(vm)
+                DetailLineSection(vm, lineFlags, currentFlag)
             }
         }
 

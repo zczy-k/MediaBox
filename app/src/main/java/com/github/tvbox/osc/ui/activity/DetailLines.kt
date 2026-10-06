@@ -12,6 +12,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.github.tvbox.osc.R
+import com.github.tvbox.osc.bean.VodInfo
 import com.github.tvbox.osc.ui.theme.filterChipColors
 
 /**
@@ -42,13 +43,23 @@ internal fun lineLabel(index: Int, flagName: String?, heights: Map<String, Int>)
  * 只能靠内部逻辑触发,用户永远摸不到。
  *
  * <p>单线路不显示:没有可切换对象,一行只有一个 chip 的"线路"区是噪声。
+ *
+ * @param flags       当前片的线路列表,**必须由调用方传入**
+ * @param currentFlag 当前选中的线路,**同样必须由调用方传入**
+ *
+ * <p>后两个参数为什么是值而不是内部读 `vm.vodInfo`:`vodInfo` 是普通 `var` 而非 StateFlow,
+ * 详情页靠 `revision` 这个 StateFlow 触发重组。若在组合内部读它,本组合的输入(只有 `vm`,
+ * 恒定不变)就没变,Compose 会**跳过重组** —— 表现为"点了线路、视频确实换了,但选中态不换"。
+ * 显式接收会变的值作参数,输入变了才会重画,与同文件邻居 `EpisodeRow(vm, info, episodes,
+ * playIndex, currentFlag)` 同一套路。
  */
 @Composable
-internal fun DetailLineSection(vm: DetailViewModel) {
-    val info = vm.vodInfo ?: return
-    val flags = info.seriesFlags.orEmpty()
+internal fun DetailLineSection(
+    vm: DetailViewModel,
+    flags: List<VodInfo.VodSeriesFlag>,
+    currentFlag: String?,
+) {
     if (flags.size <= 1) return
-    val currentFlag = info.playFlag
     // 与面板同一口径:打开这一瞬刷新一次实测画质(起播后由播放层回写,到这时才可能变)
     val lineHeights by vm.lineQualityHeights.collectAsStateWithLifecycle()
 
