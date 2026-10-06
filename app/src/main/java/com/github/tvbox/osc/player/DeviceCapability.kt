@@ -79,4 +79,33 @@ object DeviceCapability {
         }
         KV.put(HawkConfig.VIDEO_QUALITY_CAP, height.coerceIn(480, 4320))
     }
+
+    /**
+     * 「画质选项」三档。**只分化"起播前做什么"**,起播后的故障链(降档 → 换线 → 换源 → 收口)
+     * 三档完全一致 —— 卡顿降档的决策是读内存,零耗时,任何档都不该关掉它。
+     *
+     * <p>为什么画质功夫全部前置到起播前:播放中"升档"会造成画面跳变 + 音画不同步,只降不升;
+     * 所以"画质 vs 速度"这笔账只会在起播前结算一次。
+     */
+    enum class QualityMode(
+        val shouldProbeOnFirstWatch: Boolean,
+        val probeBudgetMs: Long,
+        val probeLines: Int,
+    ) {
+        /** 起播前把功夫做足:长预算探测候选线路,选实测最高(预解析管线接入后探测对象升级为真地址) */
+        QUALITY_FIRST(true, 3000L, 4),
+
+        /** 默认:记忆命中 0ms 选最高;无记忆做短预算直链探测,探不到按站点原序起播 */
+        AUTO(true, 1000L, 3),
+
+        /** 跳过全部起播前探测,站点原序即播;实测记忆回写不受档位影响,照常积累 */
+        SPEED_FIRST(false, 0L, 0);
+
+        companion object {
+            /** KV 脏值兜底:越界/缺省一律落自动档 —— 跨版本升级可能读到任意 int,不可让播放路径抛异常 */
+            @JvmStatic
+            fun current(): QualityMode =
+                values().getOrNull(KV.get(HawkConfig.VIDEO_QUALITY_MODE, AUTO.ordinal)) ?: AUTO
+        }
+    }
 }

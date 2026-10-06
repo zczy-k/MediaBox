@@ -21,6 +21,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.github.tvbox.osc.R
+import com.github.tvbox.osc.player.DeviceCapability
 import com.github.tvbox.osc.player.PlaybackService
 import com.github.tvbox.osc.player.effect.anime4k.Anime4kTier
 import com.github.tvbox.osc.ui.components.MediaBoxAlertDialog
@@ -70,6 +71,8 @@ fun PlaySettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewM
     }
     var customSources by remember { mutableStateOf(SubtitleSources.custom()) }
     var customSourceDialog by remember { mutableStateOf(false) }
+    // 画质选项:直接读写 KV,不走 SettingsState(同字幕区块的"不必整页 refresh"约定)
+    var qualityMode by remember { mutableStateOf(DeviceCapability.QualityMode.current()) }
 
     val listState = rememberScrollState()
     AppTopBarScaffold(
@@ -157,6 +160,33 @@ fun PlaySettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewM
                         options = decodeLabels,
                         selectedIndex = if (codec == DecodeSoft) 1 else 0,
                         onSelect = { idx -> vm.put(HawkConfig.EXO_DECODE, if (idx == 1) DecodeSoft else DecodeHard) },
+                    )
+                }
+                SettingsCard(SettingsCardPosition.MIDDLE) {
+                    // 「画质选项」三档:只分化起播前的探测策略(口径见 DeviceCapability.QualityMode);
+                    // 起播后的降档/换线/换源链三档一致,这里只改 KV,无其它副作用
+                    val mode = qualityMode
+                    SettingsOptionMenuRow(
+                        title = stringResource(R.string.settings_video_quality_mode),
+                        subtitle = stringResource(R.string.settings_video_quality_mode_subtitle),
+                        valueText = stringResource(
+                            when (mode) {
+                                DeviceCapability.QualityMode.QUALITY_FIRST -> R.string.video_quality_quality_first
+                                DeviceCapability.QualityMode.SPEED_FIRST -> R.string.video_quality_speed_first
+                                else -> R.string.video_quality_auto
+                            },
+                        ),
+                        options = listOf(
+                            stringResource(R.string.video_quality_quality_first),
+                            stringResource(R.string.video_quality_auto),
+                            stringResource(R.string.video_quality_speed_first),
+                        ),
+                        selectedIndex = mode.ordinal,
+                        onSelect = { idx ->
+                            val picked = DeviceCapability.QualityMode.values()[idx]
+                            qualityMode = picked
+                            vm.put(HawkConfig.VIDEO_QUALITY_MODE, picked.ordinal)
+                        },
                     )
                 }
                 SettingsCard(SettingsCardPosition.LAST) {

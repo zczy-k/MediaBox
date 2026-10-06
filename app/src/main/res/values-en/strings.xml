@@ -413,6 +413,11 @@
     <string name="settings_play_prefer_aac">Prefer AAC</string>
     <string name="settings_music_page">Music Player Page</string>
     <string name="settings_music_page_subtitle">Open automatically for audio-only content</string>
+    <string name="settings_video_quality_mode">Video Quality</string>
+    <string name="settings_video_quality_mode_subtitle">Whether to probe real resolution of lines before playback</string>
+    <string name="video_quality_quality_first">Quality First</string>
+    <string name="video_quality_auto">Auto</string>
+    <string name="video_quality_speed_first">Speed First</string>
 
     <!-- Tips: source loading -->
     <string name="toast_config_parse_failed">Failed to parse config</string>

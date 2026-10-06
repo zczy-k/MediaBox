@@ -613,6 +613,11 @@ class DetailViewModel : ViewModel() {
      * 探不到就静默降级,绝不阻塞播放。
      */
     private suspend fun applyFirstWatchProbe(info: VodInfo, siteKey: String, vodId: String, token: Int) {
+        // 「画质选项」三档分流(口径见 DeviceCapability.QualityMode):速度优先跳过全部起播前探测。
+        // 实测记忆回写在 MusicSessionDelegate,不受档位影响 —— 速度优先下照常积累,
+        // 用户切回自动/画质档后立即受益。
+        val mode = DeviceCapability.QualityMode.current()
+        if (!mode.shouldProbeOnFirstWatch) return
         val seriesMap = info.seriesMap ?: return
         val siteOrder = seriesMap.keys.toList()
         if (siteOrder.size <= 1) return
@@ -625,9 +630,9 @@ class DetailViewModel : ViewModel() {
         val index = if (currentList.isNullOrEmpty()) 0 else info.playIndex.coerceIn(0, currentList.size - 1)
         val headers = probeHeaders(siteKey)
         val probe = VideoQualityProbe()
-        val chosen = withTimeoutOrNull(FIRST_WATCH_PROBE_BUDGET_MS) {
+        val chosen = withTimeoutOrNull(mode.probeBudgetMs) {
             LineQualitySelector.pickWithProbeParallel(
-                flags = LineQualitySelector.mergeCandidates(siteOrder, emptyList(), cap, FIRST_WATCH_PROBE_LINES),
+                flags = LineQualitySelector.mergeCandidates(siteOrder, emptyList(), cap, mode.probeLines),
                 deviceCapHeight = cap,
                 resolve = { flag -> directUrlOf(seriesMap[flag], index) },
                 probe = { url -> probe.probe(url, headers) },

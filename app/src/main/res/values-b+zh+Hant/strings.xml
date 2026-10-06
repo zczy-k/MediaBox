@@ -413,6 +413,11 @@
     <string name="settings_play_prefer_aac">AAC 優先</string>
     <string name="settings_music_page">音樂播放頁</string>
     <string name="settings_music_page_subtitle">辨識為純音訊時自動開啟</string>
+    <string name="settings_video_quality_mode">畫質選項</string>
+    <string name="settings_video_quality_mode_subtitle">起播前是否探測各線路的真實解析度</string>
+    <string name="video_quality_quality_first">畫質優先</string>
+    <string name="video_quality_auto">自動畫質</string>
+    <string name="video_quality_speed_first">速度優先</string>
 
     <!-- 提示:源載入 -->
     <string name="toast_config_parse_failed">設定解析失敗</string>

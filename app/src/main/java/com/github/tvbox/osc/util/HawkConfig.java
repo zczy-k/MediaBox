@@ -53,6 +53,8 @@ public class HawkConfig {
     public static final String VIDEO_QUALITY_MEMORY = "video_quality_memory";
     /** 设备最高可播高度(像素,0=不限制;由降档实测学习,见 player/DeviceCapability) */
     public static final String VIDEO_QUALITY_CAP = "video_quality_cap";
+    /** 「画质选项」三档(int:0=画质优先 1=自动画质 2=速度优先;取值口径见 DeviceCapability.QualityMode) */
+    public static final String VIDEO_QUALITY_MODE = "video_quality_mode";
     public static final String PLAY_SCALE = "play_scale"; //0 texture 2
     // EXO 音频隧道(audio offload,2026-09-11):压缩音频码流直通 DSP 解码;设备/格式不支持时自动回退普通播放
     public static final String PLAY_TUNNEL = "play_tunnel";

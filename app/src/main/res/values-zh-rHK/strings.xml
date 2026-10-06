@@ -24,6 +24,11 @@
     <string name="settings_nav_live_hidden">導航欄隱藏直播</string>
     <string name="settings_nav_live_hidden_subtitle">開啟後導航欄不再顯示直播入口</string>
     <string name="settings_music_page_subtitle">識別為純音頻時自動開啟</string>
+    <string name="settings_video_quality_mode">畫質選項</string>
+    <string name="settings_video_quality_mode_subtitle">起播前是否探測各線路的真實解析度</string>
+    <string name="video_quality_quality_first">畫質優先</string>
+    <string name="video_quality_auto">自動畫質</string>
+    <string name="video_quality_speed_first">速度優先</string>
     <string name="player_menu_video_track">視頻軌</string>
     <string name="player_no_video_track">沒有視頻軌</string>
     <string name="player_switch_video_track">切換視頻軌</string>
