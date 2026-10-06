@@ -206,4 +206,76 @@ class LineQualitySelectorTest {
     fun pickDowngrade_emptyMeasuredReturnsNull() {
         assertNull(LineQualitySelector.pickDowngrade(emptyList(), "2160", 2160, emptySet()))
     }
+
+    // ---------------- 并发探测(直连型线路,无爬虫共享状态) ----------------
+
+    @Test
+    fun pickWithProbeParallel_picksHighestMeasured() = runBlocking {
+        val order = mutableListOf<String>()
+        val picked = LineQualitySelector.pickWithProbeParallel(
+            flags = listOf("A", "B", "C"),
+            deviceCapHeight = 0,
+            resolve = {
+                // 并发的证据:三条的 resolve 交错进入,不是串行
+                order.add("r$it")
+                it
+            },
+            probe = { url ->
+                order.add("p$url")
+                when (url) {
+                    "A" -> VideoQualityPolicy.Variant(1280, 720, 0, VideoQualityPolicy.Confidence.MEASURED)
+                    "B" -> VideoQualityPolicy.Variant(3840, 2160, 0, VideoQualityPolicy.Confidence.MEASURED)
+                    else -> VideoQualityPolicy.Variant(1920, 1080, 0, VideoQualityPolicy.Confidence.MEASURED)
+                }
+            },
+        )
+        assertEquals("B", picked)
+        assertEquals(3, order.count { it.startsWith("p") })
+    }
+
+    @Test
+    fun pickWithProbeParallel_skipsUnresolvableAndUnmeasurable() = runBlocking {
+        val picked = LineQualitySelector.pickWithProbeParallel(
+            flags = listOf("A", "B", "C"),
+            deviceCapHeight = 0,
+            resolve = { if (it == "A") null else it },
+            probe = { url ->
+                if (url == "B") null else VideoQualityPolicy.Variant(1920, 1080, 0, VideoQualityPolicy.Confidence.MEASURED)
+            },
+        )
+        assertEquals("C", picked)
+    }
+
+    @Test
+    fun pickWithProbeParallel_respectsDeviceCap() = runBlocking {
+        val picked = LineQualitySelector.pickWithProbeParallel(
+            flags = listOf("A", "B"),
+            deviceCapHeight = 1080,
+            resolve = { it },
+            probe = { VideoQualityPolicy.Variant(3840, 2160, 0, VideoQualityPolicy.Confidence.MEASURED) },
+        )
+        assertNull(picked)
+    }
+
+    @Test
+    fun pickWithProbeParallel_allUnmeasurableReturnsNull() = runBlocking {
+        val picked = LineQualitySelector.pickWithProbeParallel(
+            flags = listOf("A", "B"),
+            deviceCapHeight = 0,
+            resolve = { it },
+            probe = { null },
+        )
+        assertNull(picked)
+    }
+
+    @Test
+    fun pickWithProbeParallel_exceptionInOneCandidateDoesNotKillOthers() = runBlocking {
+        val picked = LineQualitySelector.pickWithProbeParallel(
+            flags = listOf("A", "B"),
+            deviceCapHeight = 0,
+            resolve = { if (it == "A") throw RuntimeException("boom") else it },
+            probe = { VideoQualityPolicy.Variant(1920, 1080, 0, VideoQualityPolicy.Confidence.MEASURED) },
+        )
+        assertEquals("B", picked)
+    }
 }

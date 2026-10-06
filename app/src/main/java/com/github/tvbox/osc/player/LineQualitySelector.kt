@@ -1,5 +1,9 @@
 package com.github.tvbox.osc.player
 
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+
 /**
  * 线路优选编排:**纯逻辑**,网络与爬虫调用由调用方注入,所以可单测。
  *
@@ -82,6 +86,34 @@ object LineQualitySelector {
         block()
     } catch (t: Throwable) {
         null
+    }
+
+    /**
+     * **并发**探测候选线路,选出最优 flag。
+     *
+     * <p>与 [pickWithProbe] 的区别:那个是串行,因为每条要先跑爬虫解析(同类 Spider 共享静态状态,
+     * 不能并发);这个用于**直连型**线路 —— `VodSeries.url` 本身就是可播放地址时,探测只需要一次小请求,
+     * 没有共享状态,自然可以并发,总耗时等于最慢那一条而不是全部之和。
+     *
+     * <p>不做逐条早停:`awaitAll` 语义更简单可预测,而带宽由调用方的候选数上限兜住
+     * (K 条 × ≤256KB,3 条最坏 768KB)。整体还有调用方的硬超时。
+     *
+     * @return 选中的 flag；全部探测不到时 null(调用方回落站点原序)
+     */
+    suspend fun pickWithProbeParallel(
+        flags: List<String>,
+        deviceCapHeight: Int,
+        resolve: suspend (String) -> String?,
+        probe: suspend (String) -> VideoQualityPolicy.Variant?,
+    ): String? = coroutineScope {
+        val results = flags.map { flag ->
+            async {
+                val url = runCatchingBlocking { resolve(flag) } ?: return@async null
+                val measured = runCatchingBlocking { probe(url) } ?: return@async null
+                measured.copy(flag = flag)
+            }
+        }.awaitAll().filterNotNull()
+        VideoQualityPolicy.pickBest(results, deviceCapHeight)?.flag
     }
 
     /**

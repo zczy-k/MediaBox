@@ -16,6 +16,8 @@ import com.github.tvbox.osc.player.DeviceCapability
 import com.github.tvbox.osc.player.LineQualitySelector
 import com.github.tvbox.osc.player.PlaybackSession
 import com.github.tvbox.osc.player.VideoQualityMemory
+import com.github.tvbox.osc.player.VideoQualityProbe
+import com.github.tvbox.osc.util.UA
 import com.github.tvbox.osc.util.EpisodeTotals
 import com.github.tvbox.osc.util.HistoryHelper
 import com.github.tvbox.osc.util.HistoryWriter
@@ -424,6 +426,11 @@ class DetailViewModel : ViewModel() {
                 if (!playingList.isNullOrEmpty()) switchSnapshot = null
                 pageState.value = PageState.Ready
                 bumpRevision()
+                // 首集(无记忆)时给一次短暂机会做**真实**画质探测。
+                // 放在 pageState=Ready 之后 ⇒ UI 已经渲染,不会白屏;拿到达标就选最好的那档,
+                // 拿不到就按记忆/站点原序起播(最坏多等 FIRST_WATCH_PROBE_BUDGET_MS)。
+                // 传 detailBuildToken 快照:探测期间换了片的话,快照与当前值就不相等了。
+                applyFirstWatchProbe(info, recordKey, recordId, detailBuildToken)
                 requestPlay()
                 if (playingList.isNullOrEmpty()) {
                     startFallbackIfNeeded(auto = true)
@@ -593,6 +600,60 @@ class DetailViewModel : ViewModel() {
         vodPicture = video.pic ?: vodPicture
         resetEngineState(keepChips = true)
         loadDetail(video.id.orEmpty(), video.sourceKey.orEmpty())
+    }
+
+    /**
+     * 首集无记忆时的**真实画质探测**,把 [VodInfo.playFlag] 换成实测最高的那一档。
+     *
+     * <p>为什么必须做:只靠记忆意味着"第一次播放按站点原序(常常是 480P)",那正是要避免的体验。
+     * 这里在起播前给一次 ≤[FIRST_WATCH_PROBE_BUDGET_MS] 的窗口,期间 UI 已渲染,用户看不到白屏。
+     *
+     * <p>只探**直连型**线路:`VodSeries.url` 以 http 开头才探(与 `PlayLoader.shouldDirectPlay` 同口径)。
+     * 需要爬虫 `playerContent` 才能拿到真地址的线路一律跳过 —— 那条路要 1~3 秒/条,不能挡起播。
+     * 探不到就静默降级,绝不阻塞播放。
+     */
+    private suspend fun applyFirstWatchProbe(info: VodInfo, siteKey: String, vodId: String, token: Int) {
+        val seriesMap = info.seriesMap ?: return
+        val siteOrder = seriesMap.keys.toList()
+        if (siteOrder.size <= 1) return
+        val app = App.getInstance() ?: return
+        val cap = DeviceCapability.capHeight(app)
+        if (VideoQualityMemory.lookupAll(siteKey, vodId, siteOrder).isNotEmpty()) return
+        val currentFlag = info.playFlag
+        val currentList = seriesMap[currentFlag]
+        // 不能写 coerceIn(0, size - 1):size 为 0 时下界 0 > 上界 -1,coerceIn 会抛 IllegalArgumentException
+        val index = if (currentList.isNullOrEmpty()) 0 else info.playIndex.coerceIn(0, currentList.size - 1)
+        val headers = probeHeaders(siteKey)
+        val probe = VideoQualityProbe()
+        val chosen = withTimeoutOrNull(FIRST_WATCH_PROBE_BUDGET_MS) {
+            LineQualitySelector.pickWithProbeParallel(
+                flags = LineQualitySelector.mergeCandidates(siteOrder, emptyList(), cap, FIRST_WATCH_PROBE_LINES),
+                deviceCapHeight = cap,
+                resolve = { flag -> directUrlOf(seriesMap[flag], index) },
+                probe = { url -> probe.probe(url, headers) },
+            )
+        } ?: return
+        if (chosen == null || chosen == currentFlag) return
+        // 等待期间可能换了片/进了换源链:那时再写 vodInfo 会把新内容顶掉
+        if (token != detailBuildToken || sourceKey != siteKey || info.playFlag != currentFlag) return
+        info.playFlag = chosen
+        val list = seriesMap[chosen]
+        if (!list.isNullOrEmpty()) info.playIndex = index.coerceIn(0, list.size - 1)
+        for (flag in info.seriesFlags) flag.selected = flag.name == chosen
+        vodInfo = info
+        bumpRevision()
+    }
+
+    /** 该线路在该集上是否有可直接探测的直链(与 PlayLoader.shouldDirectPlay 同口径) */
+    private fun directUrlOf(list: List<VodInfo.VodSeries>?, index: Int): String? =
+        list?.getOrNull(index)?.url?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+
+    /** 探测要带的请求头:站点级 header 优先,再补一个 UA(部分 CDN 缺 UA 直接 403) */
+    private fun probeHeaders(siteKey: String): Map<String, String> {
+        val headers = HashMap<String, String>()
+        ApiConfig.get().getSource(siteKey)?.header?.let { headers.putAll(it) }
+        headers["User-Agent"] = UA.random()
+        return headers
     }
 
     private fun stopPlaybackForSwitch() {
@@ -1073,6 +1134,13 @@ class DetailViewModel : ViewModel() {
 
         /** 候选站详情取超时:候选站本身慢就赶紧轮到下一个,别让用户盯着等 */
         private const val DETAIL_FALLBACK_DETAIL_TIMEOUT_MS = 4000L
+        /**
+         * 首集无记忆时的真实画质探测预算(毫秒)。放在 `pageState=Ready` 之后执行,UI 已渲染,
+         * 不会白屏;超时就按记忆/站点原序起播,探测是锦上添花,绝不能拖住起播。
+         */
+        private const val FIRST_WATCH_PROBE_BUDGET_MS = 700L
+        /** 探测线路数上限:每条一次 ≤256KB 请求,3 条最坏 768KB */
+        private const val FIRST_WATCH_PROBE_LINES = 3
         /** 单个候选站的同名搜索超时。原 30s:聚合订阅动辄数百站,单站卡住会拖垮整轮候选收集 */
         private const val SOURCE_SEARCH_TIMEOUT_MS = 8_000L
         /** 候选收集并发度。原 6 太保守,聚合订阅下一批批轮很慢;提到 12 让候选更快到齐 */
