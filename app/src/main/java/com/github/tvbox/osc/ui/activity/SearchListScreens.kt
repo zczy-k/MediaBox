@@ -25,6 +25,8 @@ import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,6 +38,7 @@ import com.github.tvbox.osc.R
 import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.ui.components.VodCard
 import com.github.tvbox.osc.ui.theme.filterChipColors
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 @Composable
 internal fun SearchListResults(
@@ -45,10 +48,26 @@ internal fun SearchListResults(
     onSelectSource: (String?) -> Unit,
     listState: LazyListState,
     topPad: Dp,
+    hasMore: Boolean,
+    searchedCount: Int,
+    totalCount: Int,
+    onLoadMore: () -> Unit,
     onCardClick: (Movie.Video) -> Unit,
     onCardLongClick: (Movie.Video) -> Unit,
 ) {
     val context = LocalContext.current
+    // 只有用户自己在往下滑、且快到列表尾部时才续搜(与竖排列表同口径)
+    LaunchedEffect(listState, hasMore) {
+        snapshotFlow {
+            SearchBatchPolicy.shouldLoadMoreOnScroll(
+                isScrollInProgress = listState.isScrollInProgress,
+                lastVisibleItemIndex = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1,
+                totalItemCount = listState.layoutInfo.totalItemsCount,
+                hasMore = hasMore,
+                running = running,
+            )
+        }.distinctUntilChanged().collect { if (it) onLoadMore() }
+    }
     val shown = if (selectedSource == null) done else done.filter { it.sourceKey == selectedSource }
     LazyColumn(
         state = listState,
@@ -149,6 +168,15 @@ internal fun SearchListResults(
                     }
                 }
             }
+        }
+        item(key = "search_more_footer") {
+            SearchLoadMoreFooter(
+                hasMore = hasMore,
+                running = running,
+                searchedCount = searchedCount,
+                totalCount = totalCount,
+                onLoadMore = onLoadMore,
+            )
         }
     }
 }

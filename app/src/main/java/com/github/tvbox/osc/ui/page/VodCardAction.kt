@@ -33,11 +33,22 @@ internal fun Movie.Video.hasOpenableDetailId(): Boolean {
     return value.isNotEmpty() && !value.startsWith("msearch:")
 }
 
+/**
+ * 这张卡**在它自己那个来源里**能不能直接打开详情。
+ *
+ * <p>为 false 的两种来源:①源是索引型(`indexs=1`,卡片只是关键词/分类入口,没有可播详情);
+ * ②id 不可用(空 / `msearch:` 占位)。两种情况进详情都只会取不到内容 —— 用户白等一轮,
+ * 所以调用方应在**点击当下**就改道,而不是进了详情再兜底。
+ *
+ * <p>首页与搜索页共用这一条判据(见 [resolveVodCardTarget]),避免两处各写一套而漂移。
+ */
+internal fun canOpenOwnDetail(video: Movie.Video): Boolean =
+    !isSearchOnlySource(video.sourceKey) && video.hasOpenableDetailId()
+
 fun resolveVodCardTarget(video: Movie.Video): VodCardTarget = when {
     !video.action.isNullOrEmpty() -> VodCardTarget.Action(video)
     video.isFolderCard() -> VodCardTarget.Folder(video)
-    !isSearchOnlySource(video.sourceKey) && video.hasOpenableDetailId() ->
-        VodCardTarget.Detail(video)
+    canOpenOwnDetail(video) -> VodCardTarget.Detail(video)
     else -> VodCardTarget.Search(video.name.orEmpty())
 }
 

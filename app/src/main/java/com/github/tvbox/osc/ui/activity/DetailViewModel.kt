@@ -64,7 +64,17 @@ class DetailViewModel : ViewModel() {
 
     data class SourceChip(val key: String, val name: String)
 
+    /**
+     * 详情加载期间就能展示的已知信息(片名 / 海报)。
+     *
+     * <p>点击卡片时 `jumpToDetail(id, sourceKey, title, picture)` 已经把这两个值带进来了,
+     * 而详情取数要等网络。加载态先把它渲染出来,等待期间就不是一片空白 —— 这是感知提速,
+     * 不改变任何取数时机。
+     */
+    data class DetailHeader(val name: String = "", val picture: String = "")
+
     val pageState = MutableStateFlow<PageState>(PageState.Loading)
+    val header = MutableStateFlow(DetailHeader())
     val revision = MutableStateFlow(0)
     val fullScreen = MutableStateFlow(false)
     val rotating = MutableStateFlow(false)
@@ -205,6 +215,7 @@ class DetailViewModel : ViewModel() {
         fromCollect = target.fromCollect
         vodName = target.title
         vodPicture = target.picture
+        publishHeader()
         loadDetail(target.vodId, target.sourceKey)
         LOG.i("echo-detail-open collect=$fromCollect key=$sourceKey id=$vodId")
         if (vodName.isNotEmpty()) startSourceSearch()
@@ -264,6 +275,12 @@ class DetailViewModel : ViewModel() {
 
     fun bumpRevision() {
         revision.value += 1
+    }
+
+    /** 把当前已知的片名/海报推给加载态 UI;凡改动 [vodName]/[vodPicture] 之后都要调一次 */
+    private fun publishHeader() {
+        val next = DetailHeader(vodName, vodPicture)
+        if (header.value != next) header.value = next
     }
 
     fun requestPlay() {
@@ -493,6 +510,7 @@ class DetailViewModel : ViewModel() {
                     startSourceSearch()
                 }
                 vodName = mVideo.name ?: vodName
+                publishHeader()
                 if (!playingList.isNullOrEmpty()) switchSnapshot = null
                 pageState.value = PageState.Ready
                 bumpRevision()
@@ -679,6 +697,7 @@ class DetailViewModel : ViewModel() {
         usedSourceKeys.add(video.sourceKey.orEmpty())
         vodName = video.name ?: vodName
         vodPicture = video.pic ?: vodPicture
+        publishHeader()
         resetEngineState(keepChips = true)
         loadDetail(video.id.orEmpty(), video.sourceKey.orEmpty())
     }
@@ -778,6 +797,7 @@ class DetailViewModel : ViewModel() {
         firstsourceKey = snapshot.firstsourceKey
         vodName = snapshot.vodName
         vodPicture = snapshot.vodPicture
+        publishHeader()
         resetEngineState(keepChips = true)
         toastEvent.value =
             if (reason.isNullOrEmpty()) {
@@ -852,6 +872,7 @@ class DetailViewModel : ViewModel() {
             usedSourceKeys.add(video.sourceKey.orEmpty())
             vodName = video.name ?: vodName
             vodPicture = video.pic ?: vodPicture
+            publishHeader()
             publishSourceChips()
             scheduleDetailTimeout()
             // 传 field 而不是捕获一次:候选站与发起请求同属一代(这一代由 loadDetail 或 rollback 定下)

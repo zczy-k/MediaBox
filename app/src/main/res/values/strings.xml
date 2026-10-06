@@ -158,6 +158,10 @@
     <string name="search_hot_empty">暂无热搜数据</string>
     <string name="search_no_exact_result">未找到与「%1$s」完全一致的结果</string>
     <string name="search_no_result">「%1$s」暂无搜索结果</string>
+    <string name="search_load_more">搜索更多来源</string>
+    <string name="search_progress">已搜索 %1$d/%2$d 个来源</string>
+    <string name="search_all_sources_done">已搜索全部 %1$d 个来源</string>
+    <string name="search_card_unopenable">该来源无法直接打开,请换个来源试试</string>
 
     <!-- 投屏 -->
     <string name="cast_title">投屏到设备</string>

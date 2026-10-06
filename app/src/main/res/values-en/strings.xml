@@ -158,6 +158,10 @@
     <string name="search_hot_empty">No trending data</string>
     <string name="search_no_exact_result">No exact match for “%1$s”</string>
     <string name="search_no_result">No results for “%1$s”</string>
+    <string name="search_load_more">Search more sources</string>
+    <string name="search_progress">Searched %1$d/%2$d sources</string>
+    <string name="search_all_sources_done">All %1$d sources searched</string>
+    <string name="search_card_unopenable">This source cannot open it directly. Try another source</string>
 
     <!-- Cast -->
     <string name="cast_title">Cast to Device</string>

@@ -30,7 +30,13 @@ import java.util.LinkedHashMap
 
 class SearchViewModel : ViewModel() {
 
-    enum class ResultState { Pending, Done }
+    /**
+     * 单个来源的搜索状态。
+     *
+     * <p>[Queued] 是"还没轮到搜"——分批加载后大量来源会长时间停在这个态,与 [Pending]("正在搜")
+     * 必须分开:否则站点栏会对几十个根本没发起请求的源一起转圈,看着像卡死。
+     */
+    enum class ResultState { Queued, Pending, Done }
 
     data class SourceResult(
         val sourceKey: String,
@@ -46,6 +52,13 @@ class SearchViewModel : ViewModel() {
     val matchMode = MutableStateFlow(SearchSettings.MatchMode.Smart)
     val sitesEmpty = MutableStateFlow(false)
 
+    /** 还有没搜的来源(分批加载的游标);UI 据此显示"搜索更多来源"而不是"无结果" */
+    val hasMore = MutableStateFlow(false)
+
+    /** 已发起搜索的来源数 / 总来源数,用于"已搜索 x/y"进度 */
+    val searchedCount = MutableStateFlow(0)
+    val totalCount = MutableStateFlow(0)
+
     val hotSearch = MutableStateFlow<List<String>>(emptyList())
 
     val suggest = MutableStateFlow<List<String>>(emptyList())
@@ -58,6 +71,32 @@ class SearchViewModel : ViewModel() {
     private var semaphore = Semaphore(semaphorePermits)
     private val pendingSources = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.CompletableDeferred<Unit>>()
     private val scope = viewModelScope
+
+    /** 尚未发起的来源(按优先级排好序);每批从队首取 [SearchBatchPolicy.DEFAULT_BATCH_SIZE] 个 */
+    private var queuedSourceKeys: List<String> = emptyList()
+
+    /** 本轮查询的变体(番号类关键词会多一个紧凑形式),分批共用同一份 */
+    private var queryVariants: List<String> = emptyList()
+
+    private var batchJob: kotlinx.coroutines.Job? = null
+
+    /** 有批次在跑。用显式标记而不是 batchJob.isActive:续批是从上一批的收尾里发起的,那时 job 还没结束 */
+    private var batchInFlight = false
+
+    /**
+     * 批次序号。收尾只允许"当前这一批"复位 [batchInFlight]:
+     * cancel() 是异步的,上一批的 finally 可能晚于新批次的启动才执行,无脑复位会把新批次误标成"空闲",
+     * 用户再滑一下就会重复启动一批。
+     */
+    private var batchSeq = 0
+
+    /**
+     * 用户点开某部影片后暂停自动续批。
+     *
+     * <p>详情页取数与搜索抢同一批线程池/爬虫锁,继续在后台把剩余上百个源搜完只会拖慢详情加载。
+     * 手动点"搜索更多来源"仍可继续(它会清掉这个标记)。
+     */
+    private var batchingPaused = false
 
     companion object {
         private val SEARCH_SEQ = java.util.concurrent.atomic.AtomicInteger(0)
@@ -121,6 +160,8 @@ class SearchViewModel : ViewModel() {
 
     override fun onCleared() {
         org.greenrobot.eventbus.EventBus.getDefault().unregister(this)
+        batchJob?.cancel()
+        batchJob = null
         try {
             OkGo.getInstance().cancelTag("suggest")
         } catch (ignored: Throwable) {
@@ -218,12 +259,41 @@ class SearchViewModel : ViewModel() {
             semaphore = Semaphore(configured)
         }
         token = SEARCH_SEQ.incrementAndGet()
-        val myToken = token
-        val tokenStr = myToken.toString()
         searchedTitle.value = t
         matchMode.value = SearchSettings.matchMode()
         HistoryHelper.setSearchHistory(t)
         clearSuggest()
+        stopPreviousSearch()
+        val home = ApiConfig.get().getHomeSourceBean()
+        val checked = checkedSources
+        val sources = ApiConfig.get().getSourceBeanList()
+            .filter { it.isSearchable() && (checked == null || checked.containsKey(it.key)) }
+            .sortedBy { it.key != home.key }
+        arriveSeq = 0
+        // 先全部登记为"排队中":站点栏一次性给全,列表才不会随分批插入而跳动
+        results.value = sources.map { SourceResult(it.key, it.name.orEmpty(), ResultState.Queued, emptyList()) }
+        sitesEmpty.value = sources.isEmpty()
+        totalCount.value = sources.size
+        searchedCount.value = 0
+        queuedSourceKeys = sources.map { it.key }
+        hasMore.value = queuedSourceKeys.isNotEmpty()
+        // 查询变体:番号类关键词(带横杠/下划线等)除原词外再查一个紧凑形式,源站库常以无分隔符存番号
+        queryVariants = SearchSettings.queryVariants(t)
+        batchingPaused = false
+        if (sources.isEmpty()) {
+            running.value = false
+            return
+        }
+        loadNextBatch()
+    }
+
+    /** 收掉上一轮搜索:停批、停爬虫、撤销在途请求(与旧 search() 的收尾同口径) */
+    private fun stopPreviousSearch() {
+        batchJob?.cancel()
+        batchJob = null
+        batchInFlight = false
+        // 换代次:被取消那批的 finally 之后才跑,不能让它复位新批次的在跑标记
+        batchSeq++
         try {
             JsLoader.stopAll()
         } catch (ignored: Throwable) {
@@ -238,47 +308,97 @@ class SearchViewModel : ViewModel() {
             entry.value.complete(Unit)
         }
         pendingSources.clear()
-        val home = ApiConfig.get().getHomeSourceBean()
-        val checked = checkedSources
-        val sources = ApiConfig.get().getSourceBeanList()
-            .filter { it.isSearchable() && (checked == null || checked.containsKey(it.key)) }
-            .sortedBy { it.key != home.key }
-        arriveSeq = 0
-        results.value = sources.map { SourceResult(it.key, it.name.orEmpty(), ResultState.Pending, emptyList()) }
-        sitesEmpty.value = sources.isEmpty()
-        if (sources.isEmpty()) {
+        running.value = false
+    }
+
+    /**
+     * 启动下一批来源(队首 [SearchBatchPolicy.DEFAULT_BATCH_SIZE] 个)。
+     *
+     * <p>全站搜索动辄数百源,一次全提交会让后台长时间占满线程与爬虫锁,还把用户点进详情后的取数
+     * 一起拖慢。改为按需分批:首批给"够看一屏"的量,用户往下滑或点"搜索更多来源"再续。
+     */
+    fun loadNextBatch() {
+        val myToken = token
+        if (myToken == 0 || batchInFlight) return
+        // 手动续搜视为用户主动要求继续,清掉"点开影片后暂停"的标记
+        batchingPaused = false
+        val keys = SearchBatchPolicy.nextQueuedKeys(queuedSourceKeys)
+        if (keys.isEmpty()) {
             running.value = false
+            hasMore.value = false
             return
         }
+        queuedSourceKeys = queuedSourceKeys.drop(keys.size)
+        hasMore.value = queuedSourceKeys.isNotEmpty()
+        searchedCount.value += keys.size
+        markPending(keys)
         running.value = true
-        // 查询变体:番号类关键词(带横杠/下划线等)除原词外再查一个紧凑形式,源站库常以无分隔符存番号
-        val queryVariants = SearchSettings.queryVariants(t)
-        scope.launch {
-            coroutineScope {
-                sources.map { bean ->
-                    async {
-                        semaphore.withPermit {
-                            if (myToken != token) return@async
-                            val done = kotlinx.coroutines.CompletableDeferred<Unit>()
-                            pendingSources[bean.key] = done
-                            try {
-                                withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
-                                    withContext(Dispatchers.IO) {
-                                        for (variant in queryVariants) {
-                                            if (myToken != token) break
-                                            searchCaller.getSearch(bean.key, variant, tokenStr)
+        batchInFlight = true
+        val myBatch = ++batchSeq
+        val tokenStr = myToken.toString()
+        val variants = queryVariants
+        batchJob = scope.launch {
+            try {
+                coroutineScope {
+                    keys.map { key ->
+                        async {
+                            semaphore.withPermit {
+                                if (myToken != token) return@async
+                                val done = kotlinx.coroutines.CompletableDeferred<Unit>()
+                                pendingSources[key] = done
+                                try {
+                                    withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
+                                        withContext(Dispatchers.IO) {
+                                            for (variant in variants) {
+                                                if (myToken != token) break
+                                                searchCaller.getSearch(key, variant, tokenStr)
+                                            }
                                         }
+                                        done.await()
                                     }
-                                    done.await()
+                                } finally {
+                                    pendingSources.remove(key, done)
                                 }
-                            } finally {
-                                pendingSources.remove(bean.key, done)
                             }
                         }
-                    }
-                }.awaitAll()
+                    }.awaitAll()
+                }
+            } finally {
+                if (batchSeq == myBatch) batchInFlight = false
             }
-            if (myToken == token) running.value = false
+            if (myToken != token) return@launch
+            running.value = false
+            maybeContinueBatching()
+        }
+    }
+
+    /** 用户点开影片:暂停自动续批,把线程与爬虫让给详情取数 */
+    fun pauseBatching() {
+        batchingPaused = true
+    }
+
+    /**
+     * 本批结束后是否自动续批:只在"至今一条结果都没有"时续。
+     *
+     * <p>有结果时把要不要继续交给用户 —— 这正是分批的意义;一条都没有则必须自动往下走,
+     * 否则用户看到空屏,不会知道下面还有没搜的源。
+     */
+    private fun maybeContinueBatching() {
+        if (batchingPaused || batchInFlight) return
+        val hasAnyResult = results.value.any { it.videos.isNotEmpty() }
+        if (SearchBatchPolicy.shouldAutoContinue(hasAnyResult, queuedSourceKeys.size)) {
+            loadNextBatch()
+        }
+    }
+
+    private fun markPending(keys: List<String>) {
+        val keySet = keys.toHashSet()
+        results.value = results.value.map { existing ->
+            if (existing.sourceKey in keySet && existing.state == ResultState.Queued) {
+                existing.copy(state = ResultState.Pending)
+            } else {
+                existing
+            }
         }
     }
 

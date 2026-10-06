@@ -2,6 +2,7 @@
 
 package com.github.tvbox.osc.ui.activity
 
+import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
@@ -45,7 +46,9 @@ import com.github.tvbox.osc.ui.components.SearchField
 import com.github.tvbox.osc.ui.components.VodCardMenu
 import com.github.tvbox.osc.ui.components.glassTopBarSurface
 import com.github.tvbox.osc.ui.components.rememberVodCardMenuState
+import com.github.tvbox.osc.ui.page.VodCardTarget
 import com.github.tvbox.osc.ui.page.openVodCardOrDetail
+import com.github.tvbox.osc.ui.page.resolveVodCardTarget
 import com.github.tvbox.osc.util.HawkConfig
 import com.github.tvbox.osc.util.HistoryHelper
 import com.github.tvbox.osc.util.KV
@@ -60,6 +63,9 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
     val activity = context as? android.app.Activity
     val results by vm.results.collectAsStateWithLifecycle()
     val running by vm.running.collectAsStateWithLifecycle()
+    val hasMore by vm.hasMore.collectAsStateWithLifecycle()
+    val searchedCount by vm.searchedCount.collectAsStateWithLifecycle()
+    val totalCount by vm.totalCount.collectAsStateWithLifecycle()
     val hotSearch by vm.hotSearch.collectAsStateWithLifecycle()
     val suggest by vm.suggest.collectAsStateWithLifecycle()
     var query by remember { mutableStateOf("") }
@@ -182,7 +188,26 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
                 searchedTitle = searchedTitle,
                 matchMode = matchMode,
                 topPad = topPad,
-                onCardClick = { context.openVodCardOrDetail(it) },
+                hasMore = hasMore,
+                searchedCount = searchedCount,
+                totalCount = totalCount,
+                onLoadMore = { vm.loadNextBatch() },
+                // 点开影片即暂停自动续批:把线程与爬虫让给详情取数,别让剩余上百个源继续抢
+                onCardClick = {
+                    vm.pauseBatching()
+                    // 复用首页那一套路由判据:该来源打不开(索引型源 / 空 id / msearch 占位)时
+                    // 不进详情白等 —— 首页那种情况会再跳一次搜索,但搜索页本身已有同名结果在旁,
+                    // 再跳一轮只是绕路(且可能来回),当场提示换来源最省时间。
+                    when (resolveVodCardTarget(it)) {
+                        is VodCardTarget.Search -> Toast.makeText(
+                            context,
+                            context.getString(R.string.search_card_unopenable),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+
+                        else -> context.openVodCardOrDetail(it)
+                    }
+                },
                 onCardLongClick = { vodMenu.show(it) },
             )
         }
@@ -216,11 +241,16 @@ private fun SearchResultsContent(
     searchedTitle: String,
     matchMode: SearchSettings.MatchMode,
     topPad: Dp,
+    hasMore: Boolean,
+    searchedCount: Int,
+    totalCount: Int,
+    onLoadMore: () -> Unit,
     onCardClick: (Movie.Video) -> Unit,
     onCardLongClick: (Movie.Video) -> Unit,
 ) {
     val done = results.filter { it.videos.isNotEmpty() }
-    if (done.isEmpty() && !running) {
+    // 还有来源没搜时不能说"无结果":否则用户会以为全库都没有,而其实只是还没轮到
+    if (done.isEmpty() && !running && !hasMore) {
         SearchEmptyBox(
             topPad = topPad,
             text = if (matchMode == SearchSettings.MatchMode.Exact) {
@@ -256,6 +286,10 @@ private fun SearchResultsContent(
                 topPad = topPad,
                 railState = railState,
                 listState = railResultState,
+                hasMore = hasMore,
+                searchedCount = searchedCount,
+                totalCount = totalCount,
+                onLoadMore = onLoadMore,
                 onCardClick = onCardClick,
                 onCardLongClick = onCardLongClick,
             )
@@ -267,6 +301,10 @@ private fun SearchResultsContent(
                 onSelectSource = onSelectSource,
                 listState = listState,
                 topPad = topPad,
+                hasMore = hasMore,
+                searchedCount = searchedCount,
+                totalCount = totalCount,
+                onLoadMore = onLoadMore,
                 onCardClick = onCardClick,
                 onCardLongClick = onCardLongClick,
             )

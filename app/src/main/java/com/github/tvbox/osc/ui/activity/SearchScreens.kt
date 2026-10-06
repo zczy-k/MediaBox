@@ -32,6 +32,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.VerticalDivider
@@ -41,6 +42,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
@@ -58,6 +60,7 @@ import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.ui.components.PressableCard
 import com.github.tvbox.osc.ui.components.VodPoster
 import com.github.tvbox.osc.ui.theme.cardContainer
+import kotlinx.coroutines.flow.distinctUntilChanged
 import com.github.tvbox.osc.util.SearchSettings
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -200,9 +203,25 @@ internal fun RailResults(
     topPad: Dp,
     railState: LazyListState,
     listState: LazyListState,
+    hasMore: Boolean,
+    searchedCount: Int,
+    totalCount: Int,
+    onLoadMore: () -> Unit,
     onCardClick: (Movie.Video) -> Unit,
     onCardLongClick: (Movie.Video) -> Unit,
 ) {
+    // 只有用户自己在往下滑、且快到列表尾部时才续搜:初始布局或"列表不够长"都不会自动把源搜完
+    LaunchedEffect(listState, hasMore) {
+        snapshotFlow {
+            SearchBatchPolicy.shouldLoadMoreOnScroll(
+                isScrollInProgress = listState.isScrollInProgress,
+                lastVisibleItemIndex = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1,
+                totalItemCount = listState.layoutInfo.totalItemsCount,
+                hasMore = hasMore,
+                running = running,
+            )
+        }.distinctUntilChanged().collect { if (it) onLoadMore() }
+    }
     val rows = remember(results, selectedSource) {
         results
             .filter { it.videos.isNotEmpty() && (selectedSource == null || it.sourceKey == selectedSource) }
@@ -233,6 +252,7 @@ internal fun RailResults(
                 SearchRailItem(
                     name = result.sourceName,
                     pending = result.state == SearchViewModel.ResultState.Pending,
+                    queued = result.state == SearchViewModel.ResultState.Queued,
                     selected = selectedSource == result.sourceKey,
                     onClick = { onSelectSource(result.sourceKey) },
                 )
@@ -265,7 +285,7 @@ internal fun RailResults(
                     onLongClick = { onCardLongClick(video) },
                 )
             }
-            if (rows.isEmpty() && !running) {
+            if (rows.isEmpty() && !running && !hasMore) {
                 item(key = "rail_empty") {
                     Text(
                         text = stringResource(R.string.search_site_empty),
@@ -278,6 +298,15 @@ internal fun RailResults(
                     )
                 }
             }
+            item(key = "rail_more") {
+                SearchLoadMoreFooter(
+                    hasMore = hasMore,
+                    running = running,
+                    searchedCount = searchedCount,
+                    totalCount = totalCount,
+                    onLoadMore = onLoadMore,
+                )
+            }
         }
     }
 }
@@ -288,11 +317,13 @@ internal fun SearchRailItem(
     pending: Boolean,
     selected: Boolean,
     onClick: () -> Unit,
+    queued: Boolean = false,
 ) {
-    val contentColor = if (selected) {
-        MaterialTheme.colorScheme.onPrimaryContainer
-    } else {
-        MaterialTheme.colorScheme.onSurface
+    val contentColor = when {
+        selected -> MaterialTheme.colorScheme.onPrimaryContainer
+        // 还没轮到搜的源压暗显示:与"正在搜"的转圈区分开,站点栏才不会几十个一起转
+        queued -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+        else -> MaterialTheme.colorScheme.onSurface
     }
     Surface(
         onClick = onClick,
@@ -320,6 +351,45 @@ internal fun SearchRailItem(
                     color = contentColor.copy(alpha = 0.6f),
                     strokeWidth = 1.5.dp,
                 )
+            }
+        }
+    }
+}
+
+/**
+ * 分批搜索的尾部控件:还有来源没搜就给出入口与进度,全搜完则明确收口。
+ *
+ * <p>这个入口是"按需续搜"的必要条件 —— 只靠滚动触发,用户不会知道下面还有没搜的来源,
+ * 空结果时更会误以为全库都没有。
+ */
+@Composable
+internal fun SearchLoadMoreFooter(
+    hasMore: Boolean,
+    running: Boolean,
+    searchedCount: Int,
+    totalCount: Int,
+    onLoadMore: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = if (hasMore) {
+                stringResource(R.string.search_progress, searchedCount, totalCount)
+            } else {
+                stringResource(R.string.search_all_sources_done, totalCount)
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+        )
+        if (hasMore) {
+            OutlinedButton(onClick = onLoadMore, enabled = !running) {
+                Text(stringResource(R.string.search_load_more))
             }
         }
     }
