@@ -12,7 +12,10 @@ import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.bean.VodInfo
 import com.github.tvbox.osc.data.RoomDataManger
 import com.github.tvbox.osc.event.RefreshEvent
+import com.github.tvbox.osc.player.DeviceCapability
+import com.github.tvbox.osc.player.LineQualitySelector
 import com.github.tvbox.osc.player.PlaybackSession
+import com.github.tvbox.osc.player.VideoQualityMemory
 import com.github.tvbox.osc.util.EpisodeTotals
 import com.github.tvbox.osc.util.HistoryHelper
 import com.github.tvbox.osc.util.HistoryWriter
@@ -395,7 +398,13 @@ class DetailViewModel : ViewModel() {
                 }
                 if (info.reverseSort) info.reverse()
                 if (info.playFlag == null || info.seriesMap?.containsKey(info.playFlag) != true) {
-                    info.playFlag = info.seriesMap?.keys?.firstOrNull()
+                    // 画质优选第一层(同步,零网络零延迟):先用**已记忆的实测分辨率**选,
+                    // 而不是站点给的第一个 flag —— 后者常常是 480P。记忆缺失时保持站点原序。
+                    val cap = App.getInstance()?.let { DeviceCapability.capHeight(it) } ?: 0
+                    val siteOrder = info.seriesMap?.keys?.toList().orEmpty()
+                    val remembered = VideoQualityMemory.lookupAll(recordKey, recordId, siteOrder)
+                    info.playFlag = LineQualitySelector.pickFromMemory(remembered, cap)
+                        ?: siteOrder.firstOrNull()
                 }
                 restoreFallbackEpisode(info)
                 resetEngineState(keepChips = true)

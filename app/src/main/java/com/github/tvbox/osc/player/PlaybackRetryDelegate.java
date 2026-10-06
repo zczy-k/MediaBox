@@ -300,12 +300,90 @@ final class PlaybackRetryDelegate {
         restoreAutoSwitchedPlayer();
         restoreAutoSwitchedDecode();
         PlaybackAttemptState st = host.attemptState();
-        if (st.allowAutoSwitchLine && KV.get(HawkConfig.AUTO_SWITCH_LINE, false)) return tryNextLine();
+        if (st.allowAutoSwitchLine && KV.get(HawkConfig.AUTO_SWITCH_LINE, false)) {
+            // 先降档再顺序换线:起播失败最常见的原因就是"这一档太高",按实测高度降最省事
+            if (tryDowngradeLine()) return true;
+            return tryNextLine();
+        }
         LOG.i("echo-autoRetry line switching disabled, hand over to source fallback");
         st.resetAutoRetryLadder();
         st.linesExhausted();
         PlaybackViewBridge view = host.view();
         return view != null && view.onLinesExhausted();
+    }
+
+    /**
+     * 当前线路的**实测**高度(像素);拿不到返回 0。
+     *
+     * <p>只认内核上报的真实尺寸,不从 flag 名或 URL 猜 —— 降档的方向判断错了比不降更糟。
+     */
+    private int currentMeasuredHeight() {
+        PlaybackViewBridge view = host.view();
+        if (view == null) return 0;
+        try {
+            AbstractPlayer mediaPlayer = view.mediaPlayer();
+            if (!(mediaPlayer instanceof ExoPlayer)) return 0;
+            for (TrackInfoBean video : ((ExoPlayer) mediaPlayer).getTrackInfo().getVideo()) {
+                if (video != null && video.height > 0) return video.height;
+            }
+        } catch (Throwable ignored) {
+            LOG.d("PlaybackController", "measured height unavailable");
+        }
+        return 0;
+    }
+
+    /**
+     * 换到**实测分辨率更低**的一条(卡顿/起播失败时的第一跳)。
+     *
+     * <p>与 {@link #tryNextLine()} 的区别只在"选哪一条":按站点顺序换可能换到同样高的档,白折腾一次起播;
+     * 按实测高度降则直击"分辨率超过网络/设备能力"这个真因。两者都失败才落到换线 → 换源。
+     *
+     * <p>候选来自实测记忆,所以**没记忆的集降不了档**(这是刻意的:没数据不猜)。
+     */
+    private boolean tryDowngradeLine() {
+        PlaybackAttemptState st = host.attemptState();
+        VodInfo vod = host.vod();
+        if (vod == null || vod.seriesMap == null || vod.seriesMap.isEmpty()) return false;
+        if (TextUtils.isEmpty(vod.playFlag) || TextUtils.isEmpty(vod.sourceKey)) return false;
+        List<String> lineFlags = EpisodeMatcher.lineFlagsInDisplayOrder(vod);
+        int currentHeight = currentMeasuredHeight();
+        if (currentHeight <= 0) {
+            LOG.i("echo-downgrade: current height unknown, skip");
+            return false;
+        }
+        List<VideoQualityPolicy.Variant> measured =
+                VideoQualityMemory.lookupAll(vod.sourceKey, vod.id, lineFlags);
+        String target = LineQualitySelector.pickDowngrade(measured, vod.playFlag, currentHeight, st.triedLineFlags);
+        if (target == null) return false;
+        List<VodInfo.VodSeries> targetList = vod.seriesMap.get(target);
+        if (targetList == null || targetList.isEmpty()) return false;
+        VodInfo.VodSeries currentSeries = host.currentSeries(vod.playFlag, Math.max(vod.playIndex, 0));
+        int nextIndex = EpisodeMatcher.sameEpisodeIndex(currentSeries, targetList, vod.playIndex);
+        return switchLineTo(target, nextIndex, "echo-downgrade " + currentHeight + "p");
+    }
+
+    /**
+     * 切到指定 flag:进度继承、集名匹配、标记已试,三件事降档与换线共用,避免两条路径行为漂移。
+     */
+    private boolean switchLineTo(String targetFlag, int nextIndex, String logPrefix) {
+        PlaybackAttemptState st = host.attemptState();
+        VodInfo vod = host.vod();
+        if (vod == null || TextUtils.isEmpty(vod.playFlag)) return false;
+        st.triedLineFlags.add(vod.playFlag);
+        final String preProgressKey = host.progressKey();
+        final long savedProgress = TextUtils.isEmpty(preProgressKey) ? 0 : host.getSavedProgress(preProgressKey);
+        PlaybackViewBridge view = host.view();
+        final long preProgress = Math.max(savedProgress, view == null ? 0 : view.currentPosition());
+        LOG.i(logPrefix + ": switch line " + vod.playFlag + " -> " + targetFlag);
+        if (view != null && view.isPageAlive()) {
+            view.runOnUi(() -> host.view().toast(PlaybackController.str(R.string.player_switch_line, targetFlag)));
+        }
+        vod.playFlag = targetFlag;
+        vod.playIndex = nextIndex;
+        st.onLineSwitched();
+        host.inheritProgressFrom(preProgressKey, preProgress);
+        host.play(false);
+        return true;
     }
 
     /** 切到"下一条未尝试过且有剧集"的线路,集号按集名匹配(换线不换集) */
@@ -342,20 +420,7 @@ final class PlaybackRetryDelegate {
             st.linesExhausted();
             return view != null && view.onLinesExhausted();
         }
-        final String flagToSwitch = nextFlag;
-        final String preProgressKey = host.progressKey();
-        final long savedProgress = TextUtils.isEmpty(preProgressKey) ? 0 : host.getSavedProgress(preProgressKey);
-        final long preProgress = Math.max(savedProgress, view == null ? 0 : view.currentPosition());
-        LOG.i("echo-autoRetry switch line: " + vod.playFlag + " -> " + flagToSwitch);
-        if (view != null && view.isPageAlive()) {
-            view.runOnUi(() -> host.view().toast(PlaybackController.str(R.string.player_switch_line, flagToSwitch)));
-        }
-        vod.playFlag = flagToSwitch;
-        vod.playIndex = nextIndex;
-        st.onLineSwitched();
-        host.inheritProgressFrom(preProgressKey, preProgress);
-        host.play(false);
-        return true;
+        return switchLineTo(nextFlag, nextIndex, "echo-autoRetry switch line");
     }
 
     /**
@@ -381,7 +446,10 @@ final class PlaybackRetryDelegate {
         // 再看它等于把最便宜的一跳也关掉,只剩"重新搜索 + 重取详情"这种重跳。
         boolean lineFirst = !st.userPickedLine && KV.get(HawkConfig.AUTO_SWITCH_LINE, false);
         if (lineFirst) {
-            LOG.i("echo-quality: try next line first");
+            LOG.i("echo-quality: try downgrade line first");
+            // 先降档:卡顿最常见的真因就是"当前档超过网络/设备能力",降一档比换线更对症
+            if (tryDowngradeLine()) return true;
+            LOG.i("echo-quality: no lower tier in memory, try next line");
             if (tryNextLine()) return true;
         }
         LOG.i("echo-quality: try next source");

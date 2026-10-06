@@ -248,18 +248,74 @@ final class MusicSessionDelegate {
      */
     private Boolean isAudioOnlyPlayback() {
         TrackInfo trackInfo = currentTrackInfo();
-        if (trackInfo == null || trackInfo.getAudio().isEmpty()) return null;
-        return trackInfo.getVideo().isEmpty();
+        if (trackInfo == null) return null;
+        return audioOnlyOrNull(trackInfo.hasKnownTracks(), !trackInfo.getAudio().isEmpty(),
+                trackInfo.getVideo().size(), host.attemptState().everHadVideoTrack);
+    }
+
+    /**
+     * 「是否纯音频」三态判定的**纯函数**口径(单测锁这里)。
+     *
+     * <p>为什么必须看 {@code everHadVideoTrack}:内核在 prepare 早期只报出音轨是常态,此刻
+     * "没有视频轨"是**解析未完成**,不是纯音频。少了这一维,判定为真就会置上粘滞标记
+     * {@code audioOnlyConfirmed},详情页每 300ms 轮询后把普通影视交接给音乐播放页,
+     * 外部表现是**只有声音、没有画面**(真机实测:关掉「音乐播放页」开关才正常)。
+     *
+     * <p>这一维只能让判定更保守(宁可漏判纯音频),方向是安全的:影视永远不会被误判成音乐。
+     *
+     * @param tracksKnown    内核是否已给出轨道信息
+     * @param hasAudio       是否有音轨
+     * @param videoTrackCount 视频轨条数
+     * @param everHadVideo   本次内容是否已经出现过视频轨
+     * @return TRUE=确定纯音频,FALSE=确定是影视,null=信息不足,不做判定
+     */
+    static Boolean audioOnlyOrNull(boolean tracksKnown, boolean hasAudio, int videoTrackCount, boolean everHadVideo) {
+        if (!tracksKnown) return null;
+        if (videoTrackCount > 0) return Boolean.FALSE;
+        if (everHadVideo) return null;
+        if (hasAudio) return Boolean.TRUE;
+        return null;
     }
 
     /** 取当前播放器的轨道信息;拿不到(未起播/不支持)返回 null */
+    /**
+     * 把本次内容的**实测画质**写进 {@link VideoQualityMemory},作为下一轮选线的输入。
+     *
+     * <p>用 {@code qualityRecorded} 而不是"见到过视频轨"来限流:尺寸要等内核解析完格式才上报,
+     * 早读到的会是 0。所以这里**没读到就下次再试**,读到并写成功后置位 —— 每个内容最多写一次盘。
+     *
+     * <p>记的是文件里的真实宽高,不是 flag 名,所以"站点把 480P 标成 4K"这类骗术下次不会再生效。
+     */
+    private void maybeRememberMeasuredQuality(TrackInfo info) {
+        PlaybackAttemptState st = host.attemptState();
+        if (st.qualityRecorded || info == null) return;
+        VodInfo vod = host.vod();
+        if (vod == null || TextUtils.isEmpty(vod.playFlag)) return;
+        for (TrackInfoBean video : info.getVideo()) {
+            if (video == null || video.width <= 0 || video.height <= 0) continue;
+            VideoQualityMemory.record(vod.sourceKey, vod.id, new VideoQualityPolicy.Variant(
+                    video.width, video.height, video.bitrate,
+                    VideoQualityPolicy.Confidence.MEASURED, vod.playFlag));
+            st.qualityRecorded = true;
+            return;
+        }
+    }
+
     private TrackInfo currentTrackInfo() {
         PlaybackViewBridge view = host.view();
         if (view == null) return null;
         try {
             AbstractPlayer mediaPlayer = view.mediaPlayer();
             if (mediaPlayer instanceof ExoPlayer) {
-                return ((ExoPlayer) mediaPlayer).getTrackInfo();
+                TrackInfo info = ((ExoPlayer) mediaPlayer).getTrackInfo();
+                // 见到过视频轨就粘住(内容边界由 beginNewPlay 复位)。
+                // 放在唯一的读轨道入口,两个判定点(isAudioOnlyPlayback / updateMusicSession)都受益,
+                // 不会出现两处口径不一致。
+                if (info != null && !info.getVideo().isEmpty()) {
+                    host.attemptState().everHadVideoTrack = true;
+                }
+                maybeRememberMeasuredQuality(info);
+                return info;
             }
         } catch (Throwable ignored) {
             LOG.d("PlaybackController", "track info unavailable");
@@ -306,8 +362,9 @@ final class MusicSessionDelegate {
         if (st.switchingPlayback) return;
         TrackInfo trackInfo = currentTrackInfo();
         Boolean hasAudio = trackInfo != null && !trackInfo.getAudio().isEmpty();
-        Boolean audioOnly = trackInfo == null || trackInfo.getAudio().isEmpty()
-                ? null : trackInfo.getVideo().isEmpty();
+        Boolean audioOnly = audioOnlyOrNull(trackInfo != null && trackInfo.hasKnownTracks(),
+                Boolean.TRUE.equals(hasAudio), trackInfo == null ? 0 : trackInfo.getVideo().size(),
+                st.everHadVideoTrack);
         // 只置位不清零:"读到轨道列表但 audio 为空"≠"没有音频"(Exo 在 IDLE/重取流期、音频渲染器
         // 未选中时同样给空 audio 列表),据此清零会让通知与退后台判定双双失效。清零只在会话边界。
         if (Boolean.TRUE.equals(hasAudio)) {

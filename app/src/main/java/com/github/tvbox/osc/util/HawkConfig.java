@@ -48,6 +48,11 @@ public class HawkConfig {
     public static final String SUBTITLE_TEXT_STYLE = "subtitle_text_style";//外挂字幕文字样式 0 白 1 粉(#FFB6C1)
     public static final String PLAY_TYPE = "play_type";//2 exo 10 MXPlayer
     public static final String PLAY_RENDER = "play_render"; //0 texture 2
+
+    /** 线路实测画质记忆(JSON,见 player/VideoQualityMemory):键 "站点|影片|线路" */
+    public static final String VIDEO_QUALITY_MEMORY = "video_quality_memory";
+    /** 设备最高可播高度(像素,0=不限制;由降档实测学习,见 player/DeviceCapability) */
+    public static final String VIDEO_QUALITY_CAP = "video_quality_cap";
     public static final String PLAY_SCALE = "play_scale"; //0 texture 2
     // EXO 音频隧道(audio offload,2026-09-11):压缩音频码流直通 DSP 解码;设备/格式不支持时自动回退普通播放
     public static final String PLAY_TUNNEL = "play_tunnel";

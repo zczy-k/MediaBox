@@ -570,6 +570,8 @@ public class ExoPlayer extends ExoMediaPlayer {
         TrackInfo data = new TrackInfo();
         MappingTrackSelector.MappedTrackInfo mappedInfo = trackSelector.getCurrentMappedTrackInfo();
         if (mappedInfo == null) return data;
+        // 与"内核确实只给出了一条音轨"区分开:前者是信息还没出来,后者才是纯音频片
+        data.setTracksKnown(true);
         logRendererListOnce(mappedInfo);
 
         for (int rendererIndex = 0; rendererIndex < mappedInfo.getRendererCount(); rendererIndex++) {
@@ -602,6 +604,7 @@ public class ExoPlayer extends ExoMediaPlayer {
                     if (type == C.TRACK_TYPE_AUDIO) {
                         data.addAudio(bean);
                     } else if (type == C.TRACK_TYPE_VIDEO) {
+                        fillVideoQuality(bean, fmt);
                         data.addVideo(bean);
                     } else {
                         data.addSubtitle(bean);
@@ -610,6 +613,26 @@ public class ExoPlayer extends ExoMediaPlayer {
             }
         }
         return data;
+    }
+
+    /**
+     * 视频轨真实画质落到 bean:宽高按 {@code rotationDegrees} 归一为**显示方向**,未上报的值归一为 0。
+     *
+     * <p>归一必须做:media3 的 {@code Format.NO_VALUE} 是 -1,而消费方(纯音频三态判定、画质优选)
+     * 统一按"0 = 内核还没报出尺寸"判断,让 -1 漏过去会被当成有效尺寸参与排序。
+     */
+    private static void fillVideoQuality(TrackInfoBean bean, Format format) {
+        int width = format.width;
+        int height = format.height;
+        if (format.rotationDegrees == 90 || format.rotationDegrees == 270) {
+            int rotated = width;
+            width = height;
+            height = rotated;
+        }
+        bean.width = width > 0 ? width : 0;
+        bean.height = height > 0 ? height : 0;
+        bean.bitrate = format.bitrate == null ? 0 : format.bitrate;
+        bean.codecs = format.codecs == null ? "" : format.codecs;
     }
 
     /** 渲染器清单只落一次盘:getTrackInfo 在播放状态回调里被高频调用 */

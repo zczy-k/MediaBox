@@ -68,6 +68,7 @@ public final class KVKeySpec implements KVDecoder.TypeRegistry {
         register(HawkConfig.DOH_JSON, "");
         register(HawkConfig.LIVE_API_URL, "");
         register(HawkConfig.REMOTE_TVBOX, "");
+        register(HawkConfig.VIDEO_QUALITY_MEMORY, "");
         register(HawkConfig.DANMU_API, "");
         // 画质参数(调色)预置名(PicturePreset 枚举名)
         register(HawkConfig.PICTURE_PRESET, "");
@@ -84,6 +85,7 @@ public final class KVKeySpec implements KVDecoder.TypeRegistry {
         // ---- int ----
         register(HawkConfig.PLAY_TYPE, 0);
         register(HawkConfig.PLAY_RENDER, 0);
+        register(HawkConfig.VIDEO_QUALITY_CAP, 0);
         register(HawkConfig.PLAY_SCALE, 0);
         register(HawkConfig.LIVE_PLAY_SCALE, 0);
         register(HawkConfig.DOH_URL, 0);

@@ -4,6 +4,14 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class TrackInfo {
+    /**
+     * 内核是否已给出轨道信息。
+     *
+     * <p>必须区分"没有轨道"与"还没有轨道信息":空 {@link #audio}/{@link #video} 两种情况都会出现,
+     * 但前者可能是纯音频片(该跳音乐页),后者只是内核还没解析完(判成纯音频就会把影视误判成音乐)。
+     */
+    private boolean tracksKnown;
+
     private List<TrackInfoBean> audio;
     private List<TrackInfoBean> video;
     private List<TrackInfoBean> subtitle;
@@ -12,6 +20,14 @@ public class TrackInfo {
         audio = new ArrayList<>();
         video = new ArrayList<>();
         subtitle = new ArrayList<>();
+    }
+
+    public boolean hasKnownTracks() {
+        return tracksKnown;
+    }
+
+    public void setTracksKnown(boolean known) {
+        tracksKnown = known;
     }
 
     public List<TrackInfoBean> getAudio() {

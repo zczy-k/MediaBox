@@ -88,10 +88,29 @@ final class PlaybackAttemptState {
      */
     boolean lastFailureNetwork;
 
+    /**
+     * 本次内容**见到过视频轨**(粘滞,内容边界复位)。
+     *
+     * <p>为什么需要:内核在 prepare 早期可能只报出音轨,此刻"没有视频轨"是**解析未完成**而非纯音频。
+     * 少了这条,纯音频判定会在那个窗口里为真并置上 {@link #audioOnlyConfirmed},详情页随后把普通影视
+     * 交接给音乐播放页 —— 外部表现是只有声音、没有画面。
+     */
+    boolean everHadVideoTrack;
+
+    /**
+     * 本次内容的**实测画质是否已写进记忆**(见 {@link VideoQualityMemory})。
+     *
+     * <p>不复用 {@link #everHadVideoTrack}:那条是"见到过视频轨"就置位,而尺寸要等内核解析完格式才上报。
+     * 复用会导致"第一次没读到尺寸就永远不再记",记忆永远是空的、画质优选形同虚设。
+     */
+    boolean qualityRecorded;
+
     /** 新一次播放的清场:重试阶梯 + 内核/解码自动态 + 起播标记 */
     void beginNewPlay() {
         playbackStarted = false;
         lastFailureNetwork = false;
+        everHadVideoTrack = false;
+        qualityRecorded = false;
         playTimeoutBasePosition = 0;
         allowSwitchPlayer = true;
         hasAutoSwitchedPlayer = false;
