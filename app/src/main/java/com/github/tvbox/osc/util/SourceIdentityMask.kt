@@ -20,7 +20,13 @@ object SourceIdentityMask {
     )
     private const val MASK = "***"
 
-    /** @return 脱敏后的文本;入参为空则返回空串 */
+    /**
+     * @return 脱敏后的文本;入参为空则返回空串
+     *
+     * <p>⚠️ `@JvmStatic` 不能省:`PlayContainer.errorWithRetry`(Java)要调它,
+     * 少了这个注解编译期报 "non-static method mask(String) cannot be referenced from a static context"。
+     */
+    @JvmStatic
     fun mask(text: String?): String {
         if (text.isNullOrBlank()) return ""
         var out = URL.replace(text, MASK)
