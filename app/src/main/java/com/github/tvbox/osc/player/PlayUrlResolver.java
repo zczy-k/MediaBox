@@ -152,8 +152,9 @@ final class PlayUrlResolver {
     private final AtomicInteger loadFoundCount = new AtomicInteger(0);
     private ExecutorService parseThreadPool;
     private static final int MSG_PARSE_TIMEOUT = 100;
-    /** 解析/嗅探超时。原 20s:嗅探型站点失败时用户要干等 20 秒才轮到换源,缩到 10s */
-    private static final long PARSE_TIMEOUT_MS = 10 * 1000;
+    /** 解析/嗅探超时。原 20s→10s→6s:同源多条线路会逐条嗅探,每条都等满才轮到换线/换源,
+     *  超时越长用户干等越久;解析不动的站多等也等不来结果,压到 6s 尽快进入下一级 */
+    private static final long PARSE_TIMEOUT_MS = 6 * 1000;
 
     // ==================== 成员 ====================
 

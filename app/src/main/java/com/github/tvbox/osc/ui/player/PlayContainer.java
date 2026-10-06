@@ -818,6 +818,12 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
             scheduler.cancelPlayTimeout();
             hideTipOnUiThread();
             if (scheduler.retryAfterStartedError()) return;
+            // 本方法唯一调用者是解析/嗅探链(内核报错走自己的状态机,不经这里)。起播过的内容里
+            // playbackStarted 粘滞为真,自动连播/换线后的新解析超时会落到本分支 —— 原实现直接
+            // setTip 收场,重试阶梯一次都不跑,外部表现正是"嗅探错误"永久卡住、永不换源。
+            // 此刻画面已废(在等新地址),先交棒换源链(PageHost.onPlaybackLinesExhausted),
+            // 换源也不可用才落到错误提示。
+            if (pageHost != null && pageHost.onPlaybackLinesExhausted()) return;
             scheduler.stopMusicSessionForFailedPlayback();
             if (!isAttached()) return;
             setTip(err, false, true);
