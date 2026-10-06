@@ -124,11 +124,6 @@ class DetailViewModel : ViewModel() {
     private var searchJob: Job? = null
     /** 异步补齐其余线路画质的小任务;换片/重开面板时取消,避免上一部的探测结果串到新内容 */
     private var qualityProbeJob: Job? = null
-    /**
-     * 触发过画质探测的源 key 锚点:只有"用户看过这部片"(记忆里有数据)才允许探测其余线路,
-     * 纯新片不探。避免任何时候打开详情都触发一批无意义请求。
-     */
-    private var qualityProbeAnchor: String? = null
     private var detailBuildToken = 0
 
     /**
@@ -330,35 +325,37 @@ class DetailViewModel : ViewModel() {
      * 放这里只更新 [lineQualityHeights],面板/详情区下次重组时自然带上新值。用户看到的是
      * "标签先是序号、几百毫秒后补上画质",而不是"打开面板卡一下"。
      *
-     * <p>三条约束,少一条就会伤到"更快开始播放"这个总目标:
+     * <p>护栏只留两条(曾经有第三条"只在有记忆时才探",已删 —— 那是设计缺陷,见下):
      * <ul>
-     *   <li>**只在有记忆时才探测**(即 [qualityProbeAnchor] 非空)—— 全新影片没有任何记忆,
-     *       说明用户还没看过这部,探测它对当前播放毫无意义,纯浪费流量;</li>
      *   <li>**只探没测过的**,已测过的直接跳过(不重复请求);</li>
      *   <li>只在 `shouldProbeOnFirstWatch` 档位下进行 —— "速度优先"档的用户明确不要这类额外请求。</li>
      * </ul>
+     *
+     * <p>**踩过的坑,别再加回来**:最早这里有个"仅当记忆里已有该片数据才探测"的锚点判断,
+     * 理由是"纯新片探测浪费流量"。但那恰好把**第一次观看**这个最需要它的场景挡死了 ——
+     * 新片记忆必然为空 ⇒ 永远不探 ⇒ 用户第一次看就只看到"线路1/2/3",正是这个功能要解决的问题。
+     * 流量顾虑应该用**批量上限 + 只探未测 + 档位开关**控制,而不是用"有没有旧数据"来 gating。
      */
     private fun probeMissingLineQualities() {
         val info = vodInfo ?: return
         val siteOrder = info.seriesMap?.keys?.toList().orEmpty()
         if (siteOrder.size <= 1) return
-        // 只认"用户看过这部片"的锚点:有记忆才说明这个会话与这部片有关
-        val anchor = qualityProbeAnchor ?: return
-        if (anchor != sourceKey || vodId.isEmpty()) return
         val mode = DeviceCapability.QualityMode.current()
         if (!mode.shouldProbeOnFirstWatch) return
         val remembered = VideoQualityMemory.lookupAll(sourceKey, vodId, siteOrder)
         val missing = siteOrder.filter { flag -> remembered.none { it.flag == flag } }
         if (missing.isEmpty()) return
-        // 并发探测会同时打多个请求,只在小批量下做(3 条最坏 768KB);再多就交给起播链路按需探测
-        val targets = missing.take(3)
+        // 只探**直连型**线路(与 PlayLoader.shouldDirectPlay 同口径):爬虫型线路要先跑 getPlay
+        // 解析才拿得到地址,每条 1~3 秒且同类 Spider 不能并发,代价与"更快开始播放"冲突。
+        // 拿不到 URL 的线路由 probeVariantsParallel 静默跳过,不阻塞其余线路。
+        val index = probeIndexOf(info)
+        val targets = missing.filter { directUrlOf(info.seriesMap?.get(it), index) != null }.take(3)
+        if (targets.isEmpty()) return
         val headers = probeHeaders(sourceKey)
         val probe = VideoQualityProbe()
         val siteKey = sourceKey
         val vod = vodId
         val list = info.seriesMap
-        val currentList = list?.get(info.playFlag)
-        val index = if (currentList.isNullOrEmpty()) 0 else info.playIndex.coerceIn(0, currentList.size - 1)
         qualityProbeJob?.cancel()
         qualityProbeJob = viewModelScope.launch {
             val probed = withTimeoutOrNull(LineQualityProbeBudget.totalMs) {
@@ -424,11 +421,9 @@ class DetailViewModel : ViewModel() {
         sourceKey = key.orEmpty()
         firstsourceKey = sourceKey
         usedSourceKeys.add(firstsourceKey)
-        // 换片/换源:上一部片的画质探测锚点与在途探测都不再适用(探测结果按 站点|片id|flag 存,
-        // 不会串片,但白探一轮新片是浪费),这里一并清掉
+        // 换片/换源:在途探测不再适用(探测结果按 站点|片id|flag 存,不会串片,但白探一轮新片是浪费)
         qualityProbeJob?.cancel()
         qualityProbeJob = null
-        qualityProbeAnchor = null
         lineQualityHeights.value = emptyMap()
         collected.value = RoomDataManger.isVodCollect(sourceKey, vodId)
         if (DetailResponseGuard.isUnloadableTarget(vodId, ApiConfig.get().getSource(sourceKey) == null)) {
@@ -615,13 +610,7 @@ class DetailViewModel : ViewModel() {
                 }
                 vodInfo = info
                 publishLineQualityHeights()
-                // 用户看过这部片(记忆里有画质)才把锚点记上,后续打开面板才允许探测其余线路;
-                // 换片/换源都要清,否则上一部的锚点会让新片白探一轮
-                qualityProbeAnchor = if (VideoQualityMemory.lookupAll(recordKey, recordId, siteOrder).isNotEmpty()) {
-                    recordKey
-                } else {
-                    null
-                }
+                // 详情就绪即探一次未测线路:第一次观看也有画质标签(这里不做"有记忆才探"的 gating)
                 probeMissingLineQualities()
                 if (searchTitle.isEmpty() && !info.name.isNullOrEmpty()) {
                     searchTitle = info.name.trim()
@@ -886,6 +875,17 @@ class DetailViewModel : ViewModel() {
     private fun directUrlOf(list: List<VodInfo.VodSeries>?, index: Int): String? =
         list?.getOrNull(index)?.url?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
 
+    /**
+     * 探测用第几集:取当前播放集,越界时回落到 0。
+     *
+     * <p>探测的是"这一集的画质",所以必须跟当前集号;但各线路集数可能不同,
+     * 越界那条由 [directUrlOf] 的 `getOrNull` 兜成 null 跳过,不会崩。
+     */
+    private fun probeIndexOf(info: VodInfo): Int {
+        val current = info.seriesMap?.get(info.playFlag)
+        return if (current.isNullOrEmpty()) 0 else info.playIndex.coerceIn(0, current.size - 1)
+    }
+
     /** 探测要带的请求头:站点级 header 优先,再补一个 UA(部分 CDN 缺 UA 直接 403) */
     private fun probeHeaders(siteKey: String): Map<String, String> {
         val headers = HashMap<String, String>()
@@ -1106,7 +1106,6 @@ class DetailViewModel : ViewModel() {
         cancelDetailTimeout()
         qualityProbeJob?.cancel()
         qualityProbeJob = null
-        qualityProbeAnchor = null
         OkGo.getInstance().cancelTag("detail")
         OkGo.getInstance().cancelTag("search")
     }
