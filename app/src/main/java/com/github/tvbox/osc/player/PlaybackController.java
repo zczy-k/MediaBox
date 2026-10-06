@@ -690,7 +690,7 @@ public class PlaybackController {
     }
 
     /** 单站取流等待上界:站点声明再大的 timeout,也不让用户等超过这个数 */
-    private static final long MAX_RESOLVE_PLAY_URL_TIMEOUT_MS = 12 * 1000L;
+    private static final long MAX_RESOLVE_PLAY_URL_TIMEOUT_MS = 9 * 1000L;
 
     /**
      * 单站取流等待窗口 = max(常量, 站点 timeout + 1),再**封顶** {@link #MAX_RESOLVE_PLAY_URL_TIMEOUT_MS}。

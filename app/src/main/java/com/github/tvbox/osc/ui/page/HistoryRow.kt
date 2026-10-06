@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -109,26 +108,9 @@ internal fun HistoryRow(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
-                    if (!item.sourceName.isNullOrEmpty()) {
-                        Spacer(modifier = Modifier.width(8.dp))
-                        val unavailable = item.sourceUnavailable
-                        Text(
-                            text = if (unavailable) {
-                                "${item.sourceName} · ${stringResource(R.string.source_unavailable)}"
-                            } else {
-                                item.sourceName
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (unavailable) {
-                                MaterialTheme.colorScheme.error
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.widthIn(max = 160.dp),
-                        )
-                    }
+                    // 不再显示片源名:用户要的是"无感播放",列表里暴露"这条来自哪个站"既是多余信息,
+                    // 也与错误文案已做的源身份脱敏口径不一致(见 SourceIdentityMask)。
+                    // 源已失效的情形点进去后由详情页统一兜底(换源/空态),不必在这里提前标注。
                 }
                 Text(
                     text = if (item.playNote.isNullOrEmpty()) {

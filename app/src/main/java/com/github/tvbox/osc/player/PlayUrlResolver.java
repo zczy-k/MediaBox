@@ -152,9 +152,14 @@ final class PlayUrlResolver {
     private final AtomicInteger loadFoundCount = new AtomicInteger(0);
     private ExecutorService parseThreadPool;
     private static final int MSG_PARSE_TIMEOUT = 100;
-    /** 解析/嗅探超时。原 20s→10s→6s:同源多条线路会逐条嗅探,每条都等满才轮到换线/换源,
-     *  超时越长用户干等越久;解析不动的站多等也等不来结果,压到 6s 尽快进入下一级 */
-    private static final long PARSE_TIMEOUT_MS = 6 * 1000;
+    /**
+     * 解析/嗅探超时。原 20s→10s→6s→4s:同源多条线路会逐条嗅探,每条都等满才轮到换线/换源,
+     * 超时越长用户干等越久;解析不动的站多等也等不来结果,压到 4s 尽快进入下一级。
+     *
+     * <p>代价:需要 4s 以上才能出地址的解析站会被判失败并换线。这是拿"少等"换"少成功"的旋钮,
+     * 用户明确要求缩短等待,故取 4s;若真机发现某些站因此变差,单独调回这一个常量即可。
+     */
+    private static final long PARSE_TIMEOUT_MS = 4 * 1000;
 
     // ==================== 成员 ====================
 

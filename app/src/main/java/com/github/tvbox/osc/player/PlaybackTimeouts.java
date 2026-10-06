@@ -10,18 +10,21 @@ import androidx.annotation.NonNull;
 final class PlaybackTimeouts {
 
     /**
-     * 取流超时。原 15s:用户要先干等 15 秒才有反应,聚合源里响应慢的站会把"看片"拖成"等诊断"。
-     * 缩到 8s 后慢站靠重试阶梯的"下一条线路/换源"兜底,用户感知的切换间隔明显变短。
+     * 取流超时。原 15s→8s→6s:用户要先干等这么久才有反应,聚合源里响应慢的站会把"看片"拖成"等诊断"。
+     * 慢站靠重试阶梯的"下一条线路/换源"兜底,缩短后用户感知的切换间隔明显变短。
+     *
+     * <p>注意这是**下界**:站点在配置里声明了 timeout 时,实际窗口是
+     * {@code min(MAX_RESOLVE_PLAY_URL_TIMEOUT_MS, max(本值, 站点timeout+1s))}。
      */
-    static final long RESOLVE_PLAY_URL_TIMEOUT_MS = 8 * 1000L;
+    static final long RESOLVE_PLAY_URL_TIMEOUT_MS = 6 * 1000L;
 
     /** 取流超时/换线播放超时(与既有 mHandler 的三条定时消息拆开:解析超时留在页面/解析层) */
     private static final int MSG_RESOLVE_PLAY_URL_TIMEOUT = 101;
     private static final int MSG_SWITCH_LINE_PLAY_TIMEOUT = 102;
     /** 本集播完后的**延后一拍**撤会话判定(见 {@link PlaybackController#handlePlayStateForMusicSession(int)}) */
     private static final int MSG_DROP_SESSION_AFTER_COMPLETED = 103;
-    /** 换线后等起播。原 20s 等于"守着一个已经坏了的线路干等",缩到 10s 让换线明显更快 */
-    private static final long SWITCH_LINE_PLAY_TIMEOUT_MS = 10 * 1000L;
+    /** 换线后等起播。原 20s→10s→7s:等满等于"守着一个已经坏了的线路干等",越短换线越快 */
+    private static final long SWITCH_LINE_PLAY_TIMEOUT_MS = 7 * 1000L;
 
     interface Callback {
         void onResolvePlayUrlTimeout();

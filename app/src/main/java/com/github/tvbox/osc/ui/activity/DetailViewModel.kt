@@ -24,6 +24,7 @@ import com.github.tvbox.osc.util.HistoryHelper
 import com.github.tvbox.osc.util.HistoryWriter
 import com.github.tvbox.osc.util.LOG
 import com.github.tvbox.osc.util.SearchHelper
+import com.github.tvbox.osc.util.SourceIdentityMask
 import com.github.tvbox.osc.sourcedata.SourceViewModel
 import com.github.tvbox.osc.sourcedata.observeAsFlow
 import com.lzy.okgo.OkGo
@@ -431,19 +432,18 @@ class DetailViewModel : ViewModel() {
         val videoList = absXml?.movie?.videoList
         val detailToken = ++detailBuildToken
         if (videoList != null && videoList.isNotEmpty()) {
-            val wasFallback = fallbackLoadingCandidate
             if (fallbackLoadingCandidate) {
                 fallbackLoadingCandidate = false
                 cancelDetailTimeout()
             }
-            if (wasFallback) {
-                val fallbackSource = ApiConfig.get().getSource(sourceKey)
-                toastEvent.value = str(R.string.detail_switch_site, fallbackSource?.name ?: sourceKey)
-            }
+            // 自动换源全程静默(用户要的是"无感播放"):不再提示"站点切换至X" ——
+            // 那既暴露了当前用的是哪个站,对用户也是纯噪音。真失败时另有终局提示兜底。
             if (isSourceErrorMsg(absXml.msg)) {
                 if (!rollbackManualSwitch(absXml.msg)) {
-                    toastEvent.value = absXml.msg
-                    enterEmpty(absXml.msg)
+                    // 站点原始 err 可能带接口地址/站名:展示前脱敏
+                    val masked = SourceIdentityMask.mask(absXml.msg)
+                    toastEvent.value = masked
+                    enterEmpty(masked)
                 }
                 return
             }
@@ -541,7 +541,8 @@ class DetailViewModel : ViewModel() {
             if (fallbackToPreviousTarget(msg)) return
             LOG.i("echo-detail-finish reason=source-msg msg=$msg key=$sourceKey id=$vodId")
             resetEngineState(keepChips = false)
-            toastEvent.value = msg
+            // 站点原始 err 可能带接口地址/站名:展示前脱敏
+            toastEvent.value = SourceIdentityMask.mask(msg)
             finishEvent.value = true
             return
         }
@@ -563,7 +564,8 @@ class DetailViewModel : ViewModel() {
     private fun fallbackToPreviousTarget(reason: String?): Boolean {
         val previous = navStack.pop() ?: return false
         applyTarget(previous)
-        if (!reason.isNullOrEmpty()) toastEvent.value = reason
+        // 站点原始 err 可能带接口地址/站名:展示前脱敏
+        if (!reason.isNullOrEmpty()) toastEvent.value = SourceIdentityMask.mask(reason)
         return true
     }
 
@@ -803,7 +805,8 @@ class DetailViewModel : ViewModel() {
             if (reason.isNullOrEmpty()) {
                 str(R.string.detail_switch_failed)
             } else {
-                str(R.string.detail_switch_failed_reason, reason)
+                // 站点的原始 err 常带接口地址或站名:这里必须脱敏,只留错误语义
+                str(R.string.detail_switch_failed_reason, SourceIdentityMask.mask(reason))
             }
         pageState.value = PageState.Ready
         bumpRevision()
@@ -1258,7 +1261,7 @@ class DetailViewModel : ViewModel() {
         private val SEARCH_SEQ = java.util.concurrent.atomic.AtomicInteger(0)
 
         /** 候选站详情取超时:候选站本身慢就赶紧轮到下一个,别让用户盯着等 */
-        private const val DETAIL_FALLBACK_DETAIL_TIMEOUT_MS = 4000L
+        private const val DETAIL_FALLBACK_DETAIL_TIMEOUT_MS = 3000L
         /**
          * 首集无记忆时的真实画质探测预算(毫秒)。放在 `pageState=Ready` 之后执行,UI 已渲染,
          * 不会白屏;超时就按记忆/站点原序起播,探测是锦上添花,绝不能拖住起播。

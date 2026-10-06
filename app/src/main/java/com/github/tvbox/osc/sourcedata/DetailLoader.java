@@ -133,7 +133,7 @@ final class DetailLoader {
                             return "";
                         }
                     }
-                }, fallback ? 6_000L : sourceBean.getPlayTimeoutSeconds() * 1000L, "echo--getDetail--" + sourceBean.getKey());
+                }, fallback ? 4_000L : sourceBean.getPlayTimeoutSeconds() * 1000L, "echo--getDetail--" + sourceBean.getKey());
 //                    LOG.i("echo--getDetail--result:" + json);
                 resultParser.json(detailResult, json, sourceBean.getKey(), "", requestToken);
             }
@@ -147,7 +147,7 @@ final class DetailLoader {
         final int type = sourceBean.getType();
         
         String extend=sourceBean.getExt();
-        extend=fallback ? SourceHelper.getFixUrl(extendCache, gson, extend, 6) : SourceHelper.getFixUrl(extendCache, gson, extend, sourceBean.getPlayTimeoutSeconds());
+        extend=fallback ? SourceHelper.getFixUrl(extendCache, gson, extend, 4) : SourceHelper.getFixUrl(extendCache, gson, extend, sourceBean.getPlayTimeoutSeconds());
 
         GetRequest<String> request = SourceHelper.siteGet(sourceBean)
                 .tag("detail")
