@@ -173,8 +173,19 @@ final class PlaybackQualityWatchdog {
         handler.postDelayed(sampler, SAMPLE_INTERVAL_MS);
     }
 
-    /** 该状态下播放位置"本应前进":正在播、或正在缓冲(缓冲中不动即劣质) */
+    /**
+     * 该状态下播放位置"本应前进":正在播、正在缓冲,以及**正在准备**。
+     *
+     * <p>为什么必须含 {@code STATE_PREPARING}:用户报的"详情出来了、画面一直转圈、也不自动换源换线"
+     * 正是卡在准备阶段。此前只看 PLAYING/BUFFERING,准备阶段直接 {@code stop()} 停表 ——
+     * 于是一个永远 prepare 不出来的流既不会被质量看门狗发现,而换线超时那条路又要先过
+     * {@code isPlaybackStarted()}(位置/状态判据)才肯切换。两道闸都放行,用户就只能一直等。
+     *
+     * <p>准备阶段位置恒为 0,连续 3 拍(15s)推进不足即触发换线/换源;正常的起播远快于这个窗口。
+     */
     private static boolean isExpectedToAdvance(int playState) {
-        return playState == VideoView.STATE_PLAYING || playState == VideoView.STATE_BUFFERING;
+        return playState == VideoView.STATE_PLAYING
+                || playState == VideoView.STATE_BUFFERING
+                || playState == VideoView.STATE_PREPARING;
     }
 }

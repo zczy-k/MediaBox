@@ -90,6 +90,9 @@ class SearchViewModel : ViewModel() {
      */
     private var batchSeq = 0
 
+    /** 本批已发起搜索的来源。取消这一批时要把它们放回队列,否则会永远停在 Pending */
+    private var inFlightKeys: List<String> = emptyList()
+
     /**
      * 用户点开某部影片后暂停自动续批。
      *
@@ -292,6 +295,7 @@ class SearchViewModel : ViewModel() {
         batchJob?.cancel()
         batchJob = null
         batchInFlight = false
+        inFlightKeys = emptyList()
         // 换代次:被取消那批的 finally 之后才跑,不能让它复位新批次的在跑标记
         batchSeq++
         try {
@@ -334,6 +338,7 @@ class SearchViewModel : ViewModel() {
         markPending(keys)
         running.value = true
         batchInFlight = true
+        inFlightKeys = keys
         val myBatch = ++batchSeq
         val tokenStr = myToken.toString()
         val variants = queryVariants
@@ -364,7 +369,10 @@ class SearchViewModel : ViewModel() {
                     }.awaitAll()
                 }
             } finally {
-                if (batchSeq == myBatch) batchInFlight = false
+                if (batchSeq == myBatch) {
+                    batchInFlight = false
+                    inFlightKeys = emptyList()
+                }
             }
             if (myToken != token) return@launch
             running.value = false
@@ -372,9 +380,56 @@ class SearchViewModel : ViewModel() {
         }
     }
 
-    /** 用户点开影片:暂停自动续批,把线程与爬虫让给详情取数 */
+    /**
+     * 用户离开搜索页(点开影片):暂停自动续批,**并停掉在途的这一批**。
+     *
+     * <p>只"不再开新批"是不够的:一批 50 个源的搜索会占住爬虫装载锁与网络,
+     * 而详情页取数要拿同一把锁 —— 不放掉的话详情页就一直卡在加载。
+     *
+     * <p>被停掉的源会放回队首并复位为 Queued:用户返回后站点栏不会永远转圈,
+     * 下滑或点"搜索更多来源"即可继续。
+     */
     fun pauseBatching() {
         batchingPaused = true
+        cancelInFlightBatch()
+    }
+
+    private fun cancelInFlightBatch() {
+        if (!batchInFlight) return
+        batchJob?.cancel()
+        batchJob = null
+        batchInFlight = false
+        // 换代次:被取消那批的 finally 之后才跑,不能让它复位新批次的标记
+        batchSeq++
+        // 网络型搜索(OkGo)可以真正撤掉;爬虫型搜索不响应 interrupt,只能等它自己超时
+        try {
+            OkGo.getInstance().cancelTag("search")
+        } catch (ignored: Throwable) {
+            LOG.d("SearchViewModel", "cancel in-flight search requests failed")
+        }
+        for (entry in pendingSources) {
+            entry.value.complete(Unit)
+        }
+        pendingSources.clear()
+        val back = inFlightKeys
+        inFlightKeys = emptyList()
+        if (back.isNotEmpty()) {
+            val backSet = back.toHashSet()
+            results.value = results.value.map { existing ->
+                if (existing.sourceKey in backSet && existing.state == ResultState.Pending) {
+                    existing.copy(state = ResultState.Queued)
+                } else {
+                    existing
+                }
+            }
+            val requeued = back.filter { key ->
+                results.value.any { it.sourceKey == key && it.state == ResultState.Queued }
+            }
+            queuedSourceKeys = requeued + queuedSourceKeys
+            searchedCount.value = (searchedCount.value - requeued.size).coerceAtLeast(0)
+            hasMore.value = queuedSourceKeys.isNotEmpty()
+        }
+        running.value = false
     }
 
     /**
