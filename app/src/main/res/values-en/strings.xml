@@ -362,6 +362,7 @@
     <!-- Detail page -->
     <string name="detail_fullscreen_play">Play fullscreen</string>
     <string name="detail_empty_source">No sources. Try switching source or searching</string>
+    <string name="detail_load_timeout">Loading timed out. Try switching source or searching</string>
     <string name="detail_music_player">Open Music Player</string>
     <string name="detail_uncollect">Remove favorite</string>
     <string name="detail_collect">Add to favorites</string>

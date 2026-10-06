@@ -40,6 +40,16 @@ final class SourceHelper {
     static final ExecutorService SPIDER_POOL = Executors.newFixedThreadPool(3); // 2026-09-11:单线程改 3 线程——原单线程被卡死的 spider 任务(不响应 interrupt)永久占用后,后续全部任务排队,首页永久骨架屏
     static final ExecutorService PREPARE_POOL = Executors.newFixedThreadPool(3);
 
+    /**
+     * extend 拉取专用池:**不能**用 {@link #SPIDER_POOL}。
+     *
+     * <p>{@link #getFixUrl} 是"提交任务到池里、然后阻塞等它"的写法。若那个池就是 SPIDER_POOL,
+     * 一旦 3 条 SPIDER_POOL 线程同时卡在 getFixUrl 里等自己的任务,队列里的任务就永远没人执行 ——
+     * 两边互相等,直到各自的超时(站点限时 5~60s)才解开。这段时间里爬虫详情/搜索也拿不到线程,
+     * 表现就是"点开详情半天不出来、整体发卡"。拆成独立池后,等待方与执行方不再互相占用。
+     */
+    static final ExecutorService EXTEND_POOL = Executors.newFixedThreadPool(3);
+
     /** i18n: keep —— 只进日志(convertResponse → onError → LOG.i),无 UI 出口 */
     static final String ERR_NETWORK = "网络请求错误";
 
@@ -122,7 +132,7 @@ final class SourceHelper {
             LOG.i("echo-getFixUrl Cache");
             return extendCache.get(key);
         }
-        Future<String> future = SPIDER_POOL.submit(new Callable<String>() {
+        Future<String> future = EXTEND_POOL.submit(new Callable<String>() {
             @Override
             public String call() {
                 String result = extend;

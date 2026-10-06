@@ -8,6 +8,7 @@ import com.github.catvod.crawler.Spider;
 import com.github.tvbox.osc.api.ApiConfig;
 import com.github.tvbox.osc.bean.AbsXml;
 import com.github.tvbox.osc.bean.SourceBean;
+import com.github.tvbox.osc.util.BoundedCall;
 import com.github.tvbox.osc.util.LOG;
 import com.google.gson.Gson;
 import com.lzy.okgo.callback.AbsCallback;
@@ -16,6 +17,7 @@ import com.lzy.okgo.request.GetRequest;
 
 import java.io.UnsupportedEncodingException;
 import java.net.URLEncoder;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -66,22 +68,27 @@ final class SearchLoader {
     }
 
 
-    /** type 3:爬虫 searchContent;空结果也回一条空 AbsXml,保持与其它分支同形状 */
+    /**
+     * type 3:爬虫 searchContent;空结果也回一条空 AbsXml,保持与其它分支同形状。
+     *
+     * <p>⚠️ 必须走 {@link BoundedCall}:爬虫的 searchContent 是**阻塞**调用,不响应 interrupt,
+     * 而调用方(SearchViewModel)那层 {@code withTimeoutOrNull(8s)} 只能在挂起点取消 ——
+     * 对阻塞调用无效。没有这层限时,一个卡住的站会永久占住一条 IO 线程,搜索越多越卡
+     * (实测:搜索后点进详情要等很久)。超时按站点声明的取数限时算,与详情取数同口径。
+     */
     private void searchFromSpider(final SourceBean sourceBean, final String wd, final MutableLiveData<AbsXml> result, final String searchToken) {
-        
-        try {
-            Spider sp = ApiConfig.get().getCSP(sourceBean);
-            String search = sp.searchContent(wd, false);
-            if(!TextUtils.isEmpty(search)){
-                resultParser.json(result, search, sourceBean.getKey(), searchToken);
-            } else {
-                resultParser.json(result, "", sourceBean.getKey(), searchToken);
+        String search = BoundedCall.call(new Callable<String>() {
+            @Override
+            public String call() {
+                Spider sp = ApiConfig.get().getCSP(sourceBean);
+                return sp.searchContent(wd, false);
             }
-        } catch (Throwable th) {
-            LOG.e("SourceViewModel", th);
+        }, sourceBean.getPlayTimeoutSeconds() * 1000L, "echo-search-spider-" + sourceBean.getKey());
+        if (!TextUtils.isEmpty(search)) {
+            resultParser.json(result, search, sourceBean.getKey(), searchToken);
+        } else {
             resultParser.json(result, "", sourceBean.getKey(), searchToken);
         }
-    
     }
 
     /** type 0/1:站点搜索接口(type 0 走 XML) */

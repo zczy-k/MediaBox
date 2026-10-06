@@ -362,6 +362,7 @@
     <!-- 詳細頁 -->
     <string name="detail_fullscreen_play">全螢幕播放</string>
     <string name="detail_empty_source">暫無片源，可嘗試換源或搜尋</string>
+    <string name="detail_load_timeout">載入逾時，可嘗試換源或搜尋</string>
     <string name="detail_music_player">進入音樂播放器</string>
     <string name="detail_uncollect">取消收藏</string>
     <string name="detail_collect">加入收藏</string>

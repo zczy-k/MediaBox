@@ -132,6 +132,15 @@ class DetailViewModel : ViewModel() {
     private var fallbackEpisodeIndex = -1
     private var detailTimeoutScheduled = false
 
+    /**
+     * 详情加载看门狗的当前代次;0 = 未布防。
+     *
+     * <p>与 [detailTimeoutScheduled] 那套"候选站 4s 超时"分开:那个只在换源链里布防,
+     * 而正常路径此前**没有任何超时** —— 源不响应就永远停在 Loading。
+     */
+    private var detailWatchdogToken = 0
+    private val detailWatchdog = Runnable { onDetailWatchdogFired() }
+
     private class SwitchSnapshot(
         val vodInfo: VodInfo,
         val vodId: String,
@@ -300,7 +309,58 @@ class DetailViewModel : ViewModel() {
             return
         }
         pageState.value = PageState.Loading
+        armDetailWatchdog(key)
         sourceViewModel.getDetail(sourceKey, vodId, false, requestToken)
+    }
+
+    /**
+     * 布防详情加载看门狗:到点仍停在 Loading 就收口(换源兜底 / 空态提示),不再无限转圈。
+     *
+     * <p>时限按站点自己声明的取数限时算(见 [DetailLoadWatchdog]),所以它只是"连站点限时都等完了"
+     * 的兜底,不会把正常但偏慢的源掐断。
+     */
+    private fun armDetailWatchdog(key: String) {
+        mainHandler.removeCallbacks(detailWatchdog)
+        detailWatchdogToken = detailRequestToken
+        val timeoutMs = DetailLoadWatchdog.timeoutMs(
+            ApiConfig.get().getSource(key)?.playTimeoutSeconds ?: 0,
+        )
+        LOG.i("echo-detail-watchdog-arm token=$detailWatchdogToken timeout=${timeoutMs}ms key=$key")
+        mainHandler.postDelayed(detailWatchdog, timeoutMs)
+    }
+
+    /** 撤防(收到本代任何回包、或内容换代时调用) */
+    private fun disarmDetailWatchdog() {
+        detailWatchdogToken = 0
+        mainHandler.removeCallbacks(detailWatchdog)
+    }
+
+    private fun onDetailWatchdogFired() {
+        val token = detailWatchdogToken
+        detailWatchdogToken = 0
+        // 回包已到 / 已换代 / 已不在 Loading:看门狗只兜"卡在加载"这一种情形
+        if (token == 0 || token != detailRequestToken) return
+        if (pageState.value !is PageState.Loading) return
+        LOG.i("echo-detail-watchdog-fire token=$token key=$sourceKey id=$vodId")
+        // 同 tag 的详情请求已在途:撤掉它,免得迟到回包把空态/兜底结果顶掉
+        OkGo.getInstance().cancelTag("detail")
+        onDetailLoadTimedOut()
+    }
+
+    /**
+     * 详情加载超时的收口:与 [onDetailUnavailable] 同路(先换源兜底,无候选才留空态),
+     * 只是文案点明是超时,而不是让用户以为"这部没有片源"。
+     */
+    private fun onDetailLoadTimedOut() {
+        if (fallbackActive) {
+            fallbackLoadingCandidate = false
+            loadNextFallbackCandidate()
+            return
+        }
+        ensureSourceSearchRunning()
+        if (!startFallbackIfNeeded(auto = true)) {
+            if (!rollbackManualSwitch()) enterEmpty(str(R.string.detail_load_timeout))
+        }
     }
 
     /**
@@ -349,6 +409,8 @@ class DetailViewModel : ViewModel() {
     fun onDetailResult(absXml: AbsXml?) {
         if (fallbackActive && !fallbackLoadingCandidate) return
         if (absXml != null && !absXml.sourceKey.isNullOrEmpty() && absXml.sourceKey != sourceKey) return
+        // 本代已有回包(哪怕内容是空):看门狗不再需要兜底
+        disarmDetailWatchdog()
         val videoList = absXml?.movie?.videoList
         val detailToken = ++detailBuildToken
         if (videoList != null && videoList.isNotEmpty()) {
@@ -747,6 +809,8 @@ class DetailViewModel : ViewModel() {
     }
 
     private fun startFallbackIfNeeded(auto: Boolean, fromLinesExhausted: Boolean = false): Boolean {
+        // 换源链自己带 4s 候选站超时(见 scheduleDetailTimeout),详情看门狗到此交班,免得两套表互相抢
+        disarmDetailWatchdog()
         val currentSource = ApiConfig.get().getSource(sourceKey)
         // 站点不在当前订阅(切源后残留的历史/收藏条目)时没有"当前源"可换,但同名片仍能靠聚合搜索接管
         if (currentSource != null && !currentSource.isChangeable()) return false
@@ -841,6 +905,8 @@ class DetailViewModel : ViewModel() {
 
     private fun cancelDetailTimeout() {
         detailTimeoutScheduled = false
+        // 与候选站超时共用同一个 Handler:这把会一并摘掉详情看门狗,标记必须同步归零
+        detailWatchdogToken = 0
         mainHandler.removeCallbacksAndMessages(null)
     }
 
