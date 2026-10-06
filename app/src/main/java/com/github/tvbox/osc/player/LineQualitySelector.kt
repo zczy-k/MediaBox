@@ -68,10 +68,10 @@ object LineQualitySelector {
         val known = LinkedHashMap<String, VideoQualityPolicy.Variant>()
         for (v in remembered) if (v.flag.isNotEmpty()) known[v.flag] = v
         val eligible = known.values.filter { deviceCapHeight <= 0 || !it.known || it.height <= deviceCapHeight }
-        val ranked = VideoQualityPolicy.pickBest(eligible, deviceCapHeight)?.flag
+        val ranked = VideoQualityPolicy.pickBest(eligible, deviceCapHeight)
         val ordered = ArrayList<String>(limit)
         if (ranked != null) ordered.add(ranked.flag)
-        val rest = eligible.filter { it.flag != ranked }.sortedByDescending { VideoQualityPolicy.score(it) }
+        val rest = eligible.filter { it.flag != ranked?.flag }.sortedByDescending { VideoQualityPolicy.score(it) }
         for (v in rest) if (ordered.size < limit) ordered.add(v.flag)
         for (f in flagsInSiteOrder) if (ordered.size < limit && !known.containsKey(f)) ordered.add(f)
         return ordered

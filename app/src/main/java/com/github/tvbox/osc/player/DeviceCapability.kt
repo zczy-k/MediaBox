@@ -1,7 +1,7 @@
 package com.github.tvbox.osc.player
 
-import android.app.UiModeManager
 import android.content.Context
+import android.content.res.Configuration
 import com.github.tvbox.osc.util.HawkConfig
 import com.github.tvbox.osc.util.KV
 import com.github.tvbox.osc.util.LOG
@@ -24,9 +24,15 @@ object DeviceCapability {
     /** 标准档位阶梯:某一档播不了就落到它的下一档,再下一档就是"不限制" */
     private val LADDER = intArrayOf(2160, 1440, 1080, 720, 480)
 
+    /**
+     * 是否电视 / 盒子。
+     *
+     * <p>用 `Configuration.UI_MODE_TYPE_TELEVISION` 而**不是** `UiModeManager.UI_MODE_TYPE_TELEVISION`
+     * —— 后者在 AOSP 里是 @hide,SDK 编译期取不到(CI 实证:`Unresolved reference`)。
+     */
     fun isTelevision(context: Context): Boolean =
-        (context.getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager)
-            ?.currentModeType == UiModeManager.UI_MODE_TYPE_TELEVISION
+        (context.resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK) ==
+            Configuration.UI_MODE_TYPE_TELEVISION
 
     /**
      * 设备最高可播高度(像素)。0 = 不限制。
