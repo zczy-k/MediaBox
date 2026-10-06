@@ -162,19 +162,6 @@ private fun PillAction(iconRes: Int, text: String, onClick: () -> Unit) {
     }
 }
 
-/**
- * 线路 chip 的显示名:「线路N」,实测到画质时再补「 · 1080P」。
- *
- * <p>画质取的是**实测值**([DetailViewModel.lineQualityHeights]),不是站点自报的 flag ——
- * flag 常写成假的清晰度,有的还直接带站名/域名。没测到就只显示序号,不编。
- */
-@Composable
-private fun lineLabel(index: Int, flagName: String?, heights: Map<String, Int>): String {
-    val base = stringResource(R.string.detail_line_index, index + 1)
-    val suffix = LineLabelPolicy.qualitySuffix(flagName?.let { heights[it] } ?: 0)
-    return if (suffix.isEmpty()) base else "$base · $suffix"
-}
-
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 internal fun EpisodeSheet(vm: DetailViewModel, revision: Int, slideFromEnd: Boolean) {
@@ -230,8 +217,11 @@ internal fun EpisodeSheet(vm: DetailViewModel, revision: Int, slideFromEnd: Bool
     ) {
         val dismissAnimated = LocalSheetDismiss.current
         Column(modifier = Modifier.fillMaxWidth()) {
-            // 线路切换入口只剩这一处(详情页的「线路」区已下线);横屏全屏走侧滑面板,那一版只列剧集
-            if (flags.size > 1 && !slideFromEnd) {
+            // 线路切换入口：竖屏贴底弹层与横屏全屏侧滑面板**都显示**。
+            // 侧滑面板宽约窗口 40% 出头，一行横向滚动 chips 完全放得下；
+            // 早前这里用 `&& !slideFromEnd` 把横屏整条短路掉，导致「全屏里只有选集、没有线路」，
+            // 而横屏全屏恰恰是看片最常待的状态 —— 手动换线在这里等于没有入口。
+            if (flags.size > 1) {
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),

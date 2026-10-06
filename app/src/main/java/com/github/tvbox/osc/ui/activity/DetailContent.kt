@@ -265,8 +265,16 @@ internal fun DetailContent(
             }
         }
 
-        // 「线路」区已下线:换线按实测画质自动进行(先降档 → 再顺序换线 → 再换源),
-        // 暴露 flag 名只会让用户以为"手动选过",实际又会被自动策略改掉
+        // 「线路」区:手动换线入口。标签是「线路N + 实测画质」,不暴露站点自报的 flag 名,
+        // 也不会泄露源身份;更关键的是用户手动选过之后播放侧会记 userPickedLine 而不再自动换线,
+        // 这个意图要有入口才成立(见 DetailLineSection 的说明)。
+        // 单线路不显示:没有可切换对象,一行只有一个 chip 的「线路」区是噪声
+        if ((info.seriesFlags?.size ?: 0) > 1) {
+            item(key = "lines") {
+                DetailLineSection(vm)
+            }
+        }
+
         if (episodes.isNotEmpty()) {
             item(key = "episodes") {
                 EpisodeRow(vm, info, episodes, playIndex, currentFlag)
@@ -281,8 +289,14 @@ internal fun DetailContent(
     }
 }
 
+/**
+ * 章节容器:标题 + 横向滚动 chips。
+ *
+ * <p>由「画质」「线路」两个区共用,保证两个区在视觉上完全同构。
+ * 从 `private` 放开到 `internal` 是因为 [DetailLineSection] 在同包的独立文件里复用它。
+ */
 @Composable
-private fun ChipRow(
+internal fun ChipRow(
     title: String,
     leading: (@Composable () -> Unit)? = null,
     content: LazyListScope.() -> Unit,
