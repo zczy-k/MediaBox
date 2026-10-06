@@ -375,9 +375,7 @@ final class PlaybackRetryDelegate {
         PlaybackViewBridge view = host.view();
         final long preProgress = Math.max(savedProgress, view == null ? 0 : view.currentPosition());
         LOG.i(logPrefix + ": switch line " + vod.playFlag + " -> " + targetFlag);
-        if (view != null && view.isPageAlive()) {
-            view.runOnUi(() -> host.view().toast(PlaybackController.str(R.string.player_switch_line, targetFlag)));
-        }
+        // 换线全程静默:换源/换线已自动化,提示"正在切换线路:xxx"既刷屏又泄露线路身份
         vod.playFlag = targetFlag;
         vod.playIndex = nextIndex;
         st.onLineSwitched();

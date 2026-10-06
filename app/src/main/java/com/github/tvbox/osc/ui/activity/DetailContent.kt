@@ -190,20 +190,7 @@ internal fun DetailContent(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.padding(top = 4.dp),
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(50))
-                                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.detail_source, displaySourceName),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
+                            // 「来源:站名」已下线:换源自动化后用户不需要知道用的是哪个站
                             if (metaParts.isNotEmpty()) {
                                 Text(
                                     text = metaParts.joinToString(" · "),
@@ -283,35 +270,16 @@ internal fun DetailContent(
             }
         }
 
-        if (flags.size > 1) {
-            item(key = "flags") {
-                ChipRow(
-                    title = stringResource(R.string.detail_line),
-                    leading = { SectionTitleIcon(painterResource(R.drawable.ic_detail_line)) },
-                ) {
-                    itemsIndexed(flags, key = { i, f -> "${i}_${f.name}" }) { _, flag ->
-                        FilterChip(
-                            selected = flag.name == currentFlag,
-                            onClick = { vm.onFlagClick(flag.name ?: "") },
-                            label = { Text(flag.name ?: "") },
-                            shape = RoundedCornerShape(20.dp),
-                            colors = MaterialTheme.colorScheme.filterChipColors(),
-                        )
-                    }
-                }
-            }
-        }
-
+        // 「线路」区已下线:换线按实测画质自动进行(先降档 → 再顺序换线 → 再换源),
+        // 暴露 flag 名只会让用户以为"手动选过",实际又会被自动策略改掉
         if (episodes.isNotEmpty()) {
             item(key = "episodes") {
                 EpisodeRow(vm, info, episodes, playIndex, currentFlag)
             }
         }
 
-        item(key = "sources") {
-            SourceSection(vm, currentSourceName = displaySourceName, revision = revision)
-        }
-
+        // 「换源」区已下线:换源由播放侧自动接管(线路耗尽 → 自动切下一个源),
+        // 手动 chip 在自动链里没有意义,且直接暴露站名。「相关推荐」是独立区块,不受影响
         item(key = "related") {
             RelatedSection(activity, vm, onCardLongClick)
         }

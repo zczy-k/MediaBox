@@ -50,6 +50,7 @@ import me.jessyan.autosize.internal.CustomAdapt;
 import com.github.tvbox.osc.util.HawkConfig;
 import com.github.tvbox.osc.util.HistoryHelper;
 import com.github.tvbox.osc.util.LOG;
+import com.github.tvbox.osc.util.SourceIdentityMask;
 import com.github.tvbox.osc.util.MD5;
 import com.github.tvbox.osc.util.PlayerHelper;
 import com.github.tvbox.osc.util.SubtitleHelper;
@@ -810,6 +811,9 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
             mHandler.post(() -> errorWithRetry(err, finish));
             return;
         }
+        // 源身份不外泄:错误串可能原样带着接口地址/站名(换源自动化后这是最后一道泄露口),
+        // 统一在这里脱敏 —— 所有失败提示都经过本方法,是唯一的收口点
+        err = SourceIdentityMask.mask(err);
         if (scheduler.isPlaybackStarted()) {
             scheduler.cancelPlayTimeout();
             hideTipOnUiThread();

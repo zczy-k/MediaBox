@@ -661,7 +661,8 @@ class DetailViewModel : ViewModel() {
         if (switchSnapshot == null) {
             switchSnapshot = SwitchSnapshot(info, vodId, sourceKey, firstsourceKey, vodName, vodPicture)
         }
-        sendCommand(PlaybackCommand.StopForSourceSwitch(str(R.string.detail_switching_source)))
+        // 换源全程静默:换源已自动化,提示既刷屏又泄露"正在换到哪个站"
+        sendCommand(PlaybackCommand.StopForSourceSwitch(""))
     }
 
     private fun rollbackManualSwitch(reason: String? = null): Boolean {

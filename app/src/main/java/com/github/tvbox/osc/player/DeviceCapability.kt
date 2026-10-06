@@ -21,6 +21,9 @@ object DeviceCapability {
     private const val DEFAULT_CAP_TV = 1080
     private const val DEFAULT_CAP_MOBILE = 2160
 
+    /** 软解码时的上限:真机实测(麒麟990 手机)1080P H264 软解丢帧 0 已属勉强,再上一档必卡 */
+    private const val DEFAULT_CAP_SOFTWARE = 1080
+
     /** 标准档位阶梯:某一档播不了就落到它的下一档,再下一档就是"不限制" */
     private val LADDER = intArrayOf(2160, 1440, 1080, 720, 480)
 
@@ -36,14 +39,18 @@ object DeviceCapability {
 
     /**
      * 设备最高可播高度(像素)。0 = 不限制。
-     * 尚未学到失败记录时按设备类型取默认值。
+     * 尚未学到失败记录时按「解码方式 → 设备类型」取默认值。
      */
     @JvmStatic
     fun capHeight(context: Context): Int {
         val learned = KV.get(HawkConfig.VIDEO_QUALITY_CAP, 0)
         if (learned > 0) return learned
+        // 用户显式选了软解码:4K/HEVC 软解基本等于幻灯片,再按"手机默认 2160"选就是明知会卡
+        if (SOFTWARE_DECODE_LABEL == KV.get(HawkConfig.EXO_DECODE, "")) return DEFAULT_CAP_SOFTWARE
         return if (isTelevision(context)) DEFAULT_CAP_TV else DEFAULT_CAP_MOBILE
     }
+
+    private const val SOFTWARE_DECODE_LABEL = "软解码" // i18n: keep —— 与设置页/PlayerConfigDelegate 同口径的字面量
 
     /**
      * 记一次"这一档起播失败",把上限压到它的下一档。
