@@ -300,7 +300,7 @@ final class PlaybackRetryDelegate {
         restoreAutoSwitchedPlayer();
         restoreAutoSwitchedDecode();
         PlaybackAttemptState st = host.attemptState();
-        if (st.allowAutoSwitchLine && KV.get(HawkConfig.AUTO_SWITCH_LINE, false)) {
+        if (st.allowAutoSwitchLine && KV.get(HawkConfig.AUTO_SWITCH_LINE, true)) {
             // 先降档再顺序换线:起播失败最常见的原因就是"这一档太高",按实测高度降最省事
             if (tryDowngradeLine()) return true;
             return tryNextLine();
@@ -442,7 +442,7 @@ final class PlaybackRetryDelegate {
         // 卡顿时同源换线是代价最小的一跳,故这里**故意不看** allowAutoSwitchLine ——
         // 它由全屏决定,本意是"别拿换集打断正在看的画面";可卡顿意味着画面已经废了,
         // 再看它等于把最便宜的一跳也关掉,只剩"重新搜索 + 重取详情"这种重跳。
-        boolean lineFirst = !st.userPickedLine && KV.get(HawkConfig.AUTO_SWITCH_LINE, false);
+        boolean lineFirst = !st.userPickedLine && KV.get(HawkConfig.AUTO_SWITCH_LINE, true);
         if (lineFirst) {
             LOG.i("echo-quality: try downgrade line first");
             // 先降档:卡顿最常见的真因就是"当前档超过网络/设备能力",降一档比换线更对症

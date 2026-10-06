@@ -18,6 +18,25 @@ class LineQualitySelectorTest {
         VideoQualityPolicy.Variant(1920, h, 0, c, flag)
 
     @Test
+    fun preflightRequiresMultipleSourcesAndLines() {
+        assertTrue(LineQualitySelector.shouldPreflightQuality(sourceCount = 2, lineCount = 2))
+        assertTrue(!LineQualitySelector.shouldPreflightQuality(sourceCount = 1, lineCount = 3))
+        assertTrue(!LineQualitySelector.shouldPreflightQuality(sourceCount = 3, lineCount = 1))
+        assertTrue(!LineQualitySelector.shouldPreflightQuality(sourceCount = 0, lineCount = 0))
+    }
+
+    @Test
+    fun candidatesToProbeSkipsRememberedLinesAndFillsRemainingBudget() {
+        val candidates = LineQualitySelector.candidatesToProbe(
+            flagsInSiteOrder = listOf("A", "B", "C", "D"),
+            remembered = listOf(v("B", 1080)),
+            deviceCapHeight = 0,
+            limit = 3,
+        )
+        assertEquals(listOf("A", "C"), candidates)
+    }
+
+    @Test
     fun pickFromMemory_returnsBestByRealHeight() {
         val remembered = listOf(v("超清", 720), v("蓝光", 1080), v("高清", 480))
         assertEquals("蓝光", LineQualitySelector.pickFromMemory(remembered, deviceCapHeight = 0))

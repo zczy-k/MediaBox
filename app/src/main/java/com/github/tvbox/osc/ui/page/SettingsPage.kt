@@ -173,7 +173,7 @@ class SettingsViewModel : ViewModel() {
         playTunnel = KV.get(HawkConfig.PLAY_TUNNEL, false),
         preferAac = KV.get(HawkConfig.PLAY_PREFER_AAC, false),
         musicPlayerPage = MusicSettings.autoOpenPage(),
-        autoSwitchLine = KV.get(HawkConfig.AUTO_SWITCH_LINE, false),
+        autoSwitchLine = KV.get(HawkConfig.AUTO_SWITCH_LINE, true),
         m3u8Purify = KV.get(HawkConfig.M3U8_PURIFY, false),
         incognito = KV.get(HawkConfig.INCOGNITO, false),
         gestureControlDisabled = KV.get(HawkConfig.GESTURE_CONTROL_DISABLED, false),

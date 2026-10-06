@@ -17,6 +17,10 @@ import kotlinx.coroutines.coroutineScope
  */
 object LineQualitySelector {
 
+    /** 单源或单线路没有可比较对象:跳过全部预检,让调用方直接起播。 */
+    fun shouldPreflightQuality(sourceCount: Int, lineCount: Int): Boolean =
+        sourceCount > 1 && lineCount > 1
+
     /**
      * 逐条解析 + 探测,选出最优 flag。
      *
@@ -81,6 +85,23 @@ object LineQualitySelector {
         return ordered
     }
 
+    /**
+     * 排出本轮真正需要探测的线路:已记住的线路参与最终比较,不重复发起网络探测;
+     * 候选总数仍受 [limit] 限制,未知线路按站点顺序补位。
+     */
+    fun candidatesToProbe(
+        flagsInSiteOrder: List<String>,
+        remembered: List<VideoQualityPolicy.Variant>,
+        deviceCapHeight: Int,
+        limit: Int,
+    ): List<String> {
+        val rememberedFlags = remembered.mapNotNullTo(HashSet<String>()) { variant ->
+            variant.flag.takeIf { it.isNotEmpty() }
+        }
+        return mergeCandidates(flagsInSiteOrder, remembered, deviceCapHeight, limit)
+            .filterNot { rememberedFlags.contains(it) }
+    }
+
     /** suspend 块里的同步保护:任何异常都当成"这条不可用",绝不让探测失败冒泡到播放链路 */
     private suspend fun <T> runCatchingBlocking(block: suspend () -> T): T? = try {
         block()
@@ -89,7 +110,7 @@ object LineQualitySelector {
     }
 
     /**
-     * **并发**探测候选线路,选出最优 flag。
+     * **并发**探测候选线路并返回成功测得的结果,供调用方与记忆候选统一排序。
      *
      * <p>与 [pickWithProbe] 的区别:那个是串行,因为每条要先跑爬虫解析(同类 Spider 共享静态状态,
      * 不能并发);这个用于**直连型**线路 —— `VodSeries.url` 本身就是可播放地址时,探测只需要一次小请求,
@@ -98,23 +119,31 @@ object LineQualitySelector {
      * <p>不做逐条早停:`awaitAll` 语义更简单可预测,而带宽由调用方的候选数上限兜住
      * (K 条 × ≤256KB,3 条最坏 768KB)。整体还有调用方的硬超时。
      *
-     * @return 选中的 flag；全部探测不到时 null(调用方回落站点原序)
+     * @return 探测成功的线路画质;调用方可与记忆候选一起排名
      */
-    suspend fun pickWithProbeParallel(
+    suspend fun probeVariantsParallel(
         flags: List<String>,
-        deviceCapHeight: Int,
         resolve: suspend (String) -> String?,
         probe: suspend (String) -> VideoQualityPolicy.Variant?,
-    ): String? = coroutineScope {
-        val results = flags.map { flag ->
+    ): List<VideoQualityPolicy.Variant> = coroutineScope {
+        flags.map { flag ->
             async {
                 val url = runCatchingBlocking { resolve(flag) } ?: return@async null
                 val measured = runCatchingBlocking { probe(url) } ?: return@async null
                 measured.copy(flag = flag)
             }
         }.awaitAll().filterNotNull()
-        VideoQualityPolicy.pickBest(results, deviceCapHeight)?.flag
     }
+
+    suspend fun pickWithProbeParallel(
+        flags: List<String>,
+        deviceCapHeight: Int,
+        resolve: suspend (String) -> String?,
+        probe: suspend (String) -> VideoQualityPolicy.Variant?,
+    ): String? = VideoQualityPolicy.pickBest(
+        probeVariantsParallel(flags, resolve, probe),
+        deviceCapHeight,
+    )?.flag
 
     /**
      * 挑一条**实测分辨率更低**的候选,用于卡顿时降档。

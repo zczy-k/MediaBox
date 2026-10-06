@@ -16,6 +16,7 @@ import com.github.tvbox.osc.player.DeviceCapability
 import com.github.tvbox.osc.player.LineQualitySelector
 import com.github.tvbox.osc.player.PlaybackSession
 import com.github.tvbox.osc.player.VideoQualityMemory
+import com.github.tvbox.osc.player.VideoQualityPolicy
 import com.github.tvbox.osc.player.VideoQualityProbe
 import com.github.tvbox.osc.util.UA
 import com.github.tvbox.osc.util.EpisodeTotals
@@ -399,14 +400,21 @@ class DetailViewModel : ViewModel() {
                     info.reverseSort = false
                 }
                 if (info.reverseSort) info.reverse()
+                val siteOrder = info.seriesMap?.keys?.toList().orEmpty()
+                // 不等待聚合搜索完成:只按此刻已发现的同名源计数。若只有当前源或线路,
+                // 不读画质记忆、不发探测请求,直接使用历史线路(有效时)或站点默认线路起播。
+                val allowQualitySelection = LineQualitySelector.shouldPreflightQuality(
+                    knownMatchingSourceCount(recordKey),
+                    siteOrder.size,
+                )
                 if (info.playFlag == null || info.seriesMap?.containsKey(info.playFlag) != true) {
-                    // 画质优选第一层(同步,零网络零延迟):先用**已记忆的实测分辨率**选,
-                    // 而不是站点给的第一个 flag —— 后者常常是 480P。记忆缺失时保持站点原序。
-                    val cap = App.getInstance()?.let { DeviceCapability.capHeight(it) } ?: 0
-                    val siteOrder = info.seriesMap?.keys?.toList().orEmpty()
-                    val remembered = VideoQualityMemory.lookupAll(recordKey, recordId, siteOrder)
-                    info.playFlag = LineQualitySelector.pickFromMemory(remembered, cap)
-                        ?: siteOrder.firstOrNull()
+                    info.playFlag = if (allowQualitySelection) {
+                        val cap = App.getInstance()?.let { DeviceCapability.capHeight(it) } ?: 0
+                        val remembered = VideoQualityMemory.lookupAll(recordKey, recordId, siteOrder)
+                        LineQualitySelector.pickFromMemory(remembered, cap) ?: siteOrder.firstOrNull()
+                    } else {
+                        siteOrder.firstOrNull()
+                    }
                 }
                 restoreFallbackEpisode(info)
                 resetEngineState(keepChips = true)
@@ -426,11 +434,9 @@ class DetailViewModel : ViewModel() {
                 if (!playingList.isNullOrEmpty()) switchSnapshot = null
                 pageState.value = PageState.Ready
                 bumpRevision()
-                // 首集(无记忆)时给一次短暂机会做**真实**画质探测。
-                // 放在 pageState=Ready 之后 ⇒ UI 已经渲染,不会白屏;拿到达标就选最好的那档,
-                // 拿不到就按记忆/站点原序起播(最坏多等 FIRST_WATCH_PROBE_BUDGET_MS)。
+                // 仅在已有多个同名源且当前源有多条线路时预检;单源/单线路直接起播,不等待。
                 // 传 detailBuildToken 快照:探测期间换了片的话,快照与当前值就不相等了。
-                applyFirstWatchProbe(info, recordKey, recordId, detailBuildToken)
+                applyFirstWatchProbe(info, recordKey, recordId, detailBuildToken, allowQualitySelection)
                 requestPlay()
                 if (playingList.isNullOrEmpty()) {
                     startFallbackIfNeeded(auto = true)
@@ -562,6 +568,19 @@ class DetailViewModel : ViewModel() {
 
     private fun currentTokenStr(): String = "detail_$searchToken"
 
+    /** 当前源 + 已返回的同名影片候选源;不等待仍在进行的搜索,未知候选不增加起播延迟。 */
+    private fun knownMatchingSourceCount(currentSourceKey: String): Int {
+        val keys = synchronized(fallbackCandidates) {
+            LinkedHashSet<String>().also { found ->
+                fallbackCandidates.forEach { video ->
+                    video.sourceKey?.takeIf { it.isNotBlank() }?.let(found::add)
+                }
+            }
+        }
+        if (currentSourceKey.isNotBlank()) keys.add(currentSourceKey)
+        return keys.size
+    }
+
     /**
      * 现在是否该由"聚合搜索候选"自动接管当前页面。
      *
@@ -603,16 +622,23 @@ class DetailViewModel : ViewModel() {
     }
 
     /**
-     * 首集无记忆时的**真实画质探测**,把 [VodInfo.playFlag] 换成实测最高的那一档。
+     * 多来源已知且当前详情含多条线路时做**真实画质预检**,在当前详情线路中选出更合适的一档。
      *
-     * <p>为什么必须做:只靠记忆意味着"第一次播放按站点原序(常常是 480P)",那正是要避免的体验。
-     * 这里在起播前给一次 ≤[FIRST_WATCH_PROBE_BUDGET_MS] 的窗口,期间 UI 已渲染,用户看不到白屏。
+     * <p>预算内补测未知线路,已记忆候选不重复探测。单源或单线路直接起播,不等待预检。
      *
      * <p>只探**直连型**线路:`VodSeries.url` 以 http 开头才探(与 `PlayLoader.shouldDirectPlay` 同口径)。
      * 需要爬虫 `playerContent` 才能拿到真地址的线路一律跳过 —— 那条路要 1~3 秒/条,不能挡起播。
      * 探不到就静默降级,绝不阻塞播放。
      */
-    private suspend fun applyFirstWatchProbe(info: VodInfo, siteKey: String, vodId: String, token: Int) {
+    private suspend fun applyFirstWatchProbe(
+        info: VodInfo,
+        siteKey: String,
+        vodId: String,
+        token: Int,
+        allowQualitySelection: Boolean,
+    ) {
+        // 单源/单线路由调用方直接起播,不读配置、不查记忆、不做网络请求。
+        if (!allowQualitySelection) return
         // 「画质选项」三档分流(口径见 DeviceCapability.QualityMode):速度优先跳过全部起播前探测。
         // 实测记忆回写在 MusicSessionDelegate,不受档位影响 —— 速度优先下照常积累,
         // 用户切回自动/画质档后立即受益。
@@ -620,25 +646,31 @@ class DetailViewModel : ViewModel() {
         if (!mode.shouldProbeOnFirstWatch) return
         val seriesMap = info.seriesMap ?: return
         val siteOrder = seriesMap.keys.toList()
-        if (siteOrder.size <= 1) return
         val app = App.getInstance() ?: return
         val cap = DeviceCapability.capHeight(app)
-        if (VideoQualityMemory.lookupAll(siteKey, vodId, siteOrder).isNotEmpty()) return
+        val remembered = VideoQualityMemory.lookupAll(siteKey, vodId, siteOrder)
+        val flagsToProbe = LineQualitySelector.candidatesToProbe(
+            siteOrder,
+            remembered,
+            cap,
+            mode.probeLines,
+        )
+        if (flagsToProbe.isEmpty()) return
         val currentFlag = info.playFlag
         val currentList = seriesMap[currentFlag]
         // 不能写 coerceIn(0, size - 1):size 为 0 时下界 0 > 上界 -1,coerceIn 会抛 IllegalArgumentException
         val index = if (currentList.isNullOrEmpty()) 0 else info.playIndex.coerceIn(0, currentList.size - 1)
         val headers = probeHeaders(siteKey)
         val probe = VideoQualityProbe()
-        val chosen = withTimeoutOrNull(mode.probeBudgetMs) {
-            LineQualitySelector.pickWithProbeParallel(
-                flags = LineQualitySelector.mergeCandidates(siteOrder, emptyList(), cap, mode.probeLines),
-                deviceCapHeight = cap,
+        val probed = withTimeoutOrNull(mode.probeBudgetMs) {
+            LineQualitySelector.probeVariantsParallel(
+                flags = flagsToProbe,
                 resolve = { flag -> directUrlOf(seriesMap[flag], index) },
                 probe = { url -> probe.probe(url, headers) },
             )
         } ?: return
-        if (chosen == null || chosen == currentFlag) return
+        val chosen = VideoQualityPolicy.pickBest(remembered + probed, cap)?.flag
+        if (chosen.isNullOrEmpty() || chosen == currentFlag) return
         // 等待期间可能换了片/进了换源链:那时再写 vodInfo 会把新内容顶掉
         if (token != detailBuildToken || sourceKey != siteKey || info.playFlag != currentFlag) return
         info.playFlag = chosen
