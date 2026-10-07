@@ -5,6 +5,7 @@ import android.widget.Toast
 import com.github.tvbox.osc.R
 import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.ui.activity.PartitionListActivity
+import com.github.tvbox.osc.util.LOG
 
 sealed interface VodCardTarget {
     data class Action(val video: Movie.Video) : VodCardTarget
@@ -46,11 +47,35 @@ internal fun Movie.Video.hasOpenableDetailId(): Boolean {
 internal fun canOpenOwnDetail(video: Movie.Video): Boolean =
     !video.sourceKey.isNullOrEmpty() && video.hasOpenableDetailId()
 
-fun resolveVodCardTarget(video: Movie.Video): VodCardTarget = when {
-    !video.action.isNullOrEmpty() -> VodCardTarget.Action(video)
-    video.isFolderCard() -> VodCardTarget.Folder(video)
-    canOpenOwnDetail(video) -> VodCardTarget.Detail(video)
-    else -> VodCardTarget.Search(video.name.orEmpty())
+/**
+ * 卡片点击的路由决策。
+ *
+ * <p>⚠️ 这里带一条诊断日志（`echo-detail card-route=`），**别删**。
+ *
+ * <p>为什么必须有它：用户报「首页点卡片进了搜索、换一个源却进详情」，而
+ * "为什么走了 Search" 有**三个**互不相同的成因，日志里完全看不出区别：
+ * <ol>
+ *   <li>`sourceKey` 为空（站点身份缺失）</li>
+ *   <li>id 为空</li>
+ *   <li>id 是 `msearch:` 占位（索引型源的卡片就是这种，不是真 id）</li>
+ * </ol>
+ * 三者表现一模一样，只有把 src / id / tag / action 四个入参打出来才能对号入座。
+ * 前缀用 `echo-detail`（已登记进 FILE_LOG_PREFIXES）。
+ */
+fun resolveVodCardTarget(video: Movie.Video): VodCardTarget {
+    val target = when {
+        !video.action.isNullOrEmpty() -> VodCardTarget.Action(video)
+        video.isFolderCard() -> VodCardTarget.Folder(video)
+        canOpenOwnDetail(video) -> VodCardTarget.Detail(video)
+        else -> VodCardTarget.Search(video.name.orEmpty())
+    }
+    LOG.i(
+        "echo-detail card-route=" + target.javaClass.simpleName +
+            " src=" + video.sourceKey + " id=" + video.id +
+            " tag=" + video.tag + " action=" + video.action +
+            " canOpen=" + canOpenOwnDetail(video)
+    )
+    return target
 }
 
 fun Context.dispatchVodCardClick(video: Movie.Video, onAction: (Movie.Video) -> Unit = {}) {

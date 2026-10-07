@@ -60,7 +60,7 @@ public class LOG {
             //   "echo-m3u8..." 都没登记,于是被 fileLog 静默丢弃 ——
             //   真机排查「去广告弹窗还在不在」时,查到的记录数是 **0**,
             //   无法区分"没命中广告"与"日志被过滤"。这两个前缀是补这个盲区的。
-            "echo-fixAdM3u8", "echo-m3u8"}
+            "echo-fixAdM3u8", "echo-m3u8", "echo-playM3u8"}
             // ⚠️ FILE_LOG=false(正式包)时折成空数组,让这批前缀**字面量也从 dex 里消失**。
             //
             // 背景:release 靠 proguard 的 -assumenosideeffects 已经把**调用点**全删了
