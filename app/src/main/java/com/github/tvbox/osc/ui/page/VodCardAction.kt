@@ -3,7 +3,6 @@ package com.github.tvbox.osc.ui.page
 import android.content.Context
 import android.widget.Toast
 import com.github.tvbox.osc.R
-import com.github.tvbox.osc.api.ApiConfig
 import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.ui.activity.PartitionListActivity
 
@@ -17,15 +16,6 @@ sealed interface VodCardTarget {
     data class Detail(val video: Movie.Video) : VodCardTarget
 }
 
-/**
- * 站点级 `indexs` 标记:索引型源的卡片只是关键词/分类入口,点进去没有可播详情,只该走搜索;
- * 普通站点才直接进详情。站点身份缺失时按搜索处理(进详情大概率失败)。
- */
-private fun isSearchOnlySource(sourceKey: String?): Boolean {
-    if (sourceKey.isNullOrEmpty()) return true
-    return ApiConfig.get().getSource(sourceKey)?.isIndexSource == true
-}
-
 internal fun Movie.Video.isFolderCard(): Boolean = tag == "folder"
 
 internal fun Movie.Video.hasOpenableDetailId(): Boolean {
@@ -36,14 +26,25 @@ internal fun Movie.Video.hasOpenableDetailId(): Boolean {
 /**
  * 这张卡**在它自己那个来源里**能不能直接打开详情。
  *
- * <p>为 false 的两种来源:①源是索引型(`indexs=1`,卡片只是关键词/分类入口,没有可播详情);
- * ②id 不可用(空 / `msearch:` 占位)。两种情况进详情都只会取不到内容 —— 用户白等一轮,
- * 所以调用方应在**点击当下**就改道,而不是进了详情再兜底。
+ * <p>⚠️ v1.0.40 起**不再看站点是不是索引型**(`indexs=1`)。
  *
- * <p>首页与搜索页共用这一条判据(见 [resolveVodCardTarget]),避免两处各写一套而漂移。
+ * <p>原来索引型源的卡片一律改道搜索(见 [resolveVodCardTarget]),理由是
+ * "卡片只是关键词/分类入口,点进去没有可播详情"。真机用下来这个口径有两个问题:
+ *
+ * <ol>
+ *   <li><b>同类卡片在不同源里表现不一致</b>:用户换一个源,同样的点击一个进详情、
+ *       一个进搜索。首页卡片长得一模一样(海报 + 片名),行为却不同,看起来就是坏了。</li>
+ *   <li><b>"这个源给不出详情"已经不是致命问题了</b>:详情取不到时,详情页本来就有
+ *       聚合搜索 + 自动换源的兜底链(见 DetailViewModel 的 fallback 逻辑)——
+ *       它会拿片名去别的源找到同一部片。也就是说"当前源没详情"完全有人接住,
+ *       没必要在点击当下就替用户改道。</li>
+ * </ol>
+ *
+ * <p>所以判据收敛成一条:**只要 id 可用就进详情**。id 不可用(空 / `msearch:` 占位)
+ * 或站点身份缺失时仍然只能走搜索 —— 那种情况进详情连请求都发不出去。
  */
 internal fun canOpenOwnDetail(video: Movie.Video): Boolean =
-    !isSearchOnlySource(video.sourceKey) && video.hasOpenableDetailId()
+    !video.sourceKey.isNullOrEmpty() && video.hasOpenableDetailId()
 
 fun resolveVodCardTarget(video: Movie.Video): VodCardTarget = when {
     !video.action.isNullOrEmpty() -> VodCardTarget.Action(video)
