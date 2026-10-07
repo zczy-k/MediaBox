@@ -41,7 +41,12 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
             try {
                 client.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
-                        LOG.i("echo-quality probe-failed http=" + response.code)
+                        // 带上最终地址:404 往往是地址过期/被重定向到了别处,不看地址无法判断
+                        val fu = response.request.url
+                        LOG.i(
+                            "echo-quality probe-failed http=" + response.code +
+                                " final=" + fu.host + fu.encodedPath
+                        )
                         return@use null
                     }
                     val stream = response.body?.byteStream()
@@ -69,11 +74,26 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
                     // 2) m3u8 master:站点声明的清晰度,比 flag 名可信但不是文件真值
                     val text = String(buffer, 0, buffer.size, Charsets.UTF_8)
                     val hls = VideoQualityPolicy.parseHlsMaster(text)
-                    // ⚠️ 这条是"解析器跑了但没认出来"的唯一可观测点:
-                    // probed=0 时,它能把"请求就失败了"与"请求成功但 m3u8 没解析出分辨率"分开。
-                    LOG.i("echo-quality probe-" + (if (hls == null) "no-size" else "ok") +
-                        " src=hls bytes=" + buffer.size +
-                        " head=" + text.take(40).replace('\n', ' '))
+                    // ⚠️ 这条是"解析器跑了但没认出来"的唯一可观测点,别删。
+                    //
+                    // v1.0.44 扩充:真机实测发现 probe-no-size 有 16 次,而同时用 curl 拉同一个
+                    // `index.m3u8` 却是 **97 字节的 master、带 RESOLUTION=1920x1040**。
+                    // 两边对不上 ⇒ 必须把"探测真正请求到了什么"打出来才能判断:
+                    //   · final= 响应**经过重定向之后**的最终地址(OkHttp 会自动跟随)
+                    //   · streamInf= 内容里有没有 #EXT-X-STREAM-INF(master 的标志)
+                    //   · isMaster= 是不是 master(媒体播放列表没有 RESOLUTION,解析不出属正常)
+                    val finalUrl = response.request.url
+                    val hasStreamInf = text.contains("#EXT-X-STREAM-INF", ignoreCase = true)
+                    // orig= 取原地址去掉 query 后的尾部(不含签名参数),与 final= 对比即可看出有无重定向
+                    val origTail = url.substringBefore('?').takeLast(70)
+                    LOG.i(
+                        "echo-quality probe-" + (if (hls == null) "no-size" else "ok") +
+                            " src=hls bytes=" + buffer.size +
+                            " streamInf=" + hasStreamInf +
+                            " orig=…" + origTail +
+                            " final=" + finalUrl.host + finalUrl.encodedPath +
+                            " head=" + text.take(60).replace('\n', ' ')
+                    )
                     hls
                 }
             } catch (t: Throwable) {
