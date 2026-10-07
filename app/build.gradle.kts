@@ -129,6 +129,39 @@ android {
             signingConfigs.findByName("release")?.let { signingConfig = it }
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro", "proguard-python.pro")
         }
+
+        /**
+         * **诊断包**:给真机排查用,不进 releases/latest,永不下发给用户。
+         *
+         * <p>解决三件事,每一件都是被真机实测逼出来的:
+         * <ol>
+         *   <li><b>文件日志</b>:`util/LOG.java` 的 `FILE_LOG = BuildConfig.DEBUG`。
+         *       正式包 DEBUG=false ⇒ 从不落盘日志 ⇒ 出了线上问题**在设备上什么都看不到**。
+         *       本类型让 DEBUG=true,日志会写进 `files/preload_debug.log`,
+         *       再配合 `run-as` 就能把日志捞出来分析。</li>
+         *   <li><b>不混淆</b>:`release` 开了 R8,堆栈里的类名/方法名全被改名,
+         *       崩溃堆栈读不出是哪个函数。诊断包保持 `isMinifyEnabled=false`。</li>
+         *   <li><b>独立 applicationId</b>:加 `.diag` 后缀,可以和正式版**同时装**在一台手机上,
+         *       不用卸载、不丢数据(配置/历史/缓存全在各自的 data 目录)。</li>
+         * </ol>
+         *
+         * <p>⚠️ 副作用必须知道:包名变了 ⇒ `ApiConfig`/Room/缓存路径**全部独立**,
+         * 诊断包要**重新配一次订阅**才能拉到数据(这是"不丢正式版数据"的代价,不是 bug)。
+         *
+         * <p>另外 [forceUpdateEnabled] 也应传 false,否则它会去和正式版比版本号并弹更新。
+         */
+create("diag") {
+        // ⚠️ 刻意**不用** initWith(release):会把 release 的 isShrinkResources 等
+        // 一并继承过来,再逐条覆盖容易漏。项目没有 productFlavors,不需要 matchingFallbacks。
+        isMinifyEnabled = false
+        isShrinkResources = false
+        // BuildConfig.DEBUG 必须为 true,LOG 才会落盘文件日志 —— 本类型存在的首要理由
+        isDebuggable = true
+        applicationIdSuffix = ".diag"
+        versionNameSuffix = "-diag"
+        // 签名沿用 release keystore:同签名才能覆盖安装、也便于与正式版互装
+        signingConfigs.findByName("release")?.let { signingConfig = it }
+    }
     }
     splits {
         abi {

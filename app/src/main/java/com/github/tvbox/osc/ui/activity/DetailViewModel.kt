@@ -491,7 +491,11 @@ class DetailViewModel : ViewModel() {
 
     private val sourceSearchPrewarm = Runnable {
         // 详情已经拿到内容就不必再找替代源了:省掉这一整轮搜索
-        if (pageState.value is PageState.Ready) return@Runnable
+        if (pageState.value is PageState.Ready) {
+            LOG.i("echo-source-prewarm skip reason=already-ready")
+            return@Runnable
+        }
+        LOG.i("echo-source-prewarm fire")
         ensureSourceSearchRunning()
     }
 
@@ -755,6 +759,9 @@ class DetailViewModel : ViewModel() {
             .filter { it.isSearchable() && it.isQuickSearch() && (effectiveChecked == null || effectiveChecked.containsKey(it.key)) }
             .sortedBy { it.key != home.key }
             .take(fallbackPoolCap)
+        // 诊断包靠这行判断"预热到底有没有触发、候选池多大" —— 真机日志被 ROM 屏蔽时,
+        // 文件日志(仅 diag 包落盘)是唯一可观测点。前缀 echo-source- 已在 LOG 白名单里。
+        LOG.i("echo-source-search start title=" + title + " pool=" + sources.size + " token=$myToken")
         sourcesSearching.value = sources.isNotEmpty()
         relatedVideos.value = emptyList()
         if (sources.isEmpty()) return

@@ -17,6 +17,11 @@ on:
         type: boolean
         required: false
         default: false
+      diag_build:
+        description: '构建**诊断包**(applicationId 加 .diag 后缀、可调试、不混淆、落盘文件日志)。仅供自己真机排查,包名独立可与正式版共存;强制标 Pre-release 且不进 releases/latest'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -127,18 +132,30 @@ jobs:
           else
             echo "::notice::正式版:启动强制更新已启用"
           fi
-          ./gradlew assembleRelease --no-daemon --stacktrace \
-            -PappVersionName='${{ github.event.inputs.version }}' $EXTRA
+
+          if [ "${{ github.event.inputs.diag_build }}" = "true" ]; then
+            echo "::notice::诊断包:assembleDiag(可调试 + 不混淆 + 落盘文件日志 + 包名加 .diag)"
+            ./gradlew assembleDiag --no-daemon --stacktrace \
+              -PappVersionName='${{ github.event.inputs.version }}' \
+              -PforceUpdate=false
+          else
+            ./gradlew assembleRelease --no-daemon --stacktrace \
+              -PappVersionName='${{ github.event.inputs.version }}' $EXTRA
+          fi
 
       - name: Rename & verify APK
         id: apk
         run: |
           set -euo pipefail
-          SRC=app/build/outputs/apk/release/MediaBox_release.apk
+          if [ "${{ github.event.inputs.diag_build }}" = "true" ]; then
+            SRC=app/build/outputs/apk/diag/MediaBox_diag.apk
+            OUT="MediaBox_diag_${{ github.event.inputs.version }}_arm64-v8a.apk"
+          else
+            SRC=app/build/outputs/apk/release/MediaBox_release.apk
+            OUT="MediaBox_${{ github.event.inputs.version }}_arm64-v8a.apk"
+          fi
           test -f "$SRC" || { echo "::error::未找到 $SRC"; exit 1; }
 
-          VERSION='${{ github.event.inputs.version }}'
-          OUT="MediaBox_${VERSION}_arm64-v8a.apk"
           cp "$SRC" "$OUT"
 
           APKSIGNER="$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -name apksigner -type f | sort -r | head -n1)"
@@ -165,6 +182,13 @@ jobs:
         run: |
           set -euo pipefail
           VERSION='${{ github.event.inputs.version }}'
+          # ⚠️ 诊断包强制改用独立 tag(-diag)。action-gh-release 对同 tag 是**就地覆盖**:
+          # 诊断包若沿用正式版 tag,会把用户的正式版 APK 直接替换掉(不可逆)。
+          if [ "${{ github.event.inputs.diag_build }}" = "true" ]; then
+            VERSION="${VERSION}-diag"
+            echo "::notice::诊断包使用独立 tag:$VERSION(避免覆盖正式版 APK)"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           if gh release view "$VERSION" >/dev/null 2>&1; then
             echo "existed=true" >> "$GITHUB_OUTPUT"
             echo "::notice::$VERSION 已有 release：本次就地覆盖 APK"
@@ -175,8 +199,8 @@ jobs:
       - name: Upload APK to Release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ github.event.inputs.version }}
-          name: ${{ github.event.inputs.version }}
+          tag_name: ${{ steps.existing_release.outputs.version }}
+          name: ${{ steps.existing_release.outputs.version }}
           files: ${{ steps.apk.outputs.path }}
           # 非正式发布一律强制 Pre-release:否则调试包会进 releases/latest,
           # 所有正式用户会被强制更新到你的调试包上(灾难性,且不可逆)

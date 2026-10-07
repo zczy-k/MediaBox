@@ -22,7 +22,23 @@ public class LOG {
     private static final int MAX_LOG_LENGTH = 3000;
 
     private static final boolean FILE_LOG = BuildConfig.DEBUG;
-    private static final String[] FILE_LOG_PREFIXES = {"echo-preload", "echo-setDataSource", "echo-play-cache", "echo-kv", "echo-progress", "echo-exo", "echo-music", "echo-lyric", "echo-sub", "echo-danmu", "echo-p2", "echo-p3", "echo-p4", "echo-p5", "clearCache", "echo--jar", "echo-local-src", "echo-setTrack", "echo-autoRetry", "echo-player", "echo-switch", "echo-goPlayUrl", "echo-history", "echo-render", "echo-picture", "echo-anime4k", "echo--list", "echo--getList", "echo--parse", "echo--getSort", "echo--sort", "echo-proxy"};
+    /**
+     * 落盘白名单:只有前缀命中的日志才写文件。
+     *
+     * <p>存在的意义是**控制体积** —— 播放日志是每几百毫秒一条,全落盘一天能写几个 GB。
+     * 但代价是"加了新日志却发现文件里没有",很容易误判成"代码没执行",故新增条目时必须同步加前缀。
+     *
+     * <p>诊断包(diag)排查画质/换源/缓存时依赖以下前缀:
+     * <ul>
+     *   <li>{@code echo-quality} —— 画质优选决策(选哪条线、探测有没有成功)</li>
+     *   <li>{@code echo-detail} —— 详情加载与看门狗(卡在哪一步)</li>
+     *   <li>{@code SubtitleCacheJanitor} —— 字幕缓存 LRU 裁剪结果</li>
+     *   <li>{@code echo-source} / {@code source-prewarm} —— 聚合搜索预热与候选数</li>
+     * </ul>
+     */
+    private static final String[] FILE_LOG_PREFIXES = {"echo-preload", "echo-setDataSource", "echo-play-cache", "echo-kv", "echo-progress", "echo-exo", "echo-music", "echo-lyric", "echo-sub", "echo-danmu", "echo-p2", "echo-p3", "echo-p4", "echo-p5", "clearCache", "echo--jar", "echo-local-src", "echo-setTrack", "echo-autoRetry", "echo-player", "echo-switch", "echo-goPlayUrl", "echo-history", "echo-render", "echo-picture", "echo-anime4k", "echo--list", "echo--getList", "echo--parse", "echo--getSort", "echo--sort", "echo-proxy",
+            // ↓ 诊断包(v1.0.24 起):画质优选 / 详情看门狗 / 换源预热 / 缓存裁剪
+            "echo-quality", "echo-detail", "echo-source", "source-prewarm", "SubtitleCacheJanitor", "echo-cacheTrim"};
     private static final String FILE_LOG_NAME = "preload_debug.log";
     private static ExecutorService fileLogExecutor;
 
