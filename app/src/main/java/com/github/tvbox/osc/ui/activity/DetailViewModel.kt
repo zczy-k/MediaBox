@@ -495,6 +495,16 @@ class DetailViewModel : ViewModel() {
             LOG.i("echo-source-prewarm skip reason=already-ready")
             return@Runnable
         }
+        // ⚠️ 这里**可能什么都不打** —— 那不是"预热没生效",而是搜索早已被别的入口启动过了。
+        // 实测(诊断包 v1.0.24 真机):首页/搜索点片进来走 [applyTarget],其 :240 行
+        // `if (vodName.isNotEmpty()) startSourceSearch()` 是**无条件**的,聚合搜索在详情
+        // 请求后 2~3ms 就已发出(pool=120)。等本 Runnable 到点时 [ensureSourceSearchRunning]
+        // 的 `if (sourcesSearching.value) return` 守卫直接短路 —— 不打日志,也不重复搜索。
+        // 所以判断预热是否生效**不能看这个前缀**,要看 [startSourceSearch] 的
+        // `echo-source-search start` 时间戳相对 `echo-detail-watchdog-arm` 的差值。
+        //
+        // 本预热的真正价值在 [switchSource] 路径:它走 [loadDetail] 而**不**经 :240,
+        // 那条路径上聚合搜索只由本 Runnable(或看门狗兜底)启动 —— 缺了它就会白等 20~45 秒。
         LOG.i("echo-source-prewarm fire")
         ensureSourceSearchRunning()
     }

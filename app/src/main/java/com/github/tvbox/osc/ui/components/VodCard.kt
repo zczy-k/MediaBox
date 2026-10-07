@@ -137,6 +137,23 @@ private fun RatingBadge(video: Movie.Video, modifier: Modifier = Modifier) {
 private val RATING_SCORE_REGEX = Regex("评分[:：]?\\s*(\\d+(?:\\.\\d+)?)") // i18n: keep(源备注评分提取)
 private val RATING_SCORE_SUFFIX_REGEX = Regex("^(\\d+(?:\\.\\d+)?)\\s*分$") // i18n: keep(源备注评分提取)
 
+/**
+ * 从源备注(note)里提取**可安全展示**的短标签,通常是评分。
+ *
+ * <p>⚠️ **只返回评分数字,永不回显 note 原文** —— 这是产品要求的硬边界:
+ * "任何情况下用户都不能看到 App 有哪些源"。
+ *
+ * <p>为什么以前会泄露:老实现解析不出评分时直接 `return n`(把 note 全文当角标渲染),
+ * 而**站点普遍会把站名塞进 note 字段**。真机实测(诊断包 v1.0.24,js_douban 源)在
+ * 详情页"相关推荐"卡片角标上直接渲染出「蝴蝶影视」—— 三个渲染出口
+ * ({@link ratingBadgeText} 的角标、[posterMetaLine] 副文案、[HeroCarousel] 副标题)
+ * 全部中招。这是第 6 处泄露,也是最隐蔽的一处:不在源名列表里,而是藏在
+ * "备注"这个看起来无害的字段里。
+ *
+ * <p>代价:解析不出评分时角标不渲染(卡片少一个小标签)。
+ * 这个代价比泄露站名小得多 —— 角标可有可无,源清单不能外泄。
+ * 真正有信息量的备注(集数等)已由 [posterMetaLine] 的其它优先级分支覆盖。
+ */
 internal fun ratingBadgeText(note: String?): String? {
     val n = note?.trim().orEmpty()
     if (n.isEmpty()) return null
@@ -146,17 +163,22 @@ internal fun ratingBadgeText(note: String?): String? {
         val num = m.groupValues[1]
         return if (num.toFloatOrNull() == 0f) null else num
     }
-    return n
+    // 无评分可提取:**不渲染**,而不是回显原文(见 KDoc)
+    return null
 }
 
 private val META_SEPARATOR = " / "
 
 /**
  * 卡片图片底部那行副文案。优先级:年份 + 地区(有则用,组合成 "2025 / 日本")→
- * 备注/集数(如 "共30集,更新至12集")→ 分类名(如 "日韩剧")。都为空则返回空串,不渲染该行。
+ * 备注里的**评分**(如 "8.5",由 [ratingBadgeText] 提取)→ 分类名(如 "日韩剧")。
+ * 都为空则返回空串,不渲染该行。
  *
  * <p>之所以要做兜底:番号/漫画类源在列表接口里普遍不给 vod_area/vod_year,老逻辑
  * (仅 year+area)会整行消失,卡片下方看起来"信息不全"。
+ *
+ * <p>⚠️ 备注(note)只在**能提取出评分**时才参与展示,原文一律不显示 ——
+ * 站点会把站名塞进 note,回显原文等于泄露源身份,见 [ratingBadgeText] 的 KDoc。
  */
 internal fun posterMetaLine(video: Movie.Video): String {
     val primary = buildString {
