@@ -22,8 +22,16 @@ public class RefreshEvent {
     /** 收藏页栅格列数变更(设置页"收藏页布局"落 KV 后广播,收藏页据此立即换列数) */
     public static final int TYPE_COLLECT_LAYOUT_CHANGE = 23;
     /**
-     * 某条线路的**实测画质**已写入 {@code VideoQualityMemory}(由 ResolvedUrlQualityProbe 发)。
-     * 详情页据此重算「线路N · 1080P」标签 —— 该探测跑在独立作用域上,发事件是它唯一的通知途径。
+     * 某条线路的**实测画质**已写入 {@code VideoQualityMemory}。
+     * 详情页据此重算「线路N · 1080P」标签。
+     *
+     * <p>**两个发送方**（v1.0.45 起）:
+     * <ol>
+     *   <li>{@code ResolvedUrlQualityProbe} —— 爬虫型线路在"解析反正要跑"时顺手测;</li>
+     *   <li>{@code MusicSessionDelegate.maybeRememberMeasuredQuality} —— 内核实测(起播后
+     *       拿到真实宽高)。**这条以前漏发**,导致分辨率 2 秒就拿到了、界面却要等
+     *       PlaybackProgress 的 insertVod()(30 秒级节流)才刷新。</li>
+     * </ol>
      * 无 obj:关心的是"记忆变了"这个事实本身,具体值由订阅方自己去记忆里读。
      */
     public static final int TYPE_LINE_QUALITY_MEASURED = 24;

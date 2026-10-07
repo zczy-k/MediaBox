@@ -1611,9 +1611,11 @@ class DetailViewModel : ViewModel() {
         if (playing.playFlag != info.playFlag || playing.playIndex != info.playIndex) return
         insertVod()
         // 内核实测画质(MusicSessionDelegate.maybeRememberMeasuredQuality)是在**起播之后**
-        // 才拿到真实宽高并写进 VideoQualityMemory 的,而那条路径不发任何事件 ——
-        // 于是"线路N"下面本该补上的画质,在这次会话里永远不会出现(下次打开该片才有)。
-        // 这里刷新一次:播放头真推进过,说明内核已经拿到轨道信息,记忆里该有值了。
+        // 才拿到真实宽高并写进 VideoQualityMemory 的。
+        // v1.0.45 起那条路径会自己发 TYPE_LINE_QUALITY_MEASURED,标签在 ~2 秒内就刷新 ——
+        // 这里保留一次刷新只是**兜底**(例如事件在页面重建时错过),
+        // 它由 PlaybackProgress 每集发一次的 TYPE_PLAYBACK_STARTED 触发,节流在 30 秒级,
+        // 所以绝不能当成主路径:1.0.43 实测正是"分辨率 2 秒测到、标签 32 秒才更新"。
         publishLineQualityHeights()
     }
 

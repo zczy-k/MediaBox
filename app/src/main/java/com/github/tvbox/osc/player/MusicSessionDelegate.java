@@ -7,8 +7,10 @@ import androidx.annotation.Nullable;
 
 import com.github.tvbox.osc.api.ApiConfig;
 import com.github.tvbox.osc.bean.VodInfo;
+import com.github.tvbox.osc.event.RefreshEvent;
 import com.github.tvbox.osc.util.LOG;
 
+import org.greenrobot.eventbus.EventBus;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -297,6 +299,23 @@ final class MusicSessionDelegate {
                     video.width, video.height, video.bitrate,
                     VideoQualityPolicy.Confidence.MEASURED, vod.playFlag));
             st.qualityRecorded = true;
+            // ⚠️ 这条广播不能少 —— v1.0.45 真机实测的根因就出在这里。
+            //
+            // 事实(1.0.43 实测,同一部片两条线路):
+            //   20:32:43.323 起播线路1 → 20:32:45.760 record 1440x810   ← 2.4 秒就测到了
+            //   20:33:15.953 echo-line-heights 刷新                      ← 标签 32.8 秒后才更新
+            //   20:34:11.915 起播线路2 → 20:34:13.686 record 1080x606   ← 2 秒就测到了
+            //   20:34:43.859 echo-line-heights 刷新                      ← 标签 32 秒后才更新
+            // 即:**分辨率 2 秒就拿到了,界面却要等 ~30 秒**。
+            //
+            // 原因:详情页的线路标签只读 DetailViewModel.lineQualityHeights,
+            // 而那条 StateFlow 只在 publishLineQualityHeights() 时重算。
+            // 此前 `TYPE_LINE_QUALITY_MEASURED` **只有 ResolvedUrlQualityProbe(探测路径)在发**,
+            // 播放实测这条路一条事件都不发 ⇒ 只能等 PlaybackProgress 每集一次的
+            // insertVod() 顺带刷新一次(那个节流是 30 秒级)。
+            //
+            // 补上之后,标签会在内核拿到轨道信息的当下(~2 秒)刷新,而不是等半分钟。
+            EventBus.getDefault().post(new RefreshEvent(RefreshEvent.TYPE_LINE_QUALITY_MEASURED));
             return;
         }
     }
