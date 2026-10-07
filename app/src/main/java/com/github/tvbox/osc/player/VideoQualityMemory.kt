@@ -40,9 +40,16 @@ object VideoQualityMemory {
             if (all.optString(key) == value) return
             all.put(key, value)
             persist(all)
+            // ⚠️ 这条日志是「记忆为什么读不回来」的唯一可观测点,别删(前缀 echo-quality 已登记)。
+            // v1.0.30 真机实测:写入侧日志齐全(write-key / resolved 都打出来了),
+            // 读取侧 raw={} 恒为空,中间只有 persist 这一步 —— 它此前失败是静默的
+            // (catch 里只有 LOG.d,不落文件日志),所以完全没痕迹。
+            LOG.i("echo-quality record key=" + key + " value=" + value)
         } catch (t: Throwable) {
             // 记忆写不进去只影响下次优选,绝不能影响本次播放
-            LOG.d("VideoQualityMemory", "record failed: " + t.message)
+            // 这里也用 LOG.i:写盘失败是"标签永不出现"的唯一成因,必须能在文件日志里看到
+            LOG.i("echo-quality record FAILED key=" + siteKey + "|" + vodId + "|" + variant.flag +
+                " err=" + t.javaClass.simpleName + ":" + t.message)
         }
     }
 
@@ -197,6 +204,11 @@ object VideoQualityMemory {
             if (i < overflow) continue
             kept.put(alive[i], all.optString(alive[i]))
         }
-        KV.put(HawkConfig.VIDEO_QUALITY_MEMORY, kept.toString())
+        val payload = kept.toString()
+        val ok = KV.put(HawkConfig.VIDEO_QUALITY_MEMORY, payload)
+        // ⚠️ 同上:写入失败必须留痕。MMKV.put 返回 false(编码失败/实例未就绪)时
+        // 不会有任何异常抛出,而"标签不显示"正是它的唯一外部表现。
+        // 顺带把长度也打出来 —— 长度为 0 是个很有用的信号(整表被裁没了)。
+        LOG.i("echo-quality persist ok=" + ok + " n=" + kept.length() + " len=" + payload.length)
     }
 }
