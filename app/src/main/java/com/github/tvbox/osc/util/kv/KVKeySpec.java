@@ -69,6 +69,10 @@ public final class KVKeySpec implements KVDecoder.TypeRegistry {
         register(HawkConfig.LIVE_API_URL, "");
         register(HawkConfig.REMOTE_TVBOX, "");
         register(HawkConfig.VIDEO_QUALITY_MEMORY, "");
+        // 「已确认无资源」标记(见 util/AvailabilityMemory)。与画质记忆同为 String 载荷,
+        // 一并登记只为口径一致(登记表当前只用于 echo-kv 的类型日志与解码器构造,
+        // 漏登记不会导致读写失败 —— 但别据此推断"漏了也没事",改成非 String 载荷就会)。
+        register(HawkConfig.VIDEO_AVAILABILITY_MEMORY, "");
         register(HawkConfig.DANMU_API, "");
         // 画质参数(调色)预置名(PicturePreset 枚举名)
         register(HawkConfig.PICTURE_PRESET, "");
