@@ -23,6 +23,17 @@ android {
             }
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
+        /**
+         * 诊断包对应的库变体。**必须存在**,否则 app 的 `diagCompileClasspath`
+         * 解析不到本模块(报 "No matching variant of project ':player'")。
+         * 库模块不产出可安装包,故只关心变体名存在 + 配置与 release 一致。
+         */
+        create("diag") {
+            isMinifyEnabled = false
+            ndk {
+                abiFilters += setOf("arm64-v8a")
+            }
+        }
     }
 
     compileOptions {

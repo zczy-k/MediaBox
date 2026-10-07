@@ -21,6 +21,17 @@ android {
         compose = true
     }
 
+    buildTypes {
+        // This module only had AGP's implicit debug/release before. Now that the app
+        // declares a `diag` variant for on-device diagnosis, every library it depends on
+        // must expose a variant of the same name — otherwise :app:diagCompileClasspath
+        // fails with "No matching variant of project ':libs:backdrop'".
+        // Library modules produce no installable artifact, so the variant only has to exist.
+        getByName("debug") { isMinifyEnabled = false }
+        getByName("release") { isMinifyEnabled = false }
+        create("diag") { isMinifyEnabled = false }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21

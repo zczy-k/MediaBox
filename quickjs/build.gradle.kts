@@ -20,6 +20,10 @@ android {
         release {
             isMinifyEnabled = false
         }
+        // 诊断包对应的库变体:必须存在,否则 app 的 diagCompileClasspath 解析不到本模块
+        create("diag") {
+            isMinifyEnabled = false
+        }
     }
 
     compileOptions {
