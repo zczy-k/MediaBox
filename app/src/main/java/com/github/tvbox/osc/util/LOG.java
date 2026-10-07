@@ -28,10 +28,19 @@ public class LOG {
      * <p>存在的意义是**控制体积** —— 播放日志是每几百毫秒一条,全落盘一天能写几个 GB。
      * 但代价是"加了新日志却发现文件里没有",很容易误判成"代码没执行",故新增条目时必须同步加前缀。
      *
+     * <p>🔴 **踩过两次的坑,新增诊断日志前务必先读这段**:忘记加前缀 → 日志被过滤 →
+     * 文件里查不到 → 误判"代码没执行" → 白等一轮构建再去猜别的方向。
+     * 第一次是 {@code echo-line-heights}(以为代码没跑,其实被过滤了整整两轮),
+     * 第二次是更早的画质日志。
+     *
+     * <p>**自检口径**:新加的诊断日志如果真机里查不到,第一件事是核对前缀表,
+     * 而不是怀疑代码没执行 —— 后者要重装+重跑一轮,成本高得多。
+     *
      * <p>诊断包(diag)排查画质/换源/缓存时依赖以下前缀:
      * <ul>
-     *   <li>{@code echo-quality} —— 画质优选决策(选哪条线、探测有没有成功)</li>
-     *   <li>{@code echo-line-probe} —— 「线路N · 1080P」标签的实测画质探测(诊断为什么标签不显示)</li>
+     *   <li>{@code echo-quality} —— 画质优选决策(选哪条线、探测有没有成功、写入用哪个键)</li>
+     *   <li>{@code echo-line-probe} —— 线路探测的目标筛选(哪些线路值得探)</li>
+     *   <li>{@code echo-line-heights} —— 线路画质读取侧(记忆里到底读到了什么)</li>
      *   <li>{@code echo-unavailable} —— 无资源标记的写入与粗筛结果(诊断"海报为什么不见了")</li>
      *   <li>{@code echo-detail} —— 详情加载与看门狗(卡在哪一步)</li>
      *   <li>{@code SubtitleCacheJanitor} —— 字幕缓存 LRU 裁剪结果</li>
@@ -42,7 +51,9 @@ public class LOG {
             // ↓ 诊断包(v1.0.24 起):画质优选 / 详情看门狗 / 换源预热 / 缓存裁剪
             "echo-quality", "echo-detail", "echo-source", "source-prewarm", "SubtitleCacheJanitor", "echo-cacheTrim",
             // ↓ v1.0.26:线路实测画质探测(诊断「线路N」后面一直不显示分辨率)
-            "echo-line-probe", "echo-unavailable"};
+            // ↓ v1.0.30:echo-line-heights 是**读取侧**,与写入侧的 echo-quality write-key 配对,
+            //   两侧同看才能判断"记忆写进去了却读不回来"这类键不匹配问题。
+            "echo-line-probe", "echo-line-heights", "echo-unavailable"};
     private static final String FILE_LOG_NAME = "preload_debug.log";
     private static ExecutorService fileLogExecutor;
 
