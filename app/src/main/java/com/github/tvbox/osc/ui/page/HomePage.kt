@@ -98,6 +98,7 @@ import com.github.tvbox.osc.ui.components.rememberVodCardMenuState
 import com.github.tvbox.osc.ui.theme.cardContainer
 import com.github.tvbox.osc.util.HomeSettings
 import com.github.tvbox.osc.util.SiteSearch
+import com.github.tvbox.osc.util.SourceIdentityMask
 import com.kyant.capsule.ContinuousCapsule
 import com.github.tvbox.osc.ui.page.jumpToSearch
 import kotlin.math.roundToInt
@@ -146,6 +147,32 @@ fun HomePage(vm: HomeViewModel, contentPadding: PaddingValues = PaddingValues(0.
     var showSourceSheet by remember { mutableStateOf(false) }
     var showSearchSettings by remember { mutableStateOf(false) }
 
+    // ── 源身份匿名 ──────────────────────────────────────────────────────────
+    // 横幅与换源面板共用**同一份编号**:用户看到的是「源 3」,而不是
+    // 「🦋 蝴蝶全量独享专线 · 严禁外泄多人共享(违者封禁)」这种带广告文案的真实站名。
+    //
+    // ⚠️ 下标取自**完整源列表** `sources`,不是过滤后的 `filtered`。
+    // 若按过滤后的下标编号,同一个源在"输入搜索词前/后"会显示成两个不同数字,
+    // 横幅上的编号也会与面板里那一行对不上。
+    //
+    // ⚠️ `stringResource` 是 @Composable,必须**先在 Composable 作用域求值**再传进
+    // `remember` —— 直接写 `remember { stringResource(...) }` 编译不过
+    // ("@Composable invocations can only happen from the context of a @Composable
+    // function",v1.0.24 构建 37492586746 踩过)。
+    val anonPrefix = stringResource(R.string.common_source_anonymous_prefix)
+    val fallbackSourceLabel = stringResource(R.string.home_subscription_source)
+    val anonymousLabelOf = remember(sources, anonPrefix) {
+        sources.mapIndexed { index, bean ->
+            bean.key to SourceIdentityMask.anonymousLabel(index, anonPrefix)
+        }.toMap()
+    }
+    // ⚠️ 不能直接写 `anonymousLabelOf[currentSource?.key]`:Map<String,String>.get 只收
+    // 非空 String,传 String? 编译不过。走 let 让 key 在 lambda 内完成非空收窄。
+    val currentSourceLabel = currentSource?.key
+        ?.let { anonymousLabelOf[it] }
+        ?.ifEmpty { fallbackSourceLabel }
+        ?: fallbackSourceLabel
+
     AppTopBarScaffold(
         collapseEnabled = false,
         topBarStartInset = navStart,
@@ -185,7 +212,9 @@ fun HomePage(vm: HomeViewModel, contentPadding: PaddingValues = PaddingValues(0.
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = currentSource?.name?.takeIf { it.isNotEmpty() } ?: stringResource(R.string.home_subscription_source),
+                        // ⚠️ 这里原来直接渲染 `currentSource?.name`,把真实站名(常带广告文案)
+                        // 长期挂在首页顶部。改为匿名编号,与下方换源面板同一口径。
+                        text = currentSourceLabel,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
@@ -450,7 +479,10 @@ fun HomePage(vm: HomeViewModel, contentPadding: PaddingValues = PaddingValues(0.
                         color = MaterialTheme.colorScheme.surfaceBright,
                     ) {
                         SettingsOptionRow(
-                            title = bean.name ?: bean.key,
+                            // ⚠️ 原为 `bean.name ?: bean.key`,把全部源的真实站名摊给用户。
+                            // 与横幅统一改为匿名编号(同一份 anonymousLabelOf)。
+                            // 兜底不再回退到 `bean.key` —— 那本身就是站点的技术标识,同样算泄露。
+                            title = anonymousLabelOf[bean.key] ?: stringResource(R.string.common_unnamed),
                             selected = selected,
                             onClick = {
                                 if (!selected) {
