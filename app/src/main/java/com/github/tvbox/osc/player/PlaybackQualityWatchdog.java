@@ -148,14 +148,35 @@ final class PlaybackQualityWatchdog {
         lastSampleAt = now;
 
         boolean bad = advanced < (long) (elapsed * MIN_PROGRESS_RATIO);
+        // ⚠️ 先存旧值:下面要判断"是否从 0 变正 / 从正变 0"这类边界翻转,
+        // 自增之后就再也分不出"翻转"与"持续"了。
+        int streakBefore = badStreak;
         if (bad) {
             badStreak++;
         } else {
             badStreak = 0;
         }
 
-        LOG.i("echo-quality: advanced=" + advanced + " elapsed=" + elapsed
-                + " badStreak=" + badStreak + " state=" + state);
+        // ⚠️ 诊断日志只在**判定结果变化**时打印,不再每次采样都打。
+        //
+        // 为什么:采样间隔 5 秒,一次播放 2 小时 = 1440 条。此前无条件打印,
+        // 把真正的信号("too slow, trigger switch" / 换源结论)淹没在噪音里 ——
+        // 实测一天累积 1164 条。前缀 echo-quality 已登记进 FILE_LOG_PREFIXES,
+        // 落的是文件日志,占空间、拖慢排查;真机日志里要看这条只能靠翻。
+        //
+        // 什么样的变化值得记:
+        //   1. badStreak 从 0 变正(开始劣化)/ 从正变 0(恢复) —— 边界翻转
+        //   2. 累计到触发阈值(即将换源)
+        // 其余"又sample 了一次、进度正常"一律不打。
+        boolean flippedToBad = bad && streakBefore == 0;
+        boolean flippedToGood = !bad && streakBefore > 0;
+        boolean nearTrigger = badStreak == BAD_STREAK_TO_SWITCH;
+        if (flippedToBad || flippedToGood || nearTrigger) {
+            LOG.i("echo-quality: advanced=" + advanced + " elapsed=" + elapsed
+                    + " badStreak=" + badStreak + " state=" + state
+                    + " mark=" + (flippedToBad ? "degrade-start"
+                    : flippedToGood ? "recovered" : "will-switch"));
+        }
 
         if (badStreak >= BAD_STREAK_TO_SWITCH && now - lastTriggeredAt >= COOLDOWN_MS) {
             lastTriggeredAt = now;

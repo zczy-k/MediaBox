@@ -1,5 +1,6 @@
 package com.github.tvbox.osc.util
 
+import androidx.compose.runtime.mutableStateOf
 import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.player.VideoQualityMemory
 
@@ -62,14 +63,23 @@ object AvailabilityMemory {
      *
      * <p>所以正确口径是:**缓存 key 必须同时挂 `results` 和本版本号**。
      * 标记一变版本号就变,`remember` 必然失效,不存在"漏看新标记"的可能。
+     *
+     * <p>⚠️ **它必须是 Compose 的 [mutableStateOf],不能是普通 Int 字段**。
+     * 普通字段只是"值变了",Compose 观察不到 —— 于是"标记变了但 results 没变"时
+     * 根本不会触发重组,`remember` 自然也不会重算,挂进 key 等于白挂。
+     * 这正是 v1.0.33 那一版埋下的隐患:看着对了,实际仍依赖广播恰好改了 results。
+     * 改成 state 之后,读它的 composable 会在版本号变化时自动重组。
+     *
+     * <p>写入只发生在 [markUnavailable] 里,而调用方是 `viewModelScope.launch`
+     * (Main 派发器),所以不存在跨线程写 Compose 状态的问题。
      */
-    @Volatile
-    @JvmStatic
-    var marksRevision: Int = 0
-        private set
+    private val marksRevisionState = mutableStateOf(0)
+
+    /** 见 [marksRevisionState]。读它会建立 Compose 订阅关系。 */
+    val marksRevision: Int get() = marksRevisionState.value
 
     private fun bumpRevision() {
-        marksRevision += 1
+        marksRevisionState.value = marksRevisionState.value + 1
     }
 
     /**
