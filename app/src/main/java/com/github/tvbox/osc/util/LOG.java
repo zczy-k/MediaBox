@@ -73,7 +73,17 @@ public class LOG {
             // 语义上也无变化 —— FILE_LOG=false 时 fileLog() 第一行就 return,
             // 本数组根本不会被读。
             : new String[0];
-    private static final String FILE_LOG_NAME = "preload_debug.log";
+    /**
+     * 落盘文件名。
+     *
+     * <p>⚠️ 与 [FILE_LOG_PREFIXES] 同理,必须随 FILE_LOG 折叠 —— 否则正式包里会留下
+     * 字面量 `preload_debug.log`(v1.0.46 用 dexdump 逐 dex 复验时抓到,是当时**唯一**
+     * 残留的调试痕迹:其余 echo-* 埋点串在正式包里全部为 0 命中)。
+     *
+     * <p>FILE_LOG=false 时 fileLog() 第一行就 return,本常量根本不会被读,
+     * 折成空串语义不变;而 R8 常量折叠后连字面量一起消失。
+     */
+    private static final String FILE_LOG_NAME = FILE_LOG ? "preload_debug.log" : "";
     private static ExecutorService fileLogExecutor;
 
     private static void fileLog(String level, String msg) {
