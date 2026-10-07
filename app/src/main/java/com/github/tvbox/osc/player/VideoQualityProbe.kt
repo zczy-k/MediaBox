@@ -40,12 +40,25 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
             val request = buildRequest(url, headers) ?: return@withContext null
             try {
                 client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) return@use null
-                    val stream = response.body?.byteStream() ?: return@use null
-                    val buffer = readCapped(stream) ?: return@use null
+                    if (!response.isSuccessful) {
+                        LOG.i("echo-quality probe-failed http=" + response.code)
+                        return@use null
+                    }
+                    val stream = response.body?.byteStream()
+                    if (stream == null) {
+                        LOG.i("echo-quality probe-failed reason=null-body")
+                        return@use null
+                    }
+                    val buffer = readCapped(stream)
+                    if (buffer == null) {
+                        LOG.i("echo-quality probe-failed reason=empty-body")
+                        return@use null
+                    }
                     // 1) MP4:文件里写死的尺寸,唯一完全可信的来源
                     val mp4 = Mp4BoxReader.readVideoSize(buffer, buffer.size)
                     if (mp4 != null) {
+                        LOG.i("echo-quality probe-ok src=mp4 size=" + mp4.first + "x" + mp4.second +
+                            " bytes=" + buffer.size)
                         return@use VideoQualityPolicy.Variant(
                             width = mp4.first,
                             height = mp4.second,
@@ -55,10 +68,29 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
                     }
                     // 2) m3u8 master:站点声明的清晰度,比 flag 名可信但不是文件真值
                     val text = String(buffer, 0, buffer.size, Charsets.UTF_8)
-                    VideoQualityPolicy.parseHlsMaster(text)
+                    val hls = VideoQualityPolicy.parseHlsMaster(text)
+                    // ⚠️ 这条是"解析器跑了但没认出来"的唯一可观测点:
+                    // probed=0 时,它能把"请求就失败了"与"请求成功但 m3u8 没解析出分辨率"分开。
+                    LOG.i("echo-quality probe-" + (if (hls == null) "no-size" else "ok") +
+                        " src=hls bytes=" + buffer.size +
+                        " head=" + text.take(40).replace('\n', ' '))
+                    hls
                 }
             } catch (t: Throwable) {
-                LOG.d("VideoQualityProbe", "probe failed: " + t.message)
+                // ⚠️ 必须用 echo-quality 前缀 —— 它已登记进 LOG.FILE_LOG_PREFIXES。
+                //
+                // 原来这里是 LOG.d("VideoQualityProbe", "probe failed: ...")。坑在于:
+                // LOG.d(tag, msg) 内部走 fileLog("D", msg),而落盘白名单是
+                // `msg.startsWith(prefix)` —— msg 是 "probe failed: ...",**不以任何前缀开头**,
+                // 于是被静默丢弃。真机文件日志里永远看不到探测为什么失败。
+                //
+                // 实测代价(v1.0.38 现场数据):echo-quality decide 的 probed 字段
+                // **28/28 全是 0**,即探测一条都没测出来,而日志里查不到任何原因 ——
+                // 只能靠猜。这条日志就是为了终结这种"猜"。
+                LOG.i(
+                    "echo-quality probe-failed m3u8=" + url.contains(".m3u8", ignoreCase = true) +
+                        " ex=" + t.javaClass.simpleName + " msg=" + t.message
+                )
                 null
             }
         }
@@ -88,6 +120,14 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
             if (n <= 0) break
             filled += n
         }
-        return if (filled > 0) buffer else null
+        if (filled <= 0) return null
+        // ⚠️ 必须裁到**真实读到的长度**再返回。
+        //
+        // 原来直接 `return buffer`:返回的是整个 budgetBytes(256KB)数组,而两个调用方
+        // 用的都是 `buffer.size`(= 256KB),于是解析器拿到的是"真实数据 + 一大片未填充的 0 字节":
+        //   · MP4 路径尤其致命 —— 它会顺着 0 字节继续往后当 box 读,尺寸基本解析不出来;
+        //   · m3u8 路径同样会往文本尾部灌进 NUL,行解析可能被带偏。
+        // 而 m3u8 master 通常只有几 KB,所以这个坑几乎每次探测都会命中。
+        return if (filled == budgetBytes) buffer else buffer.copyOf(filled)
     }
 }
