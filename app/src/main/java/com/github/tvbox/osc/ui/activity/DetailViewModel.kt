@@ -163,6 +163,36 @@ class DetailViewModel : ViewModel() {
     private var detailTimeoutScheduled = false
 
     /**
+     * "当前源已确认取不到内容" —— **换源接管的触发信号,与 [pageState] 解耦**。
+     *
+     * <p>## 为什么必须把它从 [pageState] 里拆出来
+     *
+     * <p>v1.0.33 踩的正是这个坑,而且症状极具欺骗性(用户报"每个影片都没法播、
+     * 卡在转圈圈"):修「一闪而过的暂无片源」时给 `enterEmpty` 加了守卫
+     * `if (sourcesSearching.value) return`,让页面在搜索在途时停在 Loading。
+     * 而 [shouldAutoTakeOver] 的判据是
+     * `fallbackAutoSwitch || pageState.value is PageState.Empty`
+     * —— **空态本身就是换源链的触发信号**。
+     *
+     * <p>于是两者成了死对头:守卫坚持"不到终态不进 Empty",换源判据要求
+     * "必须先在 Empty 才让换源"。搜索回包时 [onSearchResultEvent] 里
+     * `if (shouldAutoTakeOver()) loadNextFallbackCandidate()` 永远为假
+     * ⇒ 候选站一个都不试⇒ 页面卡在 Loading 直到 8秒搜索超时
+     * ⇒ 被 settleDeferredEmpty 收成空态 ⇒ **一部都播不了**。
+     *
+     * <p>真机证据(`echo-detail sync`,即详情成功到达):
+     * 修复前 12:19~12:38 连续不断(`HN线路`/`线路一(点换线路)`/`FF线路` 都成功过);
+     * 修复后 12:47 之后**一条都没有**。
+     *
+     * <p>## 为什么不能简单地把守卫放宽
+     *
+     * <p>放宽就等于把闪现问题带回来。空态同时承担了两个职责:
+     * 给用户看的 UI 态、以及"换源链该启动了"的内部信号。
+     * UI 态可以延后,内部信号不能延后 —— 所以必须拆成两个字段。
+     */
+    private var currentSourceConfirmedEmpty = false
+
+    /**
      * 详情加载看门狗的当前代次;0 = 未布防。
      *
      * <p>与 [detailTimeoutScheduled] 那套"候选站 4s 超时"分开:那个只在换源链里布防,
@@ -271,6 +301,9 @@ class DetailViewModel : ViewModel() {
         pageState.value = PageState.Loading
         fallbackEpisode = null
         fallbackEpisodeIndex = -1
+        // ⚠️ 必须随片清空:这是"当前源没内容"的判定,带着上一部的结论进下一部
+        // 会让新片一打开就被判成"该换源",进而触发一次不必要的接管。
+        currentSourceConfirmedEmpty = false
         usedSourceKeys.clear()
         resetEngineState(keepChips = false)
     }
@@ -572,6 +605,8 @@ class DetailViewModel : ViewModel() {
      * 只是文案点明是超时,而不是让用户以为"这部没有片源"。
      */
     private fun onDetailLoadTimedOut() {
+        // 同上:看门狗超时 = 当前源这次没给出内容,置位让换源接管能继续往下走。
+        currentSourceConfirmedEmpty = true
         if (fallbackActive) {
             fallbackLoadingCandidate = false
             loadNextFallbackCandidate()
@@ -596,6 +631,8 @@ class DetailViewModel : ViewModel() {
     }
 
     private fun onDetailUnavailable() {
+        // 同 handleEmptyDetail:当前源不可播/不在订阅,也是"当前源没内容"的确认信号。
+        currentSourceConfirmedEmpty = true
         if (fallbackActive) {
             fallbackLoadingCandidate = false
             loadNextFallbackCandidate()
@@ -638,6 +675,10 @@ class DetailViewModel : ViewModel() {
                 fallbackLoadingCandidate = false
                 cancelDetailTimeout()
             }
+            // ⚠️ 必须清标志:当前源这次**取到了**内容。
+            // 不清的话,后续任何一次聚合搜索回包都会因currentSourceConfirmedEmpty
+            // 为真而触发换源接管 —— 用户明明已经看到详情了,却被后台悄悄切到别的站去。
+            currentSourceConfirmedEmpty = false
             // 自动换源全程静默(用户要的是"无感播放"):不再提示"站点切换至X" ——
             // 那既暴露了当前用的是哪个站,对用户也是纯噪音。真失败时另有终局提示兜底。
             if (isSourceErrorMsg(absXml.msg)) {
@@ -742,6 +783,11 @@ class DetailViewModel : ViewModel() {
 
     private fun handleEmptyDetail(data: AbsXml?) {
         val msg = data?.msg.orEmpty()
+        // ⚠️ 这里必须置位:当前源已确认取不到内容。换源接管的触发信号现在由
+        // currentSourceConfirmedEmpty 承担,不再依赖 pageState 是否为 Empty
+        // (原因见该字段 KDoc —— v1.0.33 就是因为守卫让页面停在 Loading、
+        // 而 shouldAutoTakeOver 又要求 Empty 才接管,导致换源链整个断掉)。
+        currentSourceConfirmedEmpty = true
         // 空详情一律留页(空态带换源列表),只有源侧真的报错才提示并退出 —— 源抖动不该表现为"闪退"
         if (isSourceErrorMsg(msg)) {
             if (rollbackManualSwitch(msg)) return
@@ -904,14 +950,21 @@ class DetailViewModel : ViewModel() {
      * 把刚置上的 `fallbackAutoSwitch` 清掉。一旦清掉就**永久失去接管能力** ——
      * 外部表现正是"底部候选列表一直在刷新、却永远不自动切过去"。
      *
-     * <p>补一条不依赖该标记的判据:**详情页停在空态 = 当前源取不到内容**,这时有候选就该换。
-     * 这条判据由 `pageState` 直接决定,不受任何标记清场影响。
+     * <p>补一条不依赖该标记的判据:**当前源已确认取不到内容**时,有候选就该换。
+     * 这条判据由 [currentSourceConfirmedEmpty] 直接决定,不受任何标记清场影响。
+     *
+     * <p>⚠️ **它原来读的是 `pageState.value is PageState.Empty`,而那正是 v1.0.33 的回归根因**:
+     * 空态既是给用户看的 UI 态,又是换源链的触发信号,一个字段扛两个职责。
+     * v1.0.33 为了消灭"一闪而过的暂无片源"给 `enterEmpty` 加了守卫,页面于是永远停在
+     * Loading、永远进不了 Empty ⇒ 这条判据永远为假 ⇒ 候选站一个都不试 ⇒
+     * **每部片子都卡在转圈圈**(用户报"无法进入详情页、视频无法播放")。
+     * 改成读独立的 [currentSourceConfirmedEmpty] 后,UI 态可以延后、内部信号照旧。
      *
      * <p>不会造成反复切换:`candidateKeys` 在 `resetEngineState(keepChips = true)` 里**不清**,
      * 已见过的候选进不了 `fresh`,`onSearchResultEvent` 不会为同一批候选重复触发。
      */
     private fun shouldAutoTakeOver(): Boolean =
-        !fallbackLoadingCandidate && (fallbackAutoSwitch || pageState.value is PageState.Empty)
+        !fallbackLoadingCandidate && (fallbackAutoSwitch || currentSourceConfirmedEmpty)
 
     private fun publishSourceChips() {
         val candidates = synchronized(fallbackCandidates) { fallbackCandidates.toList() }

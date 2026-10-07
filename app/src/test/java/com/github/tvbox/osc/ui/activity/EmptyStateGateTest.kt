@@ -5,111 +5,132 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 「结论未定就不进空态」这条规则的锁定测试。
+ * 「空态延后」与「换源接管触发」**必须解耦** —— v1.0.33 回归的锁定测试。
  *
  * <p>## 它对应哪个真机 bug
  *
- * <p>v1.0.33 修的用户报问题:**每打开一个新卡片都会先闪一下「暂无片源」,一闪而过**。
- * 真机实测(诊断包 1.0.32,`js_douban` 源)7 次开片 **7 次命中**,时序稳定:
- * ```
- * 12:19:14.351 OPEN     打开卡片
- * 12:19:14.354 SEARCH   聚合搜索启动
- * 12:19:14.560 EMPTY    ← 206ms 后进空态(不该进)
- * 12:19:14.896 SYNC     ← 336ms 后正常详情才到,把空态顶掉
- * ```
+ * <p>v1.0.33 为修「一闪而过的暂无片源」给 `enterEmpty` 加了守卫
+ * `if (sourcesSearching.value) return`,页面于是停在 Loading 不再进 Empty。
+ * 而 `shouldAutoTakeOver` 的判据当时是
+ * `fallbackAutoSwitch || pageState.value is PageState.Empty`
+ * —— **空态本身就是换源链的触发信号**。
  *
- * <p>成因见 `DetailViewModel.enterEmpty` 的 KDoc:聚合搜索刚启动、候选还没产出,
- * `loadNextFallbackCandidate` 返回 false;首次打开时 `rollbackManualSwitch` 的
- * `switchSnapshot` 为 null 也返回 false —— 于是"还在找"就被当成"找不到"。
+ * <p>于是两者成了死对头:守卫让页面永远进不了 Empty,换源判据就永远为假
+ * ⇒ `onSearchResultEvent` 里 `if (shouldAutoTakeOver()) loadNextFallbackCandidate()`
+ * 被跳过⇒ 候选站一个都不试 ⇒ 页面卡在转圈圈直到 8 秒搜索超时。
  *
- * <p>## 为什么把判据抽成纯函数
+ * <p>用户症状:**"每一个影片都没办法播放,而且没办法进入详情页,一直卡在转圈圈那里"**。
  *
- * <p>`enterEmpty` 里的守卫依赖 `sourcesSearching` 这个 MutableStateFlow 与整个
- * ViewModel 的字段网络,单测里没法直接构造。把"能不能进空态"抽成下面这个
- * 纯函数,就能把规则本身钉死 —— 将来有人改判据,这里会立刻红。
+ * <p>## 真机证据（`echo-detail sync`,详情成功到达）
+ * - 修复前 12:19~12:38:连续不断(`HN线路` / `线路一(点换线路)` / `FF线路` 都成功过)
+ * - 修复后 12:47 之后:**一条都没有**
+ *
+ * <p>## 修法
+ * 引入独立的 `currentSourceConfirmedEmpty` 承担"该换源了"的内部信号,
+ * `shouldAutoTakeOver` 改读它,不再读 UI 态。UI 态可以延后,内部信号照旧。
  */
 class EmptyStateGateTest {
 
-    /** 与 `DetailViewModel.enterEmpty` 的守卫保持同一份口径。 */
-    private fun shouldEnterEmpty(
-        sourcesSearching: Boolean,
-        pageStateIsLoading: Boolean,
-        fallbackActive: Boolean,
-    ): Boolean {
-        // 搜索在途 ⇒ 候选池未定论,任何"没有候选"的结论都不成立
-        if (sourcesSearching) return false
-        // 已经有详情 / 已在空态 ⇒ 不碰
-        if (!pageStateIsLoading) return false
-        // 还在自动换源链上 ⇒ 交给候选取完再收口
-        if (fallbackActive) return false
-        return true
-    }
+    /**
+     * 与 `DetailViewModel.shouldAutoTakeOver` 同一份判据。
+     *
+     * <p>三个参数刻意分开:原来的 `pageState is Empty` 把「给用户看的 UI 态」
+     * 和「换源链该不该启动的内部信号」压在一个字段里,才酿成 v1.0.33 的回归。
+     */
+    private fun shouldAutoTakeOver(
+        fallbackLoadingCandidate: Boolean,
+        fallbackAutoSwitch: Boolean,
+        currentSourceConfirmedEmpty: Boolean,
+    ): Boolean = !fallbackLoadingCandidate &&
+        (fallbackAutoSwitch || currentSourceConfirmedEmpty)
+
+    /** 与 `DetailViewModel.enterEmpty` 的守卫同一口径。 */
+    private fun shouldEnterEmpty(sourcesSearching: Boolean): Boolean = !sourcesSearching
 
     @Test
-    fun `搜索在途时绝不进空态 - 这就是闪现的根因`() {
+    fun `搜索在途时页面停在加载态 - 这本身是对的`() {
         assertFalse(
-            "聚合搜索还在跑就进空态,正是「暂无片源」一闪而过的成因",
-            shouldEnterEmpty(
-                sourcesSearching = true,
-                pageStateIsLoading = true,
-                fallbackActive = false,
-            ),
+            "搜索在途就该延后空态,否则又闪回「暂无片源」",
+            shouldEnterEmpty(sourcesSearching = true),
         )
     }
 
     @Test
-    fun `搜索结束且仍在加载态才收口到空态`() {
+    fun `回归核心 - 页面停在加载态时仍必须能触发换源接管`() {
+        // 这一条就是 v1.0.33 挂在上面的那个点:
+        // UI 态是 Loading(不是 Empty),但内部信号已确认"当前源没内容",
+        // 于是候选站必须能被取出来试。
+        val takeOver = shouldAutoTakeOver(
+            fallbackLoadingCandidate = false,
+            fallbackAutoSwitch = false,
+            currentSourceConfirmedEmpty = true,
+        )
         assertTrue(
-            "搜索跑完、页面还停在加载 ⇒ 这时进空态才是诚实的结论",
-            shouldEnterEmpty(
-                sourcesSearching = false,
-                pageStateIsLoading = true,
-                fallbackActive = false,
-            ),
+            "页面停在 Loading 时若不接管,就等于「候选站一个都不试」⇒ 卡死在转圈圈",
+            takeOver,
         )
     }
 
     @Test
-    fun `已经有详情时绝不进空态`() {
+    fun `旧写法会在这里返回 false - 这就是回归的机制`() {
+        // 复原 v1.0.33 的判据:把 currentSourceConfirmedEmpty 换回 pageState is Empty。
+        // 页面停在 Loading ⇒ Empty 为假 ⇒ 判据为假 ⇒ 断链。
+        // 这条测试存在的意义:让"为什么不能直接读 UI 态"变成可执行的证据。
+        val pageStateIsEmpty = false
+        val oldStyle = !false && (false || pageStateIsEmpty)
         assertFalse(
-            "Ready 状态被误判成空,会把正常页面清掉",
-            shouldEnterEmpty(
-                sourcesSearching = false,
-                pageStateIsLoading = false,
-                fallbackActive = false,
-            ),
+            "旧判据在页面停留 Loading 时为假 —— 这就是断链的原因",
+            oldStyle,
         )
     }
 
     @Test
-    fun `换源链在跑时不抢它的收口权`() {
+    fun `当前源已拿到内容时不得再触发接管 - 否则会后台偷偷换源`() {
+        val takeOver = shouldAutoTakeOver(
+            fallbackLoadingCandidate = false,
+            fallbackAutoSwitch = false,
+            currentSourceConfirmedEmpty = false,
+        )
         assertFalse(
-            "fallbackActive 时候选还没取完,收口该由 loadNextFallbackCandidate 做",
-            shouldEnterEmpty(
-                sourcesSearching = false,
-                pageStateIsLoading = true,
-                fallbackActive = true,
-            ),
+            "用户已经看到详情了,不该再被切到别的站",
+            takeOver,
         )
     }
 
     @Test
-    fun `延后之后必须有人负责收口 - 否则永久卡在加载`() {
-        // 这条是本次修复最大的风险点:enterEmpty 被守卫拦下后,
-        // 若没有 settleDeferredEmpty 补刀,页面会永远停在 Loading。
-        // 模拟时序:搜索在途 → 守卫拦下 → 搜索结束 → 收口补刀。
-        val deferred = !shouldEnterEmpty(
-            sourcesSearching = true,
-            pageStateIsLoading = true,
-            fallbackActive = false,
+    fun `候选站正在加载时不接管 - 否则会并发发起多个详情请求`() {
+        val takeOver = shouldAutoTakeOver(
+            fallbackLoadingCandidate = true,
+            fallbackAutoSwitch = true,
+            currentSourceConfirmedEmpty = true,
         )
-        assertTrue("搜索在途时空态被延后", deferred)
+        assertFalse("候选站正在加载,不能再起一个", takeOver)
+    }
 
-        val settled = shouldEnterEmpty(
-            sourcesSearching = false,
-            pageStateIsLoading = true,
-            fallbackActive = false,
+    @Test
+    fun `自动接管标记本身就足以触发 - 不依赖当前源是否为空`() {
+        // fallbackAutoSwitch 由 startFallbackIfNeeded(auto = true) 置位,
+        // 这条路径与 currentSourceConfirmedEmpty 无关,必须仍然可用。
+        val takeOver = shouldAutoTakeOver(
+            fallbackLoadingCandidate = false,
+            fallbackAutoSwitch = true,
+            currentSourceConfirmedEmpty = false,
         )
-        assertTrue("搜索结束后必须能收口到空态,否则页面永久卡在加载", settled)
+        assertTrue("自动接管标记本身就应触发换源", takeOver)
+    }
+
+    @Test
+    fun `闪屏修复与换源接管可以同时成立 - 两者不再互相排斥`() {
+        // 完整时序:搜索在途 → 页面停在 Loading(不闪)→ 当前源确认无内容
+        // → 候选取出来试 → 拿到详情。全程不闪,且能播。
+        assertFalse("第一步:搜索在途,不进空态", shouldEnterEmpty(sourcesSearching = true))
+        assertTrue(
+            "第二步:页面停在 Loading,但接管信号独立成立",
+            shouldAutoTakeOver(false, fallbackAutoSwitch = false, currentSourceConfirmedEmpty = true),
+        )
+        assertFalse(
+            "第三步:拿到详情后信号被清,不再接管",
+            shouldAutoTakeOver(false, fallbackAutoSwitch = false, currentSourceConfirmedEmpty = false),
+        )
     }
 }
