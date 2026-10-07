@@ -100,7 +100,36 @@ object VideoQualityMemory {
         return VideoQualityPolicy.Variant(width, height, bitrate, confidence)
     }
 
-    private fun loadAll(): JSONObject = JSONObject(KV.get(HawkConfig.VIDEO_QUALITY_MEMORY, ""))
+    /**
+ * 读整张画质记忆表。
+     *
+     * <p>⚠️ **空串必须在这里挡掉**,不能直接 `JSONObject(KV.get(key, ""))`。
+     *
+     * <p>为什么:org.json 的 `JSONObject("")` 抛 `JSONException: End of input at
+     * character 0`。而"键不存在"时 [KV.get] 返回的正是默认值 `""` —— 于是**首次使用
+     * (记忆表还是空的)时每一次读写都会抛异常**,`record` 被 catch 吞掉、`lookupAll`
+     * 返回空列表,表现就是「探测有日志、记忆永远读不回来、标签永不出现」。
+     *
+     * <p>真实踩坑(v1.0.31 真机抓到的最后一行):
+     * ```
+     * echo-quality record FAILED key=热播影视|76062|线路四 err=JSONException:End of input at character 0
+     * ```
+     * 排查了整整四轮才定位到这里 —— 因为异常被 catch 掉了,日志里什么都没有。
+     *
+     * <p>所以这里对空串/空白一律返回空表:**"还没有任何记忆"是正常状态,不是错误**。
+     */
+    private fun loadAll(): JSONObject {
+        val raw = KV.get(HawkConfig.VIDEO_QUALITY_MEMORY, "")
+        if (raw.isNullOrBlank()) return JSONObject()
+        return try {
+            JSONObject(raw)
+        } catch (t: Throwable) {
+            // 存量脏数据(早期版本可能写进过非 JSON 串)不该让整表不可用:
+            // 宁可从空表重建,也不能让所有画质记忆永久读不回来。
+            LOG.i("echo-quality load reset: " + t.javaClass.simpleName + ":" + t.message)
+            JSONObject()
+        }
+    }
 
     // ── 「已确认无资源」标记(方案 B 第二层,见 util/AvailabilityMemory)────────────
     //
@@ -162,8 +191,17 @@ object VideoQualityMemory {
         }
     }
 
-    private fun loadAvailabilityAll(): JSONObject =
-        JSONObject(KV.get(HawkConfig.VIDEO_AVAILABILITY_MEMORY, ""))
+    /** 与 [loadAll] 同理:空串会让 `JSONObject("")` 抛异常,必须先挡掉。 */
+    private fun loadAvailabilityAll(): JSONObject {
+        val raw = KV.get(HawkConfig.VIDEO_AVAILABILITY_MEMORY, "")
+        if (raw.isNullOrBlank()) return JSONObject()
+        return try {
+            JSONObject(raw)
+        } catch (t: Throwable) {
+            LOG.i("echo-unavailable load reset: " + t.javaClass.simpleName + ":" + t.message)
+            JSONObject()
+        }
+    }
 
     /** 裁剪过期 + 超量后落盘(与画质记忆同套路:写时裁剪,读时只判单条)。 */
     private fun persistAvailability(all: JSONObject) {
