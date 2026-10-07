@@ -1,6 +1,7 @@
 package com.github.tvbox.osc.util
 
 import com.github.tvbox.osc.bean.Movie
+import com.github.tvbox.osc.player.VideoQualityMemory
 
 /**
  * 「已确认无资源」的持久标记 —— 方案 B 的第二层(点空回写)。
