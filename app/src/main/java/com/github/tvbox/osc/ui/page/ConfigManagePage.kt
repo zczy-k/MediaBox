@@ -541,7 +541,7 @@ private fun SubscribeCard(
     onLongClick: () -> Unit,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    val shape = RoundedCornerShape(28.dp)
+    val shape = RoundedCornerShape(16.dp)
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = shape,

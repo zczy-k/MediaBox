@@ -7,7 +7,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
 val ColorScheme.cardContainer: Color
-    get() = surfaceBright
+    get() = surfaceContainerLow
 
 @Composable
 fun ColorScheme.filterChipColors(containerColor: Color = Color.Transparent): SelectableChipColors =

@@ -1,6 +1,7 @@
 package com.github.tvbox.osc.ui.components
 
 import androidx.annotation.DrawableRes
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
@@ -19,9 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
@@ -29,7 +28,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.toShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,16 +49,9 @@ enum class SettingsCardPosition {
     LAST,
 }
 
-private fun shapeFor(position: SettingsCardPosition): Shape = when (position) {
-    SettingsCardPosition.SINGLE -> RoundedCornerShape(32.dp)
-    SettingsCardPosition.FIRST -> RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp, bottomEnd = 4.dp, bottomStart = 4.dp)
-    SettingsCardPosition.MIDDLE -> RoundedCornerShape(4.dp)
-    SettingsCardPosition.LAST -> RoundedCornerShape(topStart = 4.dp, topEnd = 4.dp, bottomEnd = 32.dp, bottomStart = 32.dp)
-}
-
 @Composable
 fun SettingsCard(
-    position: SettingsCardPosition,
+    @Suppress("UNUSED_PARAMETER") position: SettingsCardPosition,
     modifier: Modifier = Modifier,
     color: Color? = null,
     shape: Shape? = null,
@@ -68,8 +59,9 @@ fun SettingsCard(
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = shape ?: shapeFor(position),
+        shape = shape ?: RoundedCornerShape(16.dp),
         color = color ?: MaterialTheme.colorScheme.cardContainer,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.32f)),
     ) {
         Column(content = content)
     }
@@ -83,7 +75,7 @@ fun SettingsGroup(
 ) {
     Column(
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         title?.let {
             Text(
@@ -146,14 +138,13 @@ fun SettingsRow(
     }
 }
 
-@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun SettingsIconBadge(@DrawableRes iconRes: Int, contentDescription: String? = null) {
     Box(
         modifier = Modifier
             .size(40.dp)
-            .clip(MaterialShapes.Cookie7Sided.toShape())
-            .background(MaterialTheme.colorScheme.primaryContainer),
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)),
         contentAlignment = Alignment.Center,
     ) {
         Icon(

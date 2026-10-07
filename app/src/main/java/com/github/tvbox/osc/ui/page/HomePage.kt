@@ -331,15 +331,15 @@ fun HomePage(vm: HomeViewModel, contentPadding: PaddingValues = PaddingValues(0.
                             modifier = Modifier
                                 .fillParentMaxWidth(0.78f)
                                 .aspectRatio(1.5f)
-                                .clip(RoundedCornerShape(24.dp)),
-                            shape = RoundedCornerShape(24.dp),
+                                .clip(RoundedCornerShape(20.dp)),
+                            shape = RoundedCornerShape(20.dp),
                         )
                     } else if (rec.state == HomeViewModel.PartitionState.Error) {
                         Box(
                             modifier = Modifier
                                 .fillParentMaxWidth(0.78f)
                                 .aspectRatio(1.5f)
-                                .clip(RoundedCornerShape(24.dp))
+                                .clip(RoundedCornerShape(20.dp))
                                 .background(MaterialTheme.colorScheme.surfaceBright),
                             contentAlignment = Alignment.Center,
                         ) {

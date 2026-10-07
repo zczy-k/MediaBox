@@ -206,7 +206,7 @@ fun PlaySettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewM
                 }
             }
 
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(24.dp))
 
             SettingsGroup(title = stringResource(R.string.settings_group_subtitle)) {
                 SettingsCard(SettingsCardPosition.SINGLE) {
@@ -223,7 +223,7 @@ fun PlaySettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewM
                 }
             }
 
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(24.dp))
 
             SettingsGroup(title = stringResource(R.string.settings_subtitle_sources)) {
                 val total = SubtitleSources.builtIns.size + customSources.size + 1
@@ -268,7 +268,7 @@ fun PlaySettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewM
                 }
             }
 
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(24.dp))
 
             SettingsGroup(title = stringResource(R.string.settings_group_play_behavior)) {
                 SettingsCard(SettingsCardPosition.FIRST) {
@@ -320,7 +320,7 @@ fun PlaySettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewM
                 }
             }
 
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(24.dp))
 
             SettingsGroup(title = stringResource(R.string.settings_group_preload_cache)) {
                 SettingsCard(SettingsCardPosition.FIRST) {

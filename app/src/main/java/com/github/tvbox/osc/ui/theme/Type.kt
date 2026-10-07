@@ -12,9 +12,9 @@ val MediaBoxTypography = Typography(
         fontWeight = FontWeight.SemiBold,
     ),
     headlineSmall = TextStyle(
-        fontSize = 24.sp,
-        lineHeight = 32.sp,
-        fontWeight = FontWeight.Bold,
+        fontSize = 22.sp,
+        lineHeight = 28.sp,
+        fontWeight = FontWeight.SemiBold,
     ),
     titleMedium = TextStyle(
         fontSize = 16.sp,

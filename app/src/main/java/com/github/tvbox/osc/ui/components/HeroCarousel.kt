@@ -81,7 +81,7 @@ fun HeroCarousel(
                     scaleY = 1f - 0.18f * d
                     alpha = 1f - 0.25f * d
                 }
-                .clip(RoundedCornerShape(24.dp))
+                .clip(RoundedCornerShape(20.dp))
                 .clickable { onCardClick(video) },
         ) {
             VodPoster(

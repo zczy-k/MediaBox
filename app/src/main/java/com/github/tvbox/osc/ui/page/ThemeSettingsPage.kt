@@ -59,7 +59,7 @@ fun ThemeSettingsScreen(onNavigateBack: () -> Unit) {
                 .verticalScroll(listState)
                 .padding(horizontal = 16.dp)
                 .padding(bottom = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(28.dp),
+            verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
             Spacer(Modifier.height(topPad - 20.dp))
 

@@ -109,7 +109,7 @@ fun PreferenceSettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel =
                 }
             }
 
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(24.dp))
 
             SettingsGroup(title = stringResource(R.string.settings_group_privacy)) {
                 SettingsCard(SettingsCardPosition.FIRST) {
@@ -165,7 +165,7 @@ fun PreferenceSettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel =
                 }
             }
 
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(24.dp))
 
             SettingsGroup(title = stringResource(R.string.settings_group_play_search)) {
                 SettingsCard(SettingsCardPosition.FIRST) {
