@@ -19,47 +19,55 @@ sealed interface VodCardTarget {
 
 internal fun Movie.Video.isFolderCard(): Boolean = tag == "folder"
 
+/**
+ * 索引型源的卡片 id 形如 `msearch:###<片名>###<海报>@Referer=…`。
+ *
+ * <p>它**不是**可打开的详情 id，只是"片名 + 海报"的打包占位 ——
+ * 真机实测（v1.0.42 的 card-route 日志）:
+ * ```
+ * id=msearch:###起义###https://img3.doubanio.com/…poster.jpg@Referer=https://api.douban.com/@User-Agent=…
+ * ```
+ * 也就是说这类卡片**手里只有片名**，站点根本没给详情 id。
+ */
+internal fun Movie.Video.isMsearchCard(): Boolean = id.orEmpty().startsWith("msearch:")
+
 internal fun Movie.Video.hasOpenableDetailId(): Boolean {
     val value = id.orEmpty()
     return value.isNotEmpty() && !value.startsWith("msearch:")
 }
 
 /**
- * 这张卡**在它自己那个来源里**能不能直接打开详情。
+ * 这张卡**能不能进详情页**。
  *
- * <p>⚠️ v1.0.40 起**不再看站点是不是索引型**(`indexs=1`)。
+ * <p>⚠️ v1.0.43 起 `msearch:` 占位卡**也算能进** —— 见下面对"为什么"的说明。
  *
- * <p>原来索引型源的卡片一律改道搜索(见 [resolveVodCardTarget]),理由是
- * "卡片只是关键词/分类入口,点进去没有可播详情"。真机用下来这个口径有两个问题:
- *
- * <ol>
- *   <li><b>同类卡片在不同源里表现不一致</b>:用户换一个源,同样的点击一个进详情、
- *       一个进搜索。首页卡片长得一模一样(海报 + 片名),行为却不同,看起来就是坏了。</li>
- *   <li><b>"这个源给不出详情"已经不是致命问题了</b>:详情取不到时,详情页本来就有
- *       聚合搜索 + 自动换源的兜底链(见 DetailViewModel 的 fallback 逻辑)——
- *       它会拿片名去别的源找到同一部片。也就是说"当前源没详情"完全有人接住,
- *       没必要在点击当下就替用户改道。</li>
- * </ol>
- *
- * <p>所以判据收敛成一条:**只要 id 可用就进详情**。id 不可用(空 / `msearch:` 占位)
- * 或站点身份缺失时仍然只能走搜索 —— 那种情况进详情连请求都发不出去。
+ * <p>判据:站点身份在 + id 非空。注意**不再要求 id 是"真"详情 id**。
  */
 internal fun canOpenOwnDetail(video: Movie.Video): Boolean =
-    !video.sourceKey.isNullOrEmpty() && video.hasOpenableDetailId()
+    !video.sourceKey.isNullOrEmpty() && video.id.orEmpty().isNotEmpty()
 
 /**
  * 卡片点击的路由决策。
  *
- * <p>⚠️ 这里带一条诊断日志（`echo-detail card-route=`），**别删**。
+ * <p>## 为什么 `msearch:` 占位卡也路由到 Detail（v1.0.43）
  *
- * <p>为什么必须有它：用户报「首页点卡片进了搜索、换一个源却进详情」，而
- * "为什么走了 Search" 有**三个**互不相同的成因，日志里完全看不出区别：
- * <ol>
- *   <li>`sourceKey` 为空（站点身份缺失）</li>
- *   <li>id 为空</li>
- *   <li>id 是 `msearch:` 占位（索引型源的卡片就是这种，不是真 id）</li>
- * </ol>
- * 三者表现一模一样，只有把 src / id / tag / action 四个入参打出来才能对号入座。
+ * <p>用户诉求:"不同类型的源,效果要统一 —— 点首页卡片就进详情页,只有点搜索才进搜索页。"
+ *
+ * <p>原来索引型源的卡片一律改道搜索页,理由写在 [canOpenOwnDetail] 的旧注释里
+ * ("卡片只是关键词入口,没有可播详情")。但真机实测拿到 card-route 日志后发现:
+ * 这类卡片的 id 是 `msearch:###<片名>###<海报>@Referer=…`,**手里只有片名**。
+ *
+ * <p>关键判断:**"这个源给不出详情"这件事,详情页自己就能兜住** ——
+ * `DetailResponseGuard.isUnloadableTarget` 对 `msearch:` 直接判为不可加载,
+ * 于是 `loadDetail` 不做网络请求就转 `onDetailUnavailable()`,
+ * 后者启动聚合搜索 + 自动换源,拿**片名**在别的源找到同一部片并加载。
+ * 也就是说:把 msearch 卡路由到 Detail,最终呈现的正是用户要的那部片的详情页 ——
+ * 不需要在点击当下替用户改道,更不需要新造一套"搜索后开第一条"的机制。
+ *
+ * <p>于是判据收敛成一条:**站点身份在 + id 非空 → 进详情**。
+ * 只有 id 真的为空(没有任何线索)时才退回搜索页。
+ *
+ * <p>⚠️ 这里带一条诊断日志（`echo-detail card-route=`），**别删**。
  * 前缀用 `echo-detail`（已登记进 FILE_LOG_PREFIXES）。
  */
 fun resolveVodCardTarget(video: Movie.Video): VodCardTarget {
@@ -73,6 +81,7 @@ fun resolveVodCardTarget(video: Movie.Video): VodCardTarget {
         "echo-detail card-route=" + target.javaClass.simpleName +
             " src=" + video.sourceKey + " id=" + video.id +
             " tag=" + video.tag + " action=" + video.action +
+            " msearch=" + video.isMsearchCard() +
             " canOpen=" + canOpenOwnDetail(video)
     )
     return target
