@@ -450,7 +450,13 @@ class HomeViewModel : ViewModel() {
      */
     fun refreshAvailability() {
         val marks = AvailabilityMemory.activeMarks()
-        if (marks.isEmpty()) return
+        // ⚠️ 无条件打印,包括"标记表是空的"这种早退 —— 诊断日志的价值恰恰在于必然出现。
+        // 之前 `if (purged > 0)` / `if (marks.isEmpty()) return` 两处静默,
+        // 于是"过滤跑了但没滤掉"和"过滤没跑"在日志里无法区分。
+        if (marks.isEmpty()) {
+            LOG.i("echo-unavailable home-purge skip: marks empty rev=" + AvailabilityMemory.marksRevision)
+            return
+        }
         var purged = 0
         val curRec = rec.value
         val recLeft = curRec.videos.filterNot {
@@ -471,7 +477,13 @@ class HomeViewModel : ViewModel() {
             if (left.size == p.videos.size) p else p.copy(videos = left)
         }
         partitions.value = next
-        if (purged > 0) LOG.i("echo-unavailable home-purge n=$purged")
+        LOG.i(
+            "echo-unavailable home-purge n=" + purged +
+                " marks=" + marks.size +
+                " rec=" + curRec.videos.size + "->" + recLeft.size +
+                " parts=" + partitions.value.size +
+                " rev=" + AvailabilityMemory.marksRevision
+        )
     }
 
     fun applyFilter(partition: Partition, filterSelect: Map<String, String>) {

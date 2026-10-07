@@ -64,6 +64,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import com.github.tvbox.osc.util.SearchSettings
 import com.github.tvbox.osc.util.AvailabilityHeuristic
 import com.github.tvbox.osc.util.AvailabilityMemory
+import com.github.tvbox.osc.util.LOG
 import com.github.tvbox.osc.util.SourceIdentityMask
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -235,7 +236,12 @@ internal fun RailResults(
     // 方案 B 第一层:列表阶段粗筛掉"看起来没资源"的条目(站点自述 暂无资源/未收录…),
     // 以及之前点空过、被回写标记的条目。零额外请求 —— 列表接口本来就不返回 urlBean,
     // 真正能白拿到的判定依据只有 note/state 文案,详见 AvailabilityHeuristic 的 KDoc。
-    val unavailableMarks = remember(results) { AvailabilityMemory.activeMarks() }
+    //
+    // ⚠️ `remember` 的key **必须同时挂 results 和 marksRevision**。
+    // 标记是在详情页写的(点空回写),写完搜索结果列表本身一个字节都没变,
+    // 只挂 results 会命中旧缓存、拿不到新标记 —— 详见 AvailabilityMemory.marksRevision 的 KDoc。
+    val marksRevision = AvailabilityMemory.marksRevision
+    val unavailableMarks = remember(results, marksRevision) { AvailabilityMemory.activeMarks() }
     val rows = remember(results, selectedSource, unavailableMarks) {
         results
             .filter { it.videos.isNotEmpty() && (selectedSource == null || it.sourceKey == selectedSource) }
@@ -245,6 +251,16 @@ internal fun RailResults(
                     .filterNot { AvailabilityHeuristic.mightBeUnavailable(it, unavailableMarks) }
                     .map { (anonymousLabelOf[result.sourceKey].orEmpty()) to it }
             }
+    }
+    // 这条是「搜索页粗筛到底执行没执行」的唯一可观测点(轨道视图),别删。
+    // 之前这里一行日志都没有,导致 search-purge 实测 0 次也无法判断过滤是否生效。
+    LaunchedEffect(rows.size, unavailableMarks.size) {
+        val raw = results.fold(0) { acc, r -> acc + r.videos.size }
+        LOG.i(
+            "echo-unavailable rail-filter raw=" + raw +
+                " shown=" + rows.size + " marks=" + unavailableMarks.size +
+                " rev=" + marksRevision
+        )
     }
 
     LaunchedEffect(selectedSource) {

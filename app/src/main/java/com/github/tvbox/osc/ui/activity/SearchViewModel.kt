@@ -519,16 +519,23 @@ class SearchViewModel : ViewModel() {
      */
     fun refreshAvailability() {
         val marks = AvailabilityMemory.activeMarks()
-        if (marks.isEmpty()) return
+        //⚠️ 无条件打印,包括"标记表是空的"这种早退 —— 诊断日志的价值恰恰在于必然出现。
+        // 之前挂在 `if (after != before)` 上,于是"过滤跑了但一条没滤掉"与"过滤压根没跑"
+        // 在日志里长得一模一样,排查时无法区分(这正是 search-purge 实测 0 次的原因)。
+        if (marks.isEmpty()) {
+            LOG.i("echo-unavailable search-purge skip: marks empty rev=" + AvailabilityMemory.marksRevision)
+            return
+        }
         val before = results.value.fold(0) { acc, r -> acc + r.videos.size }
         val next = results.value.map { r ->
             r.copy(videos = r.videos.filterNot { AvailabilityHeuristic.mightBeUnavailable(it, marks) })
         }
         results.value = next
         val after = next.fold(0) { acc, r -> acc + r.videos.size }
-        if (after != before) {
-            LOG.i("echo-unavailable search-purge before=$before after=$after")
-        }
+        LOG.i(
+            "echo-unavailable search-purge before=" + before + " after=" + after +
+                " marks=" + marks.size + " rev=" + AvailabilityMemory.marksRevision
+        )
     }
 
     private val searchCaller = SourceViewModel()

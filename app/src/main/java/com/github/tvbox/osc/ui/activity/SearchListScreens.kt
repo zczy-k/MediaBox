@@ -41,6 +41,7 @@ import com.github.tvbox.osc.ui.components.VodCard
 import com.github.tvbox.osc.ui.theme.filterChipColors
 import com.github.tvbox.osc.util.AvailabilityHeuristic
 import com.github.tvbox.osc.util.AvailabilityMemory
+import com.github.tvbox.osc.util.LOG
 import com.github.tvbox.osc.util.SourceIdentityMask
 import kotlinx.coroutines.flow.distinctUntilChanged
 
@@ -75,7 +76,12 @@ internal fun SearchListResults(
     val shown = if (selectedSource == null) done else done.filter { it.sourceKey == selectedSource }
     // 方案 B 第一层:列表阶段粗筛(详见 AvailabilityHeuristic 的 KDoc)。
     // 零额外请求 —— 列表接口不返回 urlBean,能白拿到的判定依据只有 note/state 文案。
-    val unavailableMarks = remember(done) { AvailabilityMemory.activeMarks() }
+    //
+    // ⚠️ `remember` 的 key **必须同时挂 done 和 marksRevision**。
+    // 标记是在详情页写的(点空回写),写完搜索结果列表本身一个字节都没变,
+    // 只挂 done 会命中旧缓存、拿不到新标记 —— 详见 AvailabilityMemory.marksRevision 的 KDoc。
+    val marksRevision = AvailabilityMemory.marksRevision
+    val unavailableMarks = remember(done, marksRevision) { AvailabilityMemory.activeMarks() }
     // ⚠️ 匿名标签:按**筛选前的稳定顺序**编号,而不是用真实站名。
     // 真实站名一旦渲染出来(标题行/筛选 chip/分区页大标题),就等于把 App 的源清单摊给用户。
     // 编号必须跟着 sourceKey 走,否则筛选一换,序号会跳。
@@ -85,6 +91,24 @@ internal fun SearchListResults(
     val anonPrefix = stringResource(R.string.common_source_anonymous_prefix)
     val anonymousLabelOf = remember(done, anonPrefix) {
         done.mapIndexed { index, r -> r.sourceKey to SourceIdentityMask.anonymousLabel(index, anonPrefix) }.toMap()
+    }
+    // 这条是「搜索页粗筛到底执行没执行」的唯一可观测点(分组视图),别删。
+    // 与轨道视图(SearchScreens.rail-filter)同口径:两个视图都要能独立判断过滤有没有跑。
+    // ⚠️ 口径必须与上面那个 remember 完全一致(同一份 marks、同一个 key),
+    // 否则两个视图会给出不同的 raw/shown,对不上就说明其中一个没生效。
+    // ⚠️ 用 fold(0) 而不是 sumOf —— 全工程统一口径,Kotlin 版本的 stdlib 差异不碰。
+    val shownTotal = remember(shown, unavailableMarks) {
+        shown.fold(0) { acc, r ->
+            acc + r.videos.count { !AvailabilityHeuristic.mightBeUnavailable(it, unavailableMarks) }
+        }
+    }
+    val rawTotal = remember(shown) { shown.fold(0) { acc, r -> acc + r.videos.size } }
+    LaunchedEffect(rawTotal, shownTotal, unavailableMarks.size) {
+        LOG.i(
+            "echo-unavailable group-filter raw=" + rawTotal +
+                " shown=" + shownTotal + " marks=" + unavailableMarks.size +
+                " rev=" + marksRevision
+        )
     }
     LazyColumn(
         state = listState,

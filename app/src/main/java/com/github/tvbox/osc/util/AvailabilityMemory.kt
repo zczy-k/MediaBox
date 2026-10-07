@@ -45,6 +45,34 @@ object AvailabilityMemory {
     private fun now() = System.currentTimeMillis()
 
     /**
+     * 标记集合的**版本号** —— 每次成功写入标记自增,供 UI 侧挂进缓存 key。
+     *
+     * <p>## 为什么需要它
+     *
+     * <p>UI 侧过滤标记的写法一度是`remember(results) { activeMarks() }` —— 缓存 key
+     * 只挂 `results`。问题是**标记不是在搜索页写的,而是在详情页写的**:用户点开一部片子、
+     * 发现是空详情、标记落盘,再返回搜索页。此时 `results` 一个字节都没变,
+     * 于是 `remember` 命中缓存、拿的还是**旧标记集合**,新标记当场丢失。
+     *
+     * <p>今天能"碰巧对",是因为 [com.github.tvbox.osc.ui.activity.SearchViewModel] 收到
+     * `TYPE_VOD_UNAVAILABLE` 广播后会调 [com.github.tvbox.osc.ui.activity.SearchViewModel.refreshAvailability]
+     * 改写 `results.value` ⇒ `remember(results)` 失效重建。但那是**依赖广播恰好把
+     * results 改掉了**,不是设计上正确 —— 一旦过滤后长度没变(或走的是渲染层过滤、
+     * ViewModel 层没改),缓存就不会失效。
+     *
+     * <p>所以正确口径是:**缓存 key 必须同时挂 `results` 和本版本号**。
+     * 标记一变版本号就变,`remember` 必然失效,不存在"漏看新标记"的可能。
+     */
+    @Volatile
+    @JvmStatic
+    var marksRevision: Int = 0
+        private set
+
+    private fun bumpRevision() {
+        marksRevision += 1
+    }
+
+    /**
      * 标记"这部片子当前没有资源"。
      *
      * <p>带写入冷却:同一 `站点|片id` 30 分钟内只记一次。防的是**假空** ——
@@ -61,6 +89,10 @@ object AvailabilityMemory {
         val t = now()
         if (current != null && t - current.markedAt < WRITE_COOLDOWN_MS) return false
         VideoQualityMemory.recordAvailability(key, t, siteName.orEmpty())
+        // ⚠️ 必须在写盘成功**之后**才推进版本号:UI 侧靠它触发 remember 失效,
+        // 顺序反了会让 UI 重建时读到还没落盘的旧集合。
+        bumpRevision()
+        LOG.i("echo-unavailable marked key=" + key + " rev=" + marksRevision)
         return true
     }
 

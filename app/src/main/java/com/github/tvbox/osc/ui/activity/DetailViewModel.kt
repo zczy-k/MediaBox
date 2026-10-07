@@ -823,8 +823,31 @@ class DetailViewModel : ViewModel() {
             if (tokenStr == currentTokenStr()) {
                 sourcesSearching.value = false
                 if (shouldAutoTakeOver()) loadNextFallbackCandidate()
+                // 聚合搜索全部结束 = 兜底链的结论已定论。
+                // 若此时页面还停在加载态,说明 [enterEmpty] 曾因为"搜索在途"而延后过
+                // (那是为了消掉"一闪而过的暂无片源",见 enterEmpty 的 KDoc)。
+                // 这里必须补上收口,否则搜索一结束页面就永远卡在 Loading —— 
+                // 延后空态的代价是把"何时宣告无资源"从"此刻"推迟到了"搜索结束时",
+                // 收口责任也就跟着转移到了这里。
+                settleDeferredEmpty()
             }
         }
+    }
+
+    /**
+     * 聚合搜索结束后,补做一次被 [enterEmpty] 延后的空态判定。
+     *
+     * <p>只在"页面仍是 Loading"时动手:已经有详情(Ready)就绝不碰,避免把正常页面
+     * 误判成空;已经在空态也不重复走 [markCurrentVodUnavailable] —— 那条链自带防抖,
+     * 但没必要让同一部片在一个会话里被记第二次。
+     */
+    private fun settleDeferredEmpty() {
+        if (pageState.value !is PageState.Loading) return
+        // fallbackActive 为 true 时说明还在自动换源链上,收口交给 [loadNextFallbackCandidate];
+        // 它会把候选取完再走 [finishFallbackWithoutResult],那时才该进空态。
+        if (fallbackActive) return
+        LOG.i("echo-detail-empty-settle key=$sourceKey id=$vodId")
+        enterEmpty(str(R.string.player_play_failed_all))
     }
 
     @Subscribe(threadMode = ThreadMode.MAIN)
@@ -1064,7 +1087,38 @@ class DetailViewModel : ViewModel() {
         return true
     }
 
+    /**
+     * 进入终态空态。
+     *
+     * <p>## ⚠️ 这里必须挡掉"结论未定"的调用
+     *
+     * <p>真实踩坑(v1.0.33 修的就是这个):用户报"每打开一个新卡片都会先闪一下
+     *『暂无片源』,一闪而过"。真机实测 7 次开片 **7 次命中**,空态比正常详情早 206~336ms:
+     * ```
+     * 12:19:14.351 OPEN     打开卡片
+     * 12:19:14.354 SEARCH   聚合搜索启动
+     * 12:19:14.560 EMPTY    ← 206ms 后就进了空态(不该进)
+     * 12:19:14.896 SYNC     ← 336ms 后正常详情才到,把空态顶掉
+     * ```
+     *
+     * <p>成因是三段逻辑各自都合理、串起来却提前收口:
+     * [handleEmptyDetail] → [startFallbackIfNeeded] → [loadNextFallbackCandidate]。
+     * 此刻聚合搜索**刚启动、候选还没产出**,`loadNextFallbackCandidate` 返回 false;
+     * 而首次打开时 [rollbackManualSwitch] 的 `switchSnapshot` 为 null、也返回 false;
+     * 于是 `if (!rollbackManualSwitch()) enterEmpty()` 成立 —— 在"还在找"的时候
+     * 就宣布"找不到"。
+     *
+     * <p>判据用 [sourcesSearching]:聚合搜索还在跑就说明**候选池未定论**,
+     * 此时任何"没有候选"的结论都不成立。反过来搜索一结束(见 `startSourceSearch`
+     * 尾部 `sourcesSearching.value = false` → [loadNextFallbackCandidate])就会真正
+     * 收口到 [finishFallbackWithoutResult],那时进空态才是诚实的。
+     */
     private fun enterEmpty(msg: String? = null) {
+        if (sourcesSearching.value) {
+            // ⚠️ 这条日志是「为什么页面没进空态」的唯一可观测点,别删。
+            LOG.i("echo-detail-empty-deferred key=$sourceKey id=$vodId reason=search-in-flight msg=$msg")
+            return
+        }
         sendCommand(PlaybackCommand.ClearSourceSwitchTip)
         LOG.i("echo-detail-empty-state msg=$msg key=$sourceKey id=$vodId")
         pageState.value = PageState.Empty(msg)
