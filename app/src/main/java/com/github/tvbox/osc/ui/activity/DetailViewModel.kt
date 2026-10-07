@@ -320,17 +320,16 @@ class DetailViewModel : ViewModel() {
         val heights = VideoQualityMemory.lookupAll(sourceKey, vodId, siteOrder)
             .associate { it.flag to it.height }
         // ⚠️ 这条日志是「标签为什么不显示」的唯一可观测点,别删。
-        // 记忆按 "站点|片|flag" 取,任一环对不上都表现为"标签不出现",而外部完全看不出差别:
-        // 可能是写入用了别的 sourceKey/vodId、可能是 flag 与 seriesMap 的 key 不一致、
-        // 也可能是记忆压根没落盘。把两侧都打出来才能对号入座。
-        // v1.0.27 真机实测就卡在这:日志明确有 echo-quality resolved: 线路三 -> 1080x608,
-        // 界面却仍是纯「线路1/2/3」,而当时这几行日志还不存在,只能靠猜。
-        if (sourceKey.contains("热播影视") || heights.isNotEmpty()) {
-            LOG.i(
-                "echo-line-heights site=" + sourceKey + " vod=" + vodId +
-                    " order=" + siteOrder + " raw=" + heights + " flags=" + info.seriesFlags
-            )
-        }
+        // 记忆按 "站点|片|flag" 取,任一环对不上都表现为"标签不出现",而外部完全看不出差别。
+        // 写入侧(PlaybackController.probeLineQualityOnRealUrl)用 vod().sourceKey,
+        // 读取侧用本类的 sourceKey —— **自动换源后这两个不是同一个值**,是最可疑的一环。
+        // 无条件打印:之前加了"源名含热播影视"的守卫,结果真机跑起来一条都没打,
+        // 白等一轮 —— 诊断日志不该有守卫,它的价值恰恰在于"必然出现"。
+        LOG.i(
+            "echo-line-heights site=" + sourceKey + " vod=" + vodId +
+                " infoSite=" + info.sourceKey +
+                " order=" + siteOrder + " raw=" + heights + " flags=" + info.seriesFlags
+        )
         if (lineQualityHeights.value != heights) lineQualityHeights.value = heights
     }
 

@@ -1189,9 +1189,26 @@ public class PlaybackController {
         if (TextUtils.isEmpty(url)) return;
         if (!url.startsWith("http://") && !url.startsWith("https://")) return;
         VodInfo vod = vod();
-        if (vod == null || TextUtils.isEmpty(vod.id) || TextUtils.isEmpty(vod.playFlag)) return;
+        // ⚠️ 这一段的每个 return 都是静默的,vod()==null 时不会有任何痕迹 ——
+        // 而"探测压根没发起"和"探测发起了但失败"在外部表现完全一样。
+        // 真机实测被这个坑过:以为挂点没生效,其实是 vod() 为 null。所以失败路径也要留痕。
+        if (vod == null) {
+            LOG.i("echo-quality skip: vod is null");
+            return;
+        }
+        if (TextUtils.isEmpty(vod.id) || TextUtils.isEmpty(vod.playFlag)) {
+            LOG.i("echo-quality skip: id=" + vod.id + " flag=" + vod.playFlag);
+            return;
+        }
         String site = vod.sourceKey;
-        if (TextUtils.isEmpty(site)) return;
+        if (TextUtils.isEmpty(site)) {
+            LOG.i("echo-quality skip: sourceKey empty, vod=" + vod.id);
+            return;
+        }
+        // ⚠️ 写入侧的键,和详情页读取侧的 sourceKey 对照着看 ——
+        // 两者不一致时记忆会写进去却读不回来,表现为「标签永不出现」且毫无征兆。
+        // v1.0.28 真机实测就死在这:resolved 有日志(写入发生),remembered 恒为 0(读不回来)。
+        LOG.i("echo-quality write-key site=" + site + " vod=" + vod.id + " flag=" + vod.playFlag);
         ResolvedUrlQualityProbe.probeAsync(site, vod.id, vod.playFlag, url, headers);
     }
 
