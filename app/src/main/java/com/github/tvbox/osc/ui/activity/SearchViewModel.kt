@@ -274,6 +274,22 @@ class SearchViewModel : ViewModel() {
         val sources = ApiConfig.get().getSourceBeanList()
             .filter { it.isSearchable() && (checked == null || checked.containsKey(it.key)) }
             .sortedBy { it.key != home.key }
+        // ⚠️ 诊断:搜索到底搜了哪些源。别删。
+        //
+        // 为什么需要它:无资源标记在搜索页**从来没有命中过**(真机实测 rail-filter
+        // raw 与 shown 恒等),而标记表里 16 条全是 js_douban|<id>。
+        // 要判断这是"js_douban 不参与搜索"(数据无交集,属正常)还是
+        // "键口径对不上"(真 bug),唯一办法就是把参与搜索的源键打出来。
+        // 站点栏是匿名标签(源1..源12),从 UI 上根本看不出哪一个是 js_douban。
+        //
+        // 复用 echo-unavailable 前缀(已在 FILE_LOG_PREFIXES 登记),
+        // 不新增前缀 —— 新增就得记得同步登记,否则日志被过滤、又是白等一轮。
+        val searchedKeys = sources.map { it.key }
+        LOG.i(
+            "echo-unavailable search-sources n=" + searchedKeys.size +
+                " hasDouban=" + searchedKeys.any { it.contains("douban", ignoreCase = true) } +
+                " keys=" + searchedKeys.take(12).joinToString(",")
+        )
         arriveSeq = 0
         // 先全部登记为"排队中":站点栏一次性给全,列表才不会随分批插入而跳动
         results.value = sources.map { SourceResult(it.key, it.name.orEmpty(), ResultState.Queued, emptyList()) }
