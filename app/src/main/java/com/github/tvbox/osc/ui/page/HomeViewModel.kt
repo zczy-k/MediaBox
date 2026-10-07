@@ -11,6 +11,7 @@ import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.bean.MovieSort
 import com.github.tvbox.osc.bean.SourceBean
 import com.github.tvbox.osc.event.RefreshEvent
+import com.github.tvbox.osc.util.AvailabilityMemory
 import com.github.tvbox.osc.util.DefaultConfig
 import com.github.tvbox.osc.util.HomeSettings
 import com.github.tvbox.osc.util.LanguageManager
@@ -346,7 +347,13 @@ class HomeViewModel : ViewModel() {
     }
 
     private fun loadRec(absXml: AbsSortXml?) {
-        val videos = absXml?.videoList ?: emptyList()
+        val raw = absXml?.videoList ?: emptyList()
+        val videos = AvailabilityMemory.filterPlayable(raw)
+        // 粗筛掉了多少要留痕:数字异常(=全被筛掉)说明关键词口径过宽,会误杀正常影片,
+        // 这时能第一时间发现。详见 AvailabilityHeuristic 的「零误杀」约定。
+        if (raw.isNotEmpty() && videos.isEmpty()) {
+            LOG.i("echo-unavailable home-rec filtered-all n=" + raw.size + " sort=rec")
+        }
         rec.value = if (videos.isEmpty()) Rec(PartitionState.Empty, videos) else Rec(PartitionState.Ready, videos)
     }
 
@@ -397,7 +404,14 @@ class HomeViewModel : ViewModel() {
             }
             return
         }
-        val videos = absXml?.movie?.videoList ?: emptyList()
+        val rawVideos = absXml?.movie?.videoList ?: emptyList()
+        // 方案 B 第一层:粗筛掉"看起来没资源"的卡片(产品要求:没资源的片子不该出现在首页)。
+        // 在 ViewModel 层过滤而不是 UI 层 —— 首页有三个渲染点(推荐位/分区/加载更多),
+        // 放这里一次全覆盖,UI 拿到的永远是干净列表。
+        val videos = AvailabilityMemory.filterPlayable(rawVideos)
+        if (rawVideos.isNotEmpty() && videos.isEmpty()) {
+            LOG.i("echo-unavailable home-list filtered-all n=" + rawVideos.size + " sort=$sortId")
+        }
         LOG.i("echo--list-result: src=${loadingSourceKey} sort=$sortId pg=$page n=${videos.size}")
         val maxPage = absXml?.movie?.pagecount ?: 0
         partitions.value = partitions.value.map { p ->

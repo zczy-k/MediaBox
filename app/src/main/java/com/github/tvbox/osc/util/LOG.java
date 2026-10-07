@@ -31,6 +31,8 @@ public class LOG {
      * <p>诊断包(diag)排查画质/换源/缓存时依赖以下前缀:
      * <ul>
      *   <li>{@code echo-quality} —— 画质优选决策(选哪条线、探测有没有成功)</li>
+     *   <li>{@code echo-line-probe} —— 「线路N · 1080P」标签的实测画质探测(诊断为什么标签不显示)</li>
+     *   <li>{@code echo-unavailable} —— 无资源标记的写入与粗筛结果(诊断"海报为什么不见了")</li>
      *   <li>{@code echo-detail} —— 详情加载与看门狗(卡在哪一步)</li>
      *   <li>{@code SubtitleCacheJanitor} —— 字幕缓存 LRU 裁剪结果</li>
      *   <li>{@code echo-source} / {@code source-prewarm} —— 聚合搜索预热与候选数</li>
@@ -38,7 +40,9 @@ public class LOG {
      */
     private static final String[] FILE_LOG_PREFIXES = {"echo-preload", "echo-setDataSource", "echo-play-cache", "echo-kv", "echo-progress", "echo-exo", "echo-music", "echo-lyric", "echo-sub", "echo-danmu", "echo-p2", "echo-p3", "echo-p4", "echo-p5", "clearCache", "echo--jar", "echo-local-src", "echo-setTrack", "echo-autoRetry", "echo-player", "echo-switch", "echo-goPlayUrl", "echo-history", "echo-render", "echo-picture", "echo-anime4k", "echo--list", "echo--getList", "echo--parse", "echo--getSort", "echo--sort", "echo-proxy",
             // ↓ 诊断包(v1.0.24 起):画质优选 / 详情看门狗 / 换源预热 / 缓存裁剪
-            "echo-quality", "echo-detail", "echo-source", "source-prewarm", "SubtitleCacheJanitor", "echo-cacheTrim"};
+            "echo-quality", "echo-detail", "echo-source", "source-prewarm", "SubtitleCacheJanitor", "echo-cacheTrim",
+            // ↓ v1.0.26:线路实测画质探测(诊断「线路N」后面一直不显示分辨率)
+            "echo-line-probe", "echo-unavailable"};
     private static final String FILE_LOG_NAME = "preload_debug.log";
     private static ExecutorService fileLogExecutor;
 

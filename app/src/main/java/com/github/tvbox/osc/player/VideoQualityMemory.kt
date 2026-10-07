@@ -95,6 +95,90 @@ object VideoQualityMemory {
 
     private fun loadAll(): JSONObject = JSONObject(KV.get(HawkConfig.VIDEO_QUALITY_MEMORY, ""))
 
+    // ── 「已确认无资源」标记(方案 B 第二层,见 util/AvailabilityMemory)────────────
+    //
+    // 刻意**不复用**上面那张表:键形态不同(那边是"站点|片|线路"五段,这边"站点|片"
+    // 两段)、TTL 不同(30 天 vs 90 天)、语义也不同(画质复用 vs 别再点空)。
+    // 混在一张表里会让两边的裁剪逻辑互相踩 —— 画质记忆过期顺带把无资源标记清了,
+    // 用户点的空就白点了。
+
+    /** 一条无资源标记。 */
+    data class UnavailableEntry(val key: String, val markedAt: Long, val siteName: String)
+
+    private const val UNAVAILABLE_MAX = 3000
+
+    @JvmStatic
+    fun recordAvailability(key: String, markedAt: Long, siteName: String) {
+        if (key.isEmpty()) return
+        try {
+            val all = loadAvailabilityAll()
+            // 值格式 "时间戳,站名"。站名只是诊断用的冗余信息,允许为空。
+            val value = markedAt.toString() + "," + siteName.replace(',', ' ')
+            if (all.optString(key) == value) return
+            all.put(key, value)
+            persistAvailability(all)
+        } catch (t: Throwable) {
+            LOG.d("VideoQualityMemory", "recordAvailability failed: " + t.message)
+        }
+    }
+
+    @JvmStatic
+    fun lookupAvailability(key: String): UnavailableEntry? {
+        if (key.isEmpty()) return null
+        return try {
+            val parts = loadAvailabilityAll().optString(key).split(',')
+            if (parts.size < 2) return null
+            val at = parts[0].toLongOrNull() ?: return null
+            if (at > now()) return null
+            UnavailableEntry(key, at, parts.drop(1).joinToString(","))
+        } catch (t: Throwable) {
+            null
+        }
+    }
+
+    /** 取 TTL 内的全部标记。ttlMs 由调用方给 —— 不同调用口径不同(读写不对称)。 */
+    @JvmStatic
+    fun activeAvailability(ttlMs: Long): List<UnavailableEntry> {
+        return try {
+            val all = loadAvailabilityAll()
+            val out = ArrayList<UnavailableEntry>()
+            val keys = all.keys()
+            val nowTs = now()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val at = all.optString(k).split(',').firstOrNull()?.toLongOrNull() ?: continue
+                if (nowTs - at in 0..ttlMs) out.add(UnavailableEntry(k, at, ""))
+            }
+            out
+        } catch (t: Throwable) {
+            emptyList()
+        }
+    }
+
+    private fun loadAvailabilityAll(): JSONObject =
+        JSONObject(KV.get(HawkConfig.VIDEO_AVAILABILITY_MEMORY, ""))
+
+    /** 裁剪过期 + 超量后落盘(与画质记忆同套路:写时裁剪,读时只判单条)。 */
+    private fun persistAvailability(all: JSONObject) {
+        val kept = JSONObject()
+        val nowTs = now()
+        val keys = all.keys()
+        val alive = ArrayList<Pair<String, Long>>()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            val at = all.optString(k).split(',').firstOrNull()?.toLongOrNull() ?: continue
+            if (nowTs - at >= 0) alive.add(k to at)
+        }
+        // 超量丢最旧的(JSONObject 遍历顺序不保证时间序,必须显式排序)
+        alive.sortBy { it.second }
+        val overflow = (alive.size - UNAVAILABLE_MAX).coerceAtLeast(0)
+        for (i in alive.indices) {
+            if (i < overflow) continue
+            kept.put(alive[i].first, all.optString(alive[i].first))
+        }
+        KV.put(HawkConfig.VIDEO_AVAILABILITY_MEMORY, kept.toString())
+    }
+
     /** 裁剪过期 + 超量后落盘。裁剪放在写路径,读路径只判单条过期,避免每次读都全量遍历。 */
     private fun persist(all: JSONObject) {
         val kept = JSONObject()

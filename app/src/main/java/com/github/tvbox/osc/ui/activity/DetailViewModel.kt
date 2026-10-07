@@ -7,6 +7,7 @@ import com.github.tvbox.osc.api.ApiConfig
 import com.github.tvbox.osc.R
 import com.github.tvbox.osc.base.App
 import com.github.tvbox.osc.util.LanguageManager
+import com.github.tvbox.osc.util.AvailabilityMemory
 import com.github.tvbox.osc.bean.AbsXml
 import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.bean.VodInfo
@@ -372,6 +373,18 @@ class DetailViewModel : ViewModel() {
         // 拿不到 URL 的线路由 probeVariantsParallel 静默跳过,不阻塞其余线路。
         val index = probeIndexOf(info)
         val targets = missing.filter { directUrlOf(info.seriesMap?.get(it), index) != null }.take(3)
+        // ⚠️ 这条日志是排查「线路N 后面一直不显示分辨率」的唯一可观测点,别删。
+        // 静默 return 的分支太多(单线路/档位关闭/全测过/全是爬虫型),没有日志时
+        // 只能靠猜 —— v1.0.25 真机实测就卡在这:5 条线路全是"线路1..5"无画质,
+        // 而本函数一行日志都不打,无法区分"没触发"与"触发了但目标为空"。
+        // 决策树一次打印全部分支,以后再出现直接对号入座。
+        LOG.i(
+            "echo-line-probe site=" + sourceKey + " vod=" + vodId +
+                " lines=" + siteOrder.size + " mode=" + mode.name +
+                " remembered=" + remembered.size + " missing=" + missing.size +
+                " direct=" + targets.size + " idx=" + index +
+                " (empty-skip: lines<=1 | mode-off | all-remembered | no-direct-url)"
+        )
         if (targets.isEmpty()) return
         val headers = probeHeaders(sourceKey)
         val probe = VideoQualityProbe()
@@ -1044,7 +1057,44 @@ class DetailViewModel : ViewModel() {
         sendCommand(PlaybackCommand.ClearSourceSwitchTip)
         LOG.i("echo-detail-empty-state msg=$msg key=$sourceKey id=$vodId")
         pageState.value = PageState.Empty(msg)
+        // 方案 B 第二层(点空回写):走到这里说明"当前源 + 聚合换源都没能拿到内容",
+        // 是"这部片子当前真的没资源"的可靠信号 —— 记下来,下次搜索/首页不再显示它的海报。
+        //
+        // ⚠️ 刻意**只在这一步**记,不在 handleEmptyDetail 入口记:入口处换源链还没跑完,
+        // 站点抖动返回的空会被误判成"永久没资源",好片就此消失。真正的空只有终态才算。
+        markCurrentVodUnavailable()
     }
+
+    /**
+     * 把当前片标记为无资源并通知列表刷新。
+     *
+     * <p>标记失败不影响任何播放逻辑 —— 这是一条纯体验优化,不该有能力影响主流程。
+     */
+    private fun markCurrentVodUnavailable() {
+        val site = sourceKey
+        val id = vodId
+        if (site.isEmpty() || id.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                val siteName = ApiConfig.get().getSource(site)?.name.orEmpty()
+                val fresh = AvailabilityMemory.markUnavailable(site, id, siteName)
+                LOG.i("echo-unavailable mark site=$site vod=$id accepted=$fresh")
+                // 通知搜索页/首页把这条卡片摘掉(各自的列表状态在各自 ViewModel 里)
+                availabilitySink?.invoke()
+            } catch (t: Throwable) {
+                LOG.d("AvailabilityMemory", "mark failed: " + t.message)
+            }
+        }
+    }
+
+    /**
+     * 由列表页(搜索页/首页)注入的"资源状态变化"回调。
+     *
+     * <p>为什么用回调而不是让列表页轮询:标记只在用户点空时产生,频率极低,
+     * 轮询是纯浪费;而搜索页/首页都是**已存在的独立 ViewModel**,让它们主动
+     * 观察这个类会引入反向依赖(列表 → 详情),反而把两个页面绑死。
+     */
+    var availabilitySink: (() -> Unit)? = null
 
     /**
      * 线路耗尽后的换源入口(播放侧在"所有线路试完"或"质量看门狗判定持续卡顿"时调用)。

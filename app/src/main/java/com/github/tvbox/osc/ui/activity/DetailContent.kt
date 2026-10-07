@@ -77,7 +77,9 @@ internal fun DetailContent(
         contentPadding = PaddingValues(bottom = 32.dp),
     ) {
         item(key = "header") {
-            val desc = remember(info.des) { removeHtmlTag(info.des) }
+            // 走 cleanVodDescription 而不是 removeHtmlTag:后者只去 HTML 标签,
+            // 站点堆在简介开头的推广群/链接/分隔线会原样留在界面上(见该函数 KDoc)
+            val desc = remember(info.des) { cleanVodDescription(info.des) }
             Column(
                 modifier = Modifier
                     .padding(start = 6.dp, end = 6.dp, top = 12.dp)

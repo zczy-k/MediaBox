@@ -55,6 +55,15 @@ public class HawkConfig {
     public static final String VIDEO_QUALITY_CAP = "video_quality_cap";
     /** 「画质选项」三档(int:0=画质优先 1=自动画质 2=速度优先;取值口径见 DeviceCapability.QualityMode) */
     public static final String VIDEO_QUALITY_MODE = "video_quality_mode";
+    /**
+     * 「已确认无资源」标记(JSON,见 util/AvailabilityMemory):键 "站点|影片",
+     * 值 "标记时间戳,站名"。用于把点空过一次的影片从列表里剔除(方案 B 第二层)。
+     *
+     * <p>与 {@link #VIDEO_QUALITY_MEMORY} 分开存:两者生命周期不同 ——
+     * 画质记忆是"复用探测结果"、TTL 30 天;无资源标记是"别再让我点空"、TTL 90 天,
+     * 且必须在站点补资源后能独立失效,不牵连画质记忆一起被清。
+     */
+    public static final String VIDEO_AVAILABILITY_MEMORY = "video_availability_memory";
     public static final String PLAY_SCALE = "play_scale"; //0 texture 2
     // EXO 音频隧道(audio offload,2026-09-11):压缩音频码流直通 DSP 解码;设备/格式不支持时自动回退普通播放
     public static final String PLAY_TUNNEL = "play_tunnel";

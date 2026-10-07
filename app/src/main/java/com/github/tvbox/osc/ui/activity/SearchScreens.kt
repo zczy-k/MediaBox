@@ -62,6 +62,8 @@ import com.github.tvbox.osc.ui.components.VodPoster
 import com.github.tvbox.osc.ui.theme.cardContainer
 import kotlinx.coroutines.flow.distinctUntilChanged
 import com.github.tvbox.osc.util.SearchSettings
+import com.github.tvbox.osc.util.AvailabilityHeuristic
+import com.github.tvbox.osc.util.AvailabilityMemory
 import com.github.tvbox.osc.util.SourceIdentityMask
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -230,12 +232,18 @@ internal fun RailResults(
     val anonymousLabelOf = remember(results, anonPrefix) {
         results.mapIndexed { index, r -> r.sourceKey to SourceIdentityMask.anonymousLabel(index, anonPrefix) }.toMap()
     }
-    val rows = remember(results, selectedSource) {
+    // 方案 B 第一层:列表阶段粗筛掉"看起来没资源"的条目(站点自述 暂无资源/未收录…),
+    // 以及之前点空过、被回写标记的条目。零额外请求 —— 列表接口本来就不返回 urlBean,
+    // 真正能白拿到的判定依据只有 note/state 文案,详见 AvailabilityHeuristic 的 KDoc。
+    val unavailableMarks = remember(results) { AvailabilityMemory.activeMarks() }
+    val rows = remember(results, selectedSource, unavailableMarks) {
         results
             .filter { it.videos.isNotEmpty() && (selectedSource == null || it.sourceKey == selectedSource) }
             .sortedBy { it.arrivedAt }
             .flatMap { result ->
-                result.videos.map { (anonymousLabelOf[result.sourceKey].orEmpty()) to it }
+                result.videos
+                    .filterNot { AvailabilityHeuristic.mightBeUnavailable(it, unavailableMarks) }
+                    .map { (anonymousLabelOf[result.sourceKey].orEmpty()) to it }
             }
     }
 

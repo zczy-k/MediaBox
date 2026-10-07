@@ -39,6 +39,8 @@ import com.github.tvbox.osc.R
 import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.ui.components.VodCard
 import com.github.tvbox.osc.ui.theme.filterChipColors
+import com.github.tvbox.osc.util.AvailabilityHeuristic
+import com.github.tvbox.osc.util.AvailabilityMemory
 import com.github.tvbox.osc.util.SourceIdentityMask
 import kotlinx.coroutines.flow.distinctUntilChanged
 
@@ -71,6 +73,9 @@ internal fun SearchListResults(
         }.distinctUntilChanged().collect { if (it) onLoadMore() }
     }
     val shown = if (selectedSource == null) done else done.filter { it.sourceKey == selectedSource }
+    // 方案 B 第一层:列表阶段粗筛(详见 AvailabilityHeuristic 的 KDoc)。
+    // 零额外请求 —— 列表接口不返回 urlBean,能白拿到的判定依据只有 note/state 文案。
+    val unavailableMarks = remember(done) { AvailabilityMemory.activeMarks() }
     // ⚠️ 匿名标签:按**筛选前的稳定顺序**编号,而不是用真实站名。
     // 真实站名一旦渲染出来(标题行/筛选 chip/分区页大标题),就等于把 App 的源清单摊给用户。
     // 编号必须跟着 sourceKey 走,否则筛选一换,序号会跳。
@@ -176,7 +181,12 @@ internal fun SearchListResults(
                     contentPadding = PaddingValues(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    itemsIndexed(result.videos) { _, video ->
+                    // 方案 B 第一层:与 SearchTracks 同一口径粗筛(见 AvailabilityHeuristic)
+                    itemsIndexed(
+                        result.videos.filterNot {
+                            AvailabilityHeuristic.mightBeUnavailable(it, unavailableMarks)
+                        }
+                    ) { _, video ->
                         VodCard(
                             video = video,
                             onClick = { onCardClick(video) },
