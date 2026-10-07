@@ -54,7 +54,13 @@ public class LOG {
             // ↓ v1.0.26:线路实测画质探测(诊断「线路N」后面一直不显示分辨率)
             // ↓ v1.0.30:echo-line-heights 是**读取侧**,与写入侧的 echo-quality write-key 配对,
             //   两侧同看才能判断"记忆写进去了却读不回来"这类键不匹配问题。
-            "echo-line-probe", "echo-line-heights", "echo-unavailable"}
+            "echo-line-probe", "echo-line-heights", "echo-unavailable",
+            // ↓ v1.0.41:**去广告链路此前完全不可见**。
+            //   M3u8.purify 打的 "echo-fixAdM3u8 ..." 与 M3u8PurifyUseCase 打的
+            //   "echo-m3u8..." 都没登记,于是被 fileLog 静默丢弃 ——
+            //   真机排查「去广告弹窗还在不在」时,查到的记录数是 **0**,
+            //   无法区分"没命中广告"与"日志被过滤"。这两个前缀是补这个盲区的。
+            "echo-fixAdM3u8", "echo-m3u8"}
             // ⚠️ FILE_LOG=false(正式包)时折成空数组,让这批前缀**字面量也从 dex 里消失**。
             //
             // 背景:release 靠 proguard 的 -assumenosideeffects 已经把**调用点**全删了

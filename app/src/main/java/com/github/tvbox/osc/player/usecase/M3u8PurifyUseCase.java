@@ -127,6 +127,12 @@ public final class M3u8PurifyUseCase {
             String proxyUrl = ControlManager.get().getAddress(true) + "proxyM3u8?k=" + key;
             callback.onM3u8ProxyUrl(proxyUrl, url);
             callback.startPlayUrl(proxyUrl, headers);
+            // ⚠️ 这条日志是「命中广告分支」的唯一可观测点,别删。
+            // 用户报「去广告弹窗还在」时,靠它能立刻分清两种情况:
+            //   ① 本行出现 → 命中广告分支确实在跑(那么弹窗只可能来自别处);
+            //   ② 本行不出现 → 根本没走到这条分支,弹窗与去广告无关。
+            // 没有它就只能靠猜,而"猜"在本项目已经吃过多次亏。
+            LOG.i("echo-m3u8命中广告 removed=" + M3u8.currentAdCount + " proxy=" + (key != null));
             // ⚠️ 刻意**不再**弹「已移除视频广告 N 条」。
             // 理由(产品决策):去广告是**本来就该做**的事,不是需要用户知晓的"成果" ——
             // 弹出来只是在每次起播时干扰一下画面。命中广告与否,看播放列表长度就能感知,
