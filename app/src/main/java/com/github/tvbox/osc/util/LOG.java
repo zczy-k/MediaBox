@@ -47,13 +47,26 @@ public class LOG {
      *   <li>{@code echo-source} / {@code source-prewarm} —— 聚合搜索预热与候选数</li>
      * </ul>
      */
-    private static final String[] FILE_LOG_PREFIXES = {"echo-preload", "echo-setDataSource", "echo-play-cache", "echo-kv", "echo-progress", "echo-exo", "echo-music", "echo-lyric", "echo-sub", "echo-danmu", "echo-p2", "echo-p3", "echo-p4", "echo-p5", "clearCache", "echo--jar", "echo-local-src", "echo-setTrack", "echo-autoRetry", "echo-player", "echo-switch", "echo-goPlayUrl", "echo-history", "echo-render", "echo-picture", "echo-anime4k", "echo--list", "echo--getList", "echo--parse", "echo--getSort", "echo--sort", "echo-proxy",
+    private static final String[] FILE_LOG_PREFIXES = FILE_LOG
+            ? new String[]{"echo-preload", "echo-setDataSource", "echo-play-cache", "echo-kv", "echo-progress", "echo-exo", "echo-music", "echo-lyric", "echo-sub", "echo-danmu", "echo-p2", "echo-p3", "echo-p4", "echo-p5", "clearCache", "echo--jar", "echo-local-src", "echo-setTrack", "echo-autoRetry", "echo-player", "echo-switch", "echo-goPlayUrl", "echo-history", "echo-render", "echo-picture", "echo-anime4k", "echo--list", "echo--getList", "echo--parse", "echo--getSort", "echo--sort", "echo-proxy",
             // ↓ 诊断包(v1.0.24 起):画质优选 / 详情看门狗 / 换源预热 / 缓存裁剪
             "echo-quality", "echo-detail", "echo-source", "source-prewarm", "SubtitleCacheJanitor", "echo-cacheTrim",
             // ↓ v1.0.26:线路实测画质探测(诊断「线路N」后面一直不显示分辨率)
             // ↓ v1.0.30:echo-line-heights 是**读取侧**,与写入侧的 echo-quality write-key 配对,
             //   两侧同看才能判断"记忆写进去了却读不回来"这类键不匹配问题。
-            "echo-line-probe", "echo-line-heights", "echo-unavailable"};
+            "echo-line-probe", "echo-line-heights", "echo-unavailable"}
+            // ⚠️ FILE_LOG=false(正式包)时折成空数组,让这批前缀**字面量也从 dex 里消失**。
+            //
+            // 背景:release 靠 proguard 的 -assumenosideeffects 已经把**调用点**全删了
+            // (连参数里的字符串拼接一起消失),但本数组是 <clinit> 里的静态初始化,
+            // R8 未判定为纯死代码 ⇒ 这批前缀串会**作为不可达的死数据留在 dex 里**。
+            // 2026-09-19 用 dexdump 复验过这个残留(见 proguard-rules.pro 同处注释)。
+            //
+            // 之所以能这么折:FILE_LOG 就是 BuildConfig.DEBUG,是编译期常量,
+            // R8 会把三元表达式常量折叠掉,false 分支的数组构造连同字面量一起成为死代码。
+            // 语义上也无变化 —— FILE_LOG=false 时 fileLog() 第一行就 return,
+            // 本数组根本不会被读。
+            : new String[0];
     private static final String FILE_LOG_NAME = "preload_debug.log";
     private static ExecutorService fileLogExecutor;
 

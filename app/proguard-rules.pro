@@ -327,10 +327,12 @@
 # 因此 release 包里**调用点与日志字符串全部消失**(2026-09-19 用 dexdump 逐 dex 复验:
 # `echo-*` 埋点串 0 命中、`LOG;->i(` 与 `android/util/Log;->i(` 调用点均 0 处;
 # 连"仅为日志而取"的实参调用如 `view.currentPosition()` 也一并消失)。
-# ⚠️ 但"残留"并非为零:`com.github.tvbox.osc.util.LOG` 类本体(含 `fileLog` 方法体与
-# `FILE_LOG_PREFIXES` 的 15 个前缀字面量)仍留在 dex 里 —— 其静态初始化器把这些字符串
-# load 出来再 sput,R8 未判定为纯死代码。属**不可达的死数据,无执行影响**;
-# 若要清干净,应在 `LOG.java` 里让 FILE_LOG=false 时把前缀数组一并折叠,而不是改本文件。
+# ⚠️ 残留:曾有一处 —— `com.github.tvbox.osc.util.LOG` 类本体(含 `fileLog` 方法体与
+# `FILE_LOG_PREFIXES` 的前缀字面量)留在 dex 里:静态初始化器把字符串 load 出来再 sput,
+# R8 未判定为纯死代码,属不可达的死数据(无执行影响)。
+# **v1.0.37 已处理**:`LOG.java` 把该数组改成 `FILE_LOG ? new String[]{...} : new String[0]`,
+# FILE_LOG 即 BuildConfig.DEBUG(编译期常量),R8 常量折叠后 false 分支的数组构造连同
+# 字面量一起成为死代码。此处规则**不需要**改动,故不在此文件里做手脚。
 # 覆盖三条通道:
 #   1) android.util.Log —— 全工程 337 处直接调用
 #   2) com.github.catvod.crawler.SpiderDebug —— 外挂 jar 的诊断通道,内部就是 Log.d
