@@ -1127,13 +1127,19 @@ public class PlaybackController {
         playUrl(url, headers);
     }
 
-    /** 取流结果入口:先按 M3U8 去广告规则分流,再交给 goPlayUrl 起播 */
+    /**
+     * 取流结果入口:先按 M3U8 去广告规则分流,再交给 goPlayUrl 起播。
+     *
+     * <p>这也是**所有**播放路径(直连 / parse 解析 / 嗅探 / 多码率数组)的唯一汇合点,
+     * 所以「线路N · 1080P」的实测挂点放在这里 —— 见 {@link #probeLineQualityOnRealUrl}。
+     */
     public void playUrl(String url, HashMap<String, String> headers) {
         startSwitchLinePlayTimeout();
         url = attachProxySiteKey(url);
         if (!url.startsWith("data:application")) {
             EventBus.getDefault().post(new RefreshEvent(RefreshEvent.TYPE_REFRESH, url));//更新播放地址
         }
+        probeLineQualityOnRealUrl(url, headers);
         if (!KV.get(HawkConfig.M3U8_PURIFY, false)) {
             goPlayUrl(url, headers);
             return;
@@ -1151,6 +1157,42 @@ public class PlaybackController {
         if (view != null) view.playM3u8(url, headers, playUrlGeneration);
         // 净化期间先记下起点地址,否则净化源上 autoRetry/retryAfterStartedError 找不到可重播地址
         setWebPlayUrl(url);
+    }
+
+    /**
+     * 拿到**真实播放地址**这一刻顺手测一次画质,写进 {@link VideoQualityMemory},
+     * 供详情页显示「线路N · 1080P」。
+     *
+     * <p>⚠️ **这里才是正确的挂点**,之前挂错了地方。踩过的坑,别再加回来:
+     * <ul>
+     *   <li>原先挂在 {@link PlaybackFetch} 的取流结果里(见那段代码的注释),但那里
+     *       只能在 {@code parse=0 && jx=0} 时拿到地址,而 {@code parse} 的默认值是
+     *       {@code "1"} —— <b>绝大多数线路根本不满足条件,一条都测不到</b>。
+     *       真机实测印证:{@code echo-quality resolved} 零条。</li>
+     *   <li>也不能只靠内核实测({@code maybeRememberMeasuredQuality}):它只在
+     *       <b>用户真正播过某条线路之后</b>才写记忆,而且那条路径不发事件,
+     *       详情页的线路标签在本次会话里永远刷不出来。</li>
+     * </ul>
+     * 本方法在 {@link #playUrl(String, HashMap)} 开头被调 —— 那是直连 / 解析 /
+     * 嗅探 / 多码率数组**四条路径的汇合点**,一条都不漏。
+     *
+     * <p>与 {@code ResolvedUrlQualityProbe} 的区别:后者只在"不解析"分支跑、且早于
+     * 内核实测很多就写入;本方法覆盖全部路径,并优先保留内核实测的真值
+     * ({@code maybeRememberMeasuredQuality} 用 {@code Confidence.MEASURED} 覆盖)。
+     *
+     * <p>纯附加价值,任何失败都静默:总请求数只多一个 ≤256KB 的探测,不占用起播时间。
+     *
+     * @param headers 本次起播实际用的请求头。**必须传**:部分 CDN 缺 {@code User-Agent}
+     *直接 403,探测拿不到响应就返回 null,那条线路的标签又会永远空着。
+     */
+    private void probeLineQualityOnRealUrl(String url, HashMap<String, String> headers) {
+        if (TextUtils.isEmpty(url)) return;
+        if (!url.startsWith("http://") && !url.startsWith("https://")) return;
+        VodInfo vod = vod();
+        if (vod == null || TextUtils.isEmpty(vod.id) || TextUtils.isEmpty(vod.playFlag)) return;
+        String site = vod.sourceKey;
+        if (TextUtils.isEmpty(site)) return;
+        ResolvedUrlQualityProbe.probeAsync(site, vod.id, vod.playFlag, url, headers);
     }
 
     /** 真正起播一个可播地址(外部播放器 / dash 强制 EXO / 复用播放器换集都在这里分流) */

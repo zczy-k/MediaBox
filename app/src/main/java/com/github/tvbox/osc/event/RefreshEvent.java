@@ -21,6 +21,21 @@ public class RefreshEvent {
     public static final int TYPE_PLAYBACK_STARTED = 22;
     /** 收藏页栅格列数变更(设置页"收藏页布局"落 KV 后广播,收藏页据此立即换列数) */
     public static final int TYPE_COLLECT_LAYOUT_CHANGE = 23;
+    /**
+     * 某条线路的**实测画质**已写入 {@code VideoQualityMemory}(由 ResolvedUrlQualityProbe 发)。
+     * 详情页据此重算「线路N · 1080P」标签 —— 该探测跑在独立作用域上,发事件是它唯一的通知途径。
+     * 无 obj:关心的是"记忆变了"这个事实本身,具体值由订阅方自己去记忆里读。
+     */
+    public static final int TYPE_LINE_QUALITY_MEASURED = 24;
+    /**
+     * 某部影片已被确认"当前无资源"(见 util/AvailabilityMemory),由详情页在**终态空**时发出。
+     * 搜索页/首页据此把已加载的那张海报摘掉(方案 B 第二层)。
+     *
+     * <p>为什么用广播而不是把列表页的回调注入详情页:两者是**各自独立的 ViewModel**,
+     * 详情页被回收后回调就丢了,而"用户点空 → 返回列表看到海报还在"恰恰是最需要生效的场景。
+     * 两边本来都在 EventBus 上,多一个事件类型比维护反向依赖便宜得多。
+     */
+    public static final int TYPE_VOD_UNAVAILABLE = 25;
     public int type;
     public Object obj;
 

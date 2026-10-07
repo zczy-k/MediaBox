@@ -1079,7 +1079,14 @@ class DetailViewModel : ViewModel() {
                 val siteName = ApiConfig.get().getSource(site)?.name.orEmpty()
                 val fresh = AvailabilityMemory.markUnavailable(site, id, siteName)
                 LOG.i("echo-unavailable mark site=$site vod=$id accepted=$fresh")
-                // 通知搜索页/首页把这条卡片摘掉(各自的列表状态在各自 ViewModel 里)
+                // 通知搜索页/首页把这条卡片摘掉。**广播**而非回调注入:
+                // 列表页的 ViewModel 与本页面无引用关系,等详情页被回收后回调就断了,
+                // 而"点空 → 返回列表看到海报还在"正是这条链路最需要生效的场景。
+                // 两边本来都注册在 EventBus 上,多一个事件类型比维护反向依赖便宜。
+                if (fresh) {
+                    EventBus.getDefault().post(RefreshEvent(RefreshEvent.TYPE_VOD_UNAVAILABLE))
+                }
+                // 同页面内的手动钩子仍然可用(便于将来单点调试/定向刷新)
                 availabilitySink?.invoke()
             } catch (t: Throwable) {
                 LOG.d("AvailabilityMemory", "mark failed: " + t.message)
@@ -1088,11 +1095,10 @@ class DetailViewModel : ViewModel() {
     }
 
     /**
-     * 由列表页(搜索页/首页)注入的"资源状态变化"回调。
+     * 可选的"资源状态变化"回调,由需要即时刷新的宿主注入。
      *
-     * <p>为什么用回调而不是让列表页轮询:标记只在用户点空时产生,频率极低,
-     * 轮询是纯浪费;而搜索页/首页都是**已存在的独立 ViewModel**,让它们主动
-     * 观察这个类会引入反向依赖(列表 → 详情),反而把两个页面绑死。
+     * <p>主路径已改为 EventBus 广播([RefreshEvent.TYPE_VOD_UNAVAILABLE]),这个字段只作为
+     * 补充手段保留:它拿不到跨页面场景(宿主已销毁时字段为空),别指望它做主链路。
      */
     var availabilitySink: (() -> Unit)? = null
 
@@ -1299,6 +1305,87 @@ class DetailViewModel : ViewModel() {
         manualLineSwitchPending = true
         bumpRevision()
         requestPlay()
+        // 用户手动切到的那条线,画质大概率还没有实测值(爬虫型线路只有解析过才知道地址)。
+        // 这次切换正好解析它 —— 顺手测一次,用户下次看到这条线就有分辨率标签了。
+        // 不做的话 10 条线要用户挨个点一遍才攒齐,标签功能等于形同虚设。
+        probeLineOnDemand(flagName)
+    }
+
+    /**
+     * 手动切线后按需补测该线路画质。
+     *
+     * <p>与 [probeMissingLineQualities] 的分工:那是"打开面板时探直连型",
+     * 这里是"用户刚点过的那条,爬虫型也探"。
+     *
+     * <p>⚠️ 只探**刚切的那一条**,不批量探:用户手动切线说明他在意这条,
+     * 替他决定"其他线也值得探测"既浪费又可能触发站点风控。
+     *
+     * <p>解析走 [PlayLoader] 原路径,复用其结果,不额外解析 —— 但注意
+     * [PlayLoader] 无解析缓存,所以这里只在自己发起的解析完成后测一次,
+     * 真正起播那次仍会照常解析(总请求数不增加,只是多一个 ≤256KB 的探测)。
+     */
+    private fun probeLineOnDemand(flagName: String) {
+        val info = vodInfo ?: return
+        val mode = DeviceCapability.QualityMode.current()
+        if (!mode.shouldProbeOnFirstWatch) return
+        val site = sourceKey
+        val vod = vodId
+        if (site.isEmpty() || vod.isEmpty()) return
+        // 已有实测值就别再探:重复请求毫无意义(这条线的画质是稳定的)
+        val existing = VideoQualityMemory.lookupAll(site, vod, listOf(flagName))
+        if (existing.isNotEmpty()) return
+        val index = probeIndexOf(info)
+        val direct = directUrlOf(info.seriesMap?.get(flagName), index)
+        qualityProbeJob?.cancel()
+        qualityProbeJob = viewModelScope.launch {
+            val url = direct ?: resolveUrlForProbe(flagName) ?: return@launch
+            val probe = VideoQualityProbe()
+            val measured = try {
+                probe.probe(url, probeHeaders(site))
+            } catch (t: Throwable) {
+                null
+            }
+            if (measured == null || !measured.known) return@launch
+            if (site != sourceKey || vod != vodId) return@launch
+            VideoQualityMemory.record(site, vod, measured.copy(flag = flagName))
+            publishLineQualityHeights()
+        }
+    }
+
+    /**
+     * 为画质探测解析一条线路的真实地址(爬虫型线路必须先跑 `playerContent`)。
+     *
+     * <p>返回 null 表示这条线路拿不到地址(站点未收录/解析失败)—— 调用方静默跳过,
+     * 不阻塞播放。
+     */
+    private suspend fun resolveUrlForProbe(flagName: String): String? {
+        return try {
+            val list = vodInfo?.seriesMap?.get(flagName) ?: return null
+            val series = list.getOrNull(probeIndexOf(vodInfo ?: return null)) ?: return null
+            val raw = series.url?.trim().orEmpty()
+            if (raw.isEmpty()) return null
+            if (raw.startsWith("http://") || raw.startsWith("https://")) return raw
+            // 非直链:交给站点爬虫解析。本仓无解析缓存,这里只解析一次给探测用,
+            // 起播路径会自行再解析一次(PlayLoader 无缓存,这是既有事实)。
+            val bean = ApiConfig.get().getSource(sourceKey) ?: return null
+            val spider = ApiConfig.get().getCSP(bean) ?: return null
+            val json = spider.playerContent(flagName, raw, ApiConfig.get().getVipParseFlags())
+            if (json.isNullOrEmpty()) return null
+            parseResolvedUrl(json)
+        } catch (t: Throwable) {
+            null
+        }
+    }
+
+    /** 从 `playerContent` 返回的 JSON 里取出真实播放地址。 */
+    private fun parseResolvedUrl(json: String): String? {
+        return try {
+            val obj = org.json.JSONObject(json)
+            val url = obj.optString("url", "")
+            if (url.isNotEmpty()) url else null
+        } catch (t: Throwable) {
+            null
+        }
     }
 
     fun toggleReverse() {
@@ -1373,6 +1460,12 @@ class DetailViewModel : ViewModel() {
             onPlaybackStarted()
             return
         }
+        // 实测画质写进记忆了:重算一次「线路N · 1080P」。不发这个事件的话,
+        // 标签本次会话永远刷不出来 —— 探测跑在独立作用域上,这是它唯一的回传途径。
+        if (event.type == RefreshEvent.TYPE_LINE_QUALITY_MEASURED) {
+            publishLineQualityHeights()
+            return
+        }
         if (event.type != RefreshEvent.TYPE_REFRESH) return
         val info = vodInfo ?: return
         when (val obj = event.obj) {
@@ -1399,6 +1492,11 @@ class DetailViewModel : ViewModel() {
         if (playing.id != info.id || playing.sourceKey != info.sourceKey) return
         if (playing.playFlag != info.playFlag || playing.playIndex != info.playIndex) return
         insertVod()
+        // 内核实测画质(MusicSessionDelegate.maybeRememberMeasuredQuality)是在**起播之后**
+        // 才拿到真实宽高并写进 VideoQualityMemory 的,而那条路径不发任何事件 ——
+        // 于是"线路N"下面本该补上的画质,在这次会话里永远不会出现(下次打开该片才有)。
+        // 这里刷新一次:播放头真推进过,说明内核已经拿到轨道信息,记忆里该有值了。
+        publishLineQualityHeights()
     }
 
     private fun syncPlayingVodInfo(playing: VodInfo) {

@@ -6,6 +6,8 @@ import com.github.catvod.crawler.JsLoader
 import com.github.tvbox.osc.api.ApiConfig
 import com.github.tvbox.osc.bean.AbsXml
 import com.github.tvbox.osc.bean.Movie
+import com.github.tvbox.osc.util.AvailabilityHeuristic
+import com.github.tvbox.osc.util.AvailabilityMemory
 import com.github.tvbox.osc.util.HawkConfig
 import com.github.tvbox.osc.util.HistoryHelper
 import com.github.tvbox.osc.util.KV
@@ -459,6 +461,10 @@ class SearchViewModel : ViewModel() {
 
     @org.greenrobot.eventbus.Subscribe(threadMode = org.greenrobot.eventbus.ThreadMode.MAIN)
     fun onSearchResultEvent(event: com.github.tvbox.osc.event.RefreshEvent) {
+        if (event.type == com.github.tvbox.osc.event.RefreshEvent.TYPE_VOD_UNAVAILABLE) {
+            refreshAvailability()
+            return
+        }
         if (event.type != com.github.tvbox.osc.event.RefreshEvent.TYPE_SEARCH_RESULT) return
         val data = event.obj as? AbsXml ?: return
         val myToken = token
@@ -498,6 +504,30 @@ class SearchViewModel : ViewModel() {
             // 首次到包才分配到达序号,后续变体并入不改动,保证竖排站点栏顺序稳定
             val arrivedAt = if (existing.state == ResultState.Pending) ++arriveSeq else existing.arrivedAt
             SourceResult(sourceKey, existing.sourceName, ResultState.Done, sorted, arrivedAt)
+        }
+    }
+
+    /**
+     * 详情页那边"这部片子当前真的没资源"被确认后,由 [com.github.tvbox.osc.ui.activity.DetailViewModel]
+     * 通过 `availabilitySink` 回调过来 —— 让这里把已入库的结果按新标记重算一次,
+     * 用户返回搜索页时那张误导人的海报就已经不在了(方案 B 第二层)。
+     *
+     * <p>为什么改 `results` 而不是让 UI 再算一次:`results` 是搜索结果的唯一真源,
+     * UI 侧只是它的投影。在 ViewModel 里改一次,轨道视图与分组视图同时生效,不必两处同步。
+     *
+     * <p>幂等:同样的标记重复触发也只是把同样的条目再滤一次,不会累积副作用。
+     */
+    fun refreshAvailability() {
+        val marks = AvailabilityMemory.activeMarks()
+        if (marks.isEmpty()) return
+        val before = results.value.fold(0) { acc, r -> acc + r.videos.size }
+        val next = results.value.map { r ->
+            r.copy(videos = r.videos.filterNot { AvailabilityHeuristic.mightBeUnavailable(it, marks) })
+        }
+        results.value = next
+        val after = next.fold(0) { acc, r -> acc + r.videos.size }
+        if (after != before) {
+            LOG.i("echo-unavailable search-purge before=$before after=$after")
         }
     }
 

@@ -1,6 +1,8 @@
 package com.github.tvbox.osc.player
 
+import com.github.tvbox.osc.event.RefreshEvent
 import com.github.tvbox.osc.util.LOG
+import org.greenrobot.eventbus.EventBus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -68,6 +70,12 @@ object ResolvedUrlQualityProbe {
                 if (!measured.known) return@launch
                 VideoQualityMemory.record(site, vod, measured.copy(flag = line))
                 LOG.i("echo-quality resolved: " + line + " -> " + measured.width + "x" + measured.height)
+                // ⚠️ 这条广播不能少:本对象是**独立作用域**(页面销毁也跑完,见类 KDoc),
+                // 写完记忆若不通知详情页,「线路N · 1080P」在本次会话里就刷不出来 ——
+                // 详情页的线路标签只读 [DetailViewModel.lineQualityHeights],
+                // 而那条 StateFlow 只在 publishLineQualityHeights() 时才重算。
+                // v1.0.26 真机实测踩过:记忆里有值、界面仍是纯「线路1」。
+                EventBus.getDefault().post(RefreshEvent(RefreshEvent.TYPE_LINE_QUALITY_MEASURED))
             } catch (t: Throwable) {
                 LOG.d("ResolvedUrlQualityProbe", "probe failed: " + t.message)
             }

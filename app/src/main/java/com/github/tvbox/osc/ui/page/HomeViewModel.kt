@@ -11,6 +11,7 @@ import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.bean.MovieSort
 import com.github.tvbox.osc.bean.SourceBean
 import com.github.tvbox.osc.event.RefreshEvent
+import com.github.tvbox.osc.util.AvailabilityHeuristic
 import com.github.tvbox.osc.util.AvailabilityMemory
 import com.github.tvbox.osc.util.DefaultConfig
 import com.github.tvbox.osc.util.HomeSettings
@@ -149,6 +150,11 @@ class HomeViewModel : ViewModel() {
     fun onRefreshEvent(event: RefreshEvent) {
         if (event.type == RefreshEvent.TYPE_API_URL_CHANGE) {
             reload()
+            return
+        }
+        // 详情页确认某部片没资源了:把已加载的卡片摘掉(见 refreshAvailability)
+        if (event.type == RefreshEvent.TYPE_VOD_UNAVAILABLE) {
+            refreshAvailability()
         }
     }
 
@@ -431,6 +437,41 @@ class HomeViewModel : ViewModel() {
         val loader = loaders[partition.sort.id] ?: return
         if (loader.busy) return
         requestPartition(partition, partition.nextPage)
+    }
+
+    /**
+     * 详情页确认"这部片子当前真的没资源"后回调过来(见 `DetailViewModel.availabilitySink`),
+     * 把首页已加载的推荐位与分区按新标记重算一次 —— 用户返回首页时那张海报已经不在了。
+     *
+     * <p>只动**已加载**的内存列表,不重新请求:被标记的片子下次刷新自然不会出现,
+     * 这里只保证"当前这一屏"立刻变干净,代价是零网络请求。
+     *
+     * <p>幂等:重复触发只是把同样的条目再滤一遍。
+     */
+    fun refreshAvailability() {
+        val marks = AvailabilityMemory.activeMarks()
+        if (marks.isEmpty()) return
+        var purged = 0
+        val curRec = rec.value
+        val recLeft = curRec.videos.filterNot {
+            val hit = AvailabilityHeuristic.mightBeUnavailable(it, marks)
+            if (hit) purged++
+            hit
+        }
+        if (recLeft.size != curRec.videos.size) {
+            rec.value = if (recLeft.isEmpty()) {
+                Rec(PartitionState.Empty, recLeft)
+            } else {
+                Rec(curRec.state, recLeft)
+            }
+        }
+        val next = partitions.value.map { p ->
+            val left = p.videos.filterNot { AvailabilityHeuristic.mightBeUnavailable(it, marks) }
+            purged += p.videos.size - left.size
+            if (left.size == p.videos.size) p else p.copy(videos = left)
+        }
+        partitions.value = next
+        if (purged > 0) LOG.i("echo-unavailable home-purge n=$purged")
     }
 
     fun applyFilter(partition: Partition, filterSelect: Map<String, String>) {
