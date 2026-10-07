@@ -136,7 +136,9 @@ class ComposeVideoController @JvmOverloads constructor(
     private val speedRetryRunnable by lazy { Runnable { applySpeedWhenReady() } }
 
     private val m3u8PurifyUseCase by lazy {
-        M3u8PurifyUseCase(context, object : M3u8PurifyUseCase.Callback {
+        // ⚠️ 不再传 context:该类已无 UI 依赖(去广告弹窗删除后 Context 失去唯一消费者),
+        // 构造签名同步收窄,详见 M3u8PurifyUseCase 的构造函数注释。
+        M3u8PurifyUseCase(object : M3u8PurifyUseCase.Callback {
             override fun startPlayUrl(url: String?, headers: HashMap<String, String>?) {
                 listener?.startPlayUrl(url ?: return, headers)
             }

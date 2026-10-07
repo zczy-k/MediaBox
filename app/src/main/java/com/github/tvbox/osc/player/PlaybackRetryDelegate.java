@@ -167,10 +167,10 @@ final class PlaybackRetryDelegate {
         if (view != null) view.applyPlayerConfig(cfg);
         host.stopParse();
         host.initParseLoadFound();
-        if (view != null && view.isPageAlive()) {
-            final PlaybackViewBridge aliveView = view;
-            view.runOnUi(() -> aliveView.toast(PlaybackController.str(R.string.player_decode_fallback_tip)));
-        }
+        // ⚠️ 刻意**不再**弹「硬解失败,已切换软解重试」。
+        // 理由(产品决策):自动软解是内部兜底动作,用户既不关心、也无法干预 ——
+        // 弹出来只是盖在画面上干扰观看。真要确认当前解码方式,覆盖层的「解码」按钮
+        // 已经实时显示(上面 applyPlayerConfig 就是同步它),无需另开一个瞬时提示。
         if (view != null) view.releasePlayer();
         if (view != null) host.playUrl(host.webPlayUrl(), host.webHeaderMap());
         return true;

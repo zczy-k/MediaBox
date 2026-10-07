@@ -1,14 +1,8 @@
 package com.github.tvbox.osc.player.usecase;
 
-import android.content.Context;
-import android.widget.Toast;
-
-import com.github.tvbox.osc.R;
-import com.github.tvbox.osc.base.App;
 import com.github.tvbox.osc.server.ControlManager;
 import com.github.tvbox.osc.server.RemoteServer;
 import com.github.tvbox.osc.util.LOG;
-import com.github.tvbox.osc.util.LanguageManager;
 import com.github.tvbox.osc.util.M3u8;
 import com.lzy.okgo.OkGo;
 import com.lzy.okgo.callback.AbsCallback;
@@ -28,23 +22,24 @@ import java.util.Map;
  */
 public final class M3u8PurifyUseCase {
 
-    /** 资源文案:Application 的 base 只在进程启动时挂一次,切语言后直接用 app.getString 会停在旧语言 */
-    private static String str(int resId, Object... args) {
-        App app = App.getInstance();
-        return app == null ? "" : LanguageManager.INSTANCE.localized(app).getString(resId, args);
-    }
-
     public interface Callback {
         void startPlayUrl(String url, HashMap<String, String> headers);
 
         void onM3u8ProxyUrl(String proxyUrl, String sourceUrl);
     }
 
-    private final Context context;
     private final Callback callback;
 
-    public M3u8PurifyUseCase(Context context, Callback callback) {
-        this.context = context.getApplicationContext();
+    /**
+     * ⚠️ 构造参数里的 `Context` 已随「已移除视频广告 N 条」弹窗一并去掉。
+     *
+     * <p>本类自述"纯网络/解析逻辑,与 UI 无关",而 Context 此前**只为那一个 Toast 服务**
+     * (经 {@code context.getApplicationContext()})。提示删掉后它就彻底没有消费者了 ——
+     * 留着一个不用的 Context 参数只会让人误以为这里还要碰 UI。
+     * 顺带清掉的孤儿:私有 helper `str()` 与 `R`/`App`/`LanguageManager` 三个 import
+     * (它们的唯一消费者也是那个 Toast)。
+     */
+    public M3u8PurifyUseCase(Callback callback) {
         this.callback = callback;
     }
 
@@ -132,7 +127,10 @@ public final class M3u8PurifyUseCase {
             String proxyUrl = ControlManager.get().getAddress(true) + "proxyM3u8?k=" + key;
             callback.onM3u8ProxyUrl(proxyUrl, url);
             callback.startPlayUrl(proxyUrl, headers);
-            Toast.makeText(context, str(R.string.toast_ads_removed, M3u8.currentAdCount), Toast.LENGTH_SHORT).show();
+            // ⚠️ 刻意**不再**弹「已移除视频广告 N 条」。
+            // 理由(产品决策):去广告是**本来就该做**的事,不是需要用户知晓的"成果" ——
+            // 弹出来只是在每次起播时干扰一下画面。命中广告与否,看播放列表长度就能感知,
+            // 不需要一条瞬时提示来宣告。
         }
     }
 
