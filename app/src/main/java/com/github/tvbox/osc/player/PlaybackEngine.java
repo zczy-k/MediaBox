@@ -150,8 +150,31 @@ public final class PlaybackEngine implements PlaybackHostApi {
                 if (released) return;
                 // 播放错误落一条盘:本机 ROM 吞 logcat,只有 App 文件日志能取证(白名单已含 echo-player)
                 if (playState == VideoView.STATE_ERROR) {
+                    // ⚠️ 这条日志是「硬解为什么老失败」的唯一可观测点,别删。
+                    //
+                    // v1.0.46 扩充:此前只打 kernel/pos/started/url —— **拿不到错误种类**,
+                    // 于是"硬解失败率高"只能靠猜。而 App 里其实早就有分类与解码器名
+                    // (ExoPlayer.lastErrorKind / videoDecoderName / isTunnelingEnabled),
+                    // 只是没打出来。补上后即可定量区分:
+                    //   kind=DECODE  -> 真的是解码器不支持这个码流(换软解是对的)
+                    //   kind=NETWORK -> 其实是网络/源抖动(换软解解决不了,成功只是碰巧重试成功)
+                    // 这两者的处置完全不同,不看 kind 无法判断。
+                    AbstractPlayer mp = videoView.getMediaPlayer();
+                    int kind = ExoPlayer.ERROR_KIND_UNKNOWN;
+                    String decoder = "";
+                    boolean tunnel = false;
+                    if (mp instanceof ExoPlayer) {
+                        ExoPlayer exo = (ExoPlayer) mp;
+                        kind = exo.lastErrorKind();
+                        decoder = exo.videoDecoderName();
+                        tunnel = exo.isTunnelingEnabled();
+                    }
                     LOG.i("echo-player error: kernel="
-                            + (videoView.getMediaPlayer() == null ? "null" : videoView.getMediaPlayer().getClass().getSimpleName())
+                            + (mp == null ? "null" : mp.getClass().getSimpleName())
+                            + " kind=" + (kind == ExoPlayer.ERROR_KIND_DECODE ? "DECODE"
+                            : kind == ExoPlayer.ERROR_KIND_NETWORK ? "NETWORK" : "UNKNOWN")
+                            + " decoder=" + decoder
+                            + " tunnel=" + tunnel
                             + " pos=" + videoView.getCurrentPosition()
                             + " started=" + controller.isPlaybackStarted()
                             + " url=" + controller.webPlayUrl());
