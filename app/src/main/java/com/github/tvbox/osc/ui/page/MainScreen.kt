@@ -11,12 +11,14 @@ import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.scrollBy
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -216,13 +218,13 @@ private fun MainContent() {
         { pagerState.isScrollInProgress || sheetHost.request != null }
     }
     val density = LocalDensity.current
-    val layoutDirection = LocalLayoutDirection.current
 
     // 导航形态:Compact 用底部横条,Medium/Expanded 用侧边竖条(判据集中在 NavMetrics,见 spec §4.11)
     val navAxis = NavMetrics.axisFor(currentWindowWidthClass())
     // 形态由窗口档决定、玻璃由用户配置决定,两者正交:关掉玻璃是回退到 M3 surface 导航,不是取消竖条
     val railMode = navAxis == NavAxis.Vertical
     val surfaceNavVisible = !liquidGlassEnabled
+    val layoutDirection = LocalLayoutDirection.current
     val navBarsPadding = WindowInsets.navigationBars.asPaddingValues()
     val navBandExtent = NavMetrics.BAND_EXTENT_DP.dp
     val liquidBackdropBounds: (Size) -> Rect? = remember(density, navBandExtent, navAxis) {
@@ -319,7 +321,7 @@ private fun MainContent() {
                                             else Color.Transparent,
                                         ),
                                     horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+                                    verticalArrangement = Arrangement.Center,
                                 ) {
                                     Icon(
                                         painterResource(tab.icon),
