@@ -82,6 +82,23 @@ public final class EpisodeMatcher {
         return Math.max(0, Math.min(fallbackIndex, targetList.size() - 1));
     }
 
+    /**
+     * 两个集名是否指向同一集(换线/换源时"接着看"的守卫)。
+     *
+     * <p>为什么必须有:换线/换源会把上一段的位置继承给新进度键,而进度键含**集名** ——
+     * 若这次起播其实是换了集(或新源集数少被 clamp),继承过去就会把上一集的位置写到这一集上,
+     * 表现是"点下一集却从上一集的中段开始播"。判据与选集/换线共用本类的打分,
+     * 不另立一套,否则同名集的认定会在两处漂移。
+     *
+     * <p>任一集名为空 ⇒ 无从判定,返回 false(调用方自己决定未知时放不放行)。
+     */
+    public static boolean isSameEpisode(String one, String other) {
+        if (isEmpty(one) || isEmpty(other)) {
+            return false;
+        }
+        return episodeMatchScore(one, extractEpisodeNumber(one), other) > 0;
+    }
+
     static int episodeMatchScore(String currentName, int currentEpisode, String targetName) {
         if (isEmpty(currentName) || isEmpty(targetName)) {
             return 0;

@@ -1,5 +1,7 @@
 package com.github.tvbox.osc.player;
 
+import com.github.tvbox.osc.util.EpisodeMatcher;
+
 import java.util.HashSet;
 import java.util.Set;
 
@@ -54,10 +56,53 @@ final class PlaybackAttemptState {
     /** 换源点击即停:置位后抑制在途取流结果/超时/嗅探回调把已停的旧源拉起 */
     boolean switchStopPending;
 
-    /** 换源停播时记下的进度(键+毫秒):取流后写进新源的进度键 */
+    /** 换线/换源前记下的进度(键+毫秒):取流后写进新线路/新源的进度键 */
     String pendingInheritKey;
 
     long pendingInheritProgress;
+
+    /**
+     * 与 {@link #pendingInheritProgress} 配套的**集名**(进度键里含集名,靠它判断这次起播是不是同一集)。
+     *
+     * <p>为什么必须带集名:位置继承只在"换线/换源但没换集"时才成立。少了这道守卫,
+     * "记了位置却没播成 → 用户随手点了下一集"会把上一集的位置写进新一集的键里
+     * (表现:点下一集却从上一集中段开始播)。null = 无从判定,放行(与不传集名的调用等价)。
+     */
+    String pendingInheritEpisode;
+
+    /**
+     * 记下"接着看"的位置(换线/换源前唯一入口)。
+     *
+     * <p>位置取**播放器实时值**优先:内核已释放(自动重试把内核收走了)时实时值读作 0,
+     * 回落到已落盘的进度 —— 两个都不为正说明本来就没看过,此时不记(免得把一个 0 值当继承源)。
+     */
+    void rememberProgressForSwitch(String key, long livePosition, long savedProgress, String episodeName) {
+        if (key == null || key.isEmpty()) return;
+        long position = livePosition > 0 ? livePosition : savedProgress;
+        if (position <= 0) return;
+        pendingInheritKey = key;
+        pendingInheritProgress = position;
+        pendingInheritEpisode = episodeName;
+    }
+
+    /**
+     * 待继承的位置是否适用于本次起播(= 记下的那一段与 {@code targetEpisode} 是同一集)。
+     * 集名任一侧为空 ⇒ 无从判定,放行(不因为拿不到集名就丢掉用户的位置)。
+     */
+    boolean pendingInheritAppliesTo(String targetEpisode) {
+        if (pendingInheritProgress <= 0 || pendingInheritKey == null || pendingInheritKey.isEmpty()) return false;
+        String recorded = pendingInheritEpisode;
+        if (recorded == null || recorded.isEmpty()) return true;
+        if (targetEpisode == null || targetEpisode.isEmpty()) return true;
+        return EpisodeMatcher.isSameEpisode(recorded, targetEpisode);
+    }
+
+    /** 清掉待继承:一次性语义 —— 不认的那一份也不能留到下一次起播 */
+    void clearPendingInherit() {
+        pendingInheritKey = null;
+        pendingInheritProgress = 0;
+        pendingInheritEpisode = null;
+    }
 
     // ==================== 会话标记 ====================
 

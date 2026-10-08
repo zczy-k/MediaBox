@@ -158,7 +158,10 @@ object WatchProgressStore {
 
     /**
      * 换源/换线"接着看":把 [fromKey] 的位置继承给 [toKey],目标键已有记录则不覆盖
-     * (回滚原源时不该被别的源的位置顶掉);继承位置同样过判据,时长未知按绝对阈值。
+     * (回滚原源时不该被别的源的位置顶掉)。
+     *
+     * <p>判据用 [WatchProgressRules.shouldInherit](门槛远低于"续播点"的 30 秒):换线/换源是显式意图,
+     * 不该因为"刚看开头"就被判成不值得继承 —— 那正是"换个源从头播"的用户可见症状。
      */
     @JvmStatic
     fun inherit(owner: String?, fromKey: String?, toKey: String?, positionMs: Long) {
@@ -167,7 +170,7 @@ object WatchProgressStore {
         if (positionMs <= 0) return
         if (HistoryHelper.isIncognito()) return
         if (isDiscarded(toKey)) return
-        if (WatchProgressRules.decide(positionMs, 0L) == WatchDecision.SKIP) return
+        if (!WatchProgressRules.shouldInherit(positionMs)) return
         submit {
             // 读-判-写必须在同一条串行通道里:排队期间同键可能已有更新值落盘,读到了就必须放弃继承
             if (isDiscarded(toKey) || HistoryHelper.isIncognito()) return@submit

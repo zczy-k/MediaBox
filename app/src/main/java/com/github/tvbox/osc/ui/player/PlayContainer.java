@@ -1142,6 +1142,10 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
         }
         // 同片同线路换集(选集面板点集走的就是这条):内核可复用,省一次重建;换片/换线路仍走重建
         boolean sameVodSwitch = isSameVodEpisodeSwitch(session);
+        // 用户手动换线(详情页「线路N」chip / 选集面板):新线路的进度键不同,先把当前位置记下,
+        // 下一次 play 会把它写进新键 —— 缺这一步就是"换条线从头播"。
+        // 放在 setData 里而不是靠页面的异步指令:与"这次起播"同帧,不存在"指令晚到、先播了"的竞态
+        if (session.userPickedLine()) rememberProgressForSwitch();
         engine.setData(session);
         syncSessionVod();
         mController.setPlayerConfig(scheduler.playerCfg());
@@ -1362,9 +1366,10 @@ mController.toggleControlBar();
         scheduler.stopParse();
         scheduler.markStoppedForSourceSwitch();
         scheduler.stopMusicSessionForFailedPlayback();
-        
-        long position = mVideoView.getCurrentPosition();
-        scheduler.setPendingInherit(scheduler.progressKey(), position);
+
+        // 换源:先把当前位置记下 —— 新源的进度键不同,靠它写进新键接着看(必须在 release 之前:
+        // 释放会把内核里的位置清零,之后只能读回上一次落盘的旧值)
+        rememberProgressForSwitch();
         mVideoView.pause();
         if (scheduler.isCrossContentReuseAllowed()) {
             // 总闸下换源也算换线:内核留给新源复用(释放与判定共用同一许可);进度改由此处显式落盘,原先靠 release 内部兜底
@@ -1378,8 +1383,21 @@ mController.toggleControlBar();
         scheduler.setWebPlayUrl(null);
         scheduler.setWebHeaderMap(null);
         scheduler.initParseLoadFound();
-        LOG.i("echo-switchSource stop at " + position + "ms, key=" + scheduler.progressKey());
+        LOG.i("echo-switchSource stop key=" + scheduler.progressKey());
         if (!TextUtils.isEmpty(tip)) setTip(tip, true, false);
+    }
+
+    /**
+     * 换线/换源前记下"接着看"的位置(见 {@code PlaybackController.rememberProgressForSwitch})。
+     *
+     * <p>四个切换入口里,这个容器负责两个:**手动换线**({@link #setData} 里按
+     * {@code session.userPickedLine()} 自动调用,与"下一次起播"同帧,不存在竞态)与
+     * **线路耗尽后的自动换源**(由页面在拉起换源链之前调用)。
+     * 手动换源由 {@link #stopForSourceSwitch} 自己调用,自动换线在播放侧内部完成。
+     */
+    public void rememberProgressForSwitch() {
+        if (scheduler == null) return;
+        scheduler.rememberProgressForSwitch();
     }
 
     public void clearSourceSwitchTip() {
@@ -1389,6 +1407,9 @@ mController.toggleControlBar();
 
     /** 同页换片:停掉当前内容并立即落盘,免得新片加载期间旧片声画残留;不在播本页内容时不动(别误停音乐页/直播) */
     public void stopForContentSwitch() {
+        // 内容要走了:上一次换线/换源记下却没等到起播的位置必须作废,否则会被新片的起播错当成"接着看"
+        // (放在归属判定**之前**:归属不属本页不代表那份脏数据就该留着)
+        if (scheduler != null) scheduler.clearPendingInherit();
         if (mVideoView == null || !ownsEngineContent()) return;
         // 在途的解析/取流/超时属上一部:新片会话边界虽也会清,但新片详情回来之前它们足以把旧片再拉起来
         scheduler.cancelInFlight();

@@ -440,18 +440,8 @@ public class PlaybackController {
         }
 
         @Override
-        public String progressKey() {
-            return PlaybackController.this.progressKey;
-        }
-
-        @Override
-        public long getSavedProgress(String url) {
-            return PlaybackController.this.getSavedProgress(url);
-        }
-
-        @Override
-        public void inheritProgressFrom(String key, long position) {
-            PlaybackController.this.inheritProgressFrom(key, position);
+        public void rememberProgressForSwitch() {
+            PlaybackController.this.rememberProgressForSwitch();
         }
 
         @Override
@@ -927,10 +917,26 @@ public class PlaybackController {
         return st.switchStopPending;
     }
 
-    /** 换源点击即停时记下"接着看"的进度(play 时写进新键) */
-    public void setPendingInherit(String key, long progress) {
-        st.pendingInheritKey = key;
-        st.pendingInheritProgress = progress;
+    /**
+     * 换线/换源(手动或自动)前记下"接着看"的位置:下一次 {@link #play(boolean)} 会把它写进新进度键。
+     *
+     * <p>为什么收口成这一个方法:换线/换源一共四个入口(手动换线、手动换源、自动换线、线路耗尽后的
+     * 自动换源),而位置继承原先只在其中两个入口做了 —— 另外两个入口的新进度键没有历史记录,
+     * 于是"同一个视频换了条线/换了个源就从头播"。入口统一后位置口径只剩一份。
+     *
+     * <p>⚠️ 必须在**改写 `vod.playFlag`/`vod.playIndex` 之前**调用 —— 集名要取即将被换掉的那一份,
+     * 它是 {@link #play(boolean)} 里"这次起播还是不是同一集"的唯一判据。
+     */
+    public void rememberProgressForSwitch() {
+        String key = progressKey();
+        if (TextUtils.isEmpty(key)) return;
+        // 播放器实时位置优先:内核已被收走(自动重试换内核/释放后)时它读作 0,这时才值得读一次磁盘
+        long live = (view == null) ? 0 : view.currentPosition();
+        long saved = live > 0 ? 0 : getSavedProgress(key);
+        VodInfo.VodSeries vs = (vod == null) ? null : currentSeries(vod.playFlag, vod.playIndex);
+        st.rememberProgressForSwitch(key, live, saved, vs == null ? null : vs.name);
+        LOG.i("echo-progress remember-for-switch live=" + live + " saved=" + saved
+                + " ep=" + (vs == null ? "-" : vs.name));
     }
 
     /**
@@ -1024,17 +1030,17 @@ public class PlaybackController {
         WatchProgressStore.onPlayStart(progressKey());
         PlaybackProgress.onEpisodeStartNoScroll();
         startResolvePlayUrlTimeout();
-        // 换源点击即停前记下的进度:新源进度键不同,写进新键缓存接着看(新键已有历史记录则不覆盖);
-        // 回滚原源时键相同,停播 release 已落盘,该方法会直接跳过
-        if (st.pendingInheritProgress > 0 && !TextUtils.isEmpty(st.pendingInheritKey)) {
+        // 换线/换源前记下的位置:新线路/新源的进度键不同(键含线路与集名),写进新键缓存接着看
+        // (新键已有历史记录则不覆盖)。集名对不上 = 这次其实是换集 ⇒ 不认那份位置,从头播。
+        if (st.pendingInheritAppliesTo(vs.name)) {
             inheritProgressFrom(st.pendingInheritKey, st.pendingInheritProgress);
-            LOG.i("echo-switchSource inherit progress " + st.pendingInheritProgress + "ms from " + st.pendingInheritKey);
+            LOG.i("echo-progress inherit " + st.pendingInheritProgress + "ms from " + st.pendingInheritKey);
         }
-        st.pendingInheritKey = null;
-        st.pendingInheritProgress = 0;
+        // 一次性:认了的已交给 inheritProgress*,不认的更不该留到下一次起播(那时键与集名都已不同)
+        st.clearPendingInherit();
         // 重新播放清除现有进度
         if (reset) {
-            // 重播不消费待继承进度,留着会被下一次非重播播放写进别的集
+            // 重播从头发起:上面刚记下的继承位置一并作废,否则会被这一次重播消费掉
             inheritProgressKey = null;
             inheritProgress = 0;
             WatchProgressStore.clear(progressOwner(), progressKey());
@@ -1442,10 +1448,24 @@ public class PlaybackController {
         stopParse();
     }
 
+    /**
+     * 作废"换线/换源前记下的位置"(见 {@link #rememberProgressForSwitch})。
+     *
+     * <p>只允许在**内容真的要走了**的边界调用(退出页面 / 同页换片 / 切直播):记下的位置是给
+     * "下一次起播还是这一集"用的,一旦换的是别的内容,它就成了脏数据 ——
+     * 最坏情况是把上一部的位置写进新一部同名集的进度键里(打开新片却从中间开始播)。
+     * 反过来,换线/换源自身**绝不能**清:那份位置正是要交给新线路/新源的。
+     */
+    public void clearPendingInherit() {
+        st.clearPendingInherit();
+    }
+
     public void stopPlaybackForPageExit() {
         st.clearSessionFlags();
         // 与 onHostDestroy 同属会话边界:一并作废"播完待撤会话"的待判消息
         timeouts.cancelPendingCompletionDrop();
+        // 页面退出 = 内容走了:上一次换线/换源记下、却没等到起播的位置就此作废(见 clearPendingInherit)
+        st.clearPendingInherit();
         cancelInFlight();
         // 页面退出即"没有正在播的源"
         ApiConfig.get().setCurrentPlaySourceKey("");

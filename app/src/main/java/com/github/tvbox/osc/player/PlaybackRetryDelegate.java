@@ -33,11 +33,8 @@ final class PlaybackRetryDelegate {
 
         VodInfo.VodSeries currentSeries(String flag, int index);
 
-        String progressKey();
-
-        long getSavedProgress(String url);
-
-        void inheritProgressFrom(String key, long position);
+        /** 换线前记下"接着看"的位置(新线路的进度键不同,靠它接着看;必须在改 playFlag 之前调用) */
+        void rememberProgressForSwitch();
 
         String webPlayUrl();
 
@@ -394,18 +391,16 @@ final class PlaybackRetryDelegate {
         VodInfo vod = host.vod();
         if (vod == null || TextUtils.isEmpty(vod.playFlag)) return false;
         st.triedLineFlags.add(vod.playFlag);
-        final String preProgressKey = host.progressKey();
-        final long savedProgress = TextUtils.isEmpty(preProgressKey) ? 0 : host.getSavedProgress(preProgressKey);
-        PlaybackViewBridge view = host.view();
-        final long preProgress = Math.max(savedProgress, view == null ? 0 : view.currentPosition());
         LOG.i(logPrefix + ": switch line " + vod.playFlag + " -> " + targetFlag);
         // 给一句"在动"的阶段反馈,但**不带线路名/序号**:名字会泄露用的是哪条线路,
         // 而序号在换源后会重置回 1,反而让人以为"怎么又从头开始"。
         showStageTip(R.string.player_trying_other_line);
+        // 换线不换集:记下当前位置,新线路的进度键不同,靠它接着看。
+        // ⚠️ 必须在改 playFlag/playIndex **之前** —— 记下的那条要带走的是旧线路的集名。
+        host.rememberProgressForSwitch();
         vod.playFlag = targetFlag;
         vod.playIndex = nextIndex;
         st.onLineSwitched();
-        host.inheritProgressFrom(preProgressKey, preProgress);
         host.play(false);
         return true;
     }

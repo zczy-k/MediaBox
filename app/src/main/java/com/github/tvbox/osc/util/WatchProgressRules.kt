@@ -32,4 +32,16 @@ object WatchProgressRules {
     /** "真看过":进观看历史与记集数的门槛。与 SAVE 同源 —— 看完的那一集当然也算看过 */
     fun shouldRemember(positionMs: Long, durationMs: Long): Boolean =
         decide(positionMs, durationMs) != WatchDecision.SKIP
+
+    /**
+     * 换线/换源继承位置的**下限**(毫秒)。
+     *
+     * <p>为什么不能沿用 [decide] 的 30 秒门槛:那条门槛回答的是"这个位置值不值得记成续播点",
+     * 而换线/换源问的是"用户刚才明明在看,只是换了个来源"—— 这是显式意图,只要位置为正就该接着看。
+     * 套 30 秒门槛会让"刚看开头就切线"变成从头播,与"换线不打断观看"的预期直接冲突。
+     */
+    const val MIN_INHERIT_MS = 3_000L
+
+    /** 换线/换源是否把该位置继承给新的进度键([WatchProgressStore.inherit] 的唯一判据) */
+    fun shouldInherit(positionMs: Long): Boolean = positionMs >= MIN_INHERIT_MS
 }

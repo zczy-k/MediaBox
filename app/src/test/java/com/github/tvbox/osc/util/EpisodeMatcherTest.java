@@ -1,6 +1,8 @@
 package com.github.tvbox.osc.util;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
 import com.github.tvbox.osc.bean.VodInfo;
 
@@ -161,5 +163,29 @@ public class EpisodeMatcherTest {
         // 传 null 走的是本地 isEmpty 分支:若换回 android.text.TextUtils,此处会 NPE(单测里它静默返回 false)
         assertEquals(-1, EpisodeMatcher.lineFlagIndex(flags, null));
         assertEquals(-1, EpisodeMatcher.lineFlagIndex(flags, ""));
+    }
+
+    // ---------- isSameEpisode(换线/换源继承位置的守卫) ----------
+
+    @Test
+    public void isSameEpisode_sameNumberDifferentWording() {
+        // 各站写法不同(第N集 / 纯数字 / 带清晰度后缀)但指的是同一集:换线时位置必须继承
+        assertTrue(EpisodeMatcher.isSameEpisode("第01集", "01"));
+        assertTrue(EpisodeMatcher.isSameEpisode("第1集", "第01集"));
+        assertTrue(EpisodeMatcher.isSameEpisode("E05", "第5集"));
+    }
+
+    @Test
+    public void isSameEpisode_differentEpisode_doesNotMatch() {
+        // 不同集绝不能算同集:否则"点下一集"会继承上一集的位置,从上一集中段开始播
+        assertFalse(EpisodeMatcher.isSameEpisode("第1集", "第2集"));
+        assertFalse(EpisodeMatcher.isSameEpisode("第01集", "第11集"));
+    }
+
+    @Test
+    public void isSameEpisode_emptyName_doesNotMatch() {
+        assertFalse(EpisodeMatcher.isSameEpisode("", "第1集"));
+        assertFalse(EpisodeMatcher.isSameEpisode("第1集", ""));
+        assertFalse(EpisodeMatcher.isSameEpisode(null, null));
     }
 }

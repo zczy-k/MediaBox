@@ -271,6 +271,9 @@ public final class PlaybackEngine implements PlaybackHostApi {
         // (真机 bug:点播页播着直播)
         session = null;
         controller.clearStartedContent();
+        // 点播 → 直播:上一次换线/换源记下却没等到起播的位置就此作废(直播无进度语义,
+        // 留着会被"回到点播后打开的另一部片"错当成"接着看";见 PlaybackController.clearPendingInherit)
+        controller.clearPendingInherit();
         LOG.i(TAG + " enter live mode");
         // 点播页面若还在栈里(未销毁):先把渲染容器收回来(否则它仍挂在那个页面的槽位里,
         // 直播页的 Compose 树拿到的只是一张空壳),并清掉对页面 View 的引用。

@@ -52,4 +52,15 @@ class WatchProgressRulesTest {
         assertTrue(WatchProgressRules.shouldRemember(50_000, hundredSeconds))
         assertTrue(WatchProgressRules.shouldRemember(99_000, hundredSeconds))
     }
+
+    @Test
+    fun shouldInherit_isLooserThanResumePoint() {
+        // 换线/换源是显式意图("我在这条线上接着看"),门槛必须远低于 30 秒的续播点门槛 ——
+        // 套用 decide 会让"刚看开头就切线"被判成不值得继承,表现正是从头播
+        assertFalse(WatchProgressRules.shouldInherit(0))
+        assertFalse(WatchProgressRules.shouldInherit(2_999))
+        assertTrue(WatchProgressRules.shouldInherit(3_000))
+        assertTrue(WatchProgressRules.shouldInherit(29_999))
+        assertTrue(WatchProgressRules.shouldInherit(30_000))
+    }
 }

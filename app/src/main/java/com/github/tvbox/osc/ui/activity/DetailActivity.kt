@@ -151,7 +151,12 @@ class DetailActivity : BaseActivity(), PageHost {
         PermissionHelper.requestNotificationIfNeeded(this)
     }
 
-    override fun onPlaybackLinesExhausted(): Boolean = startDetailFallbackAfterLinesExhausted()
+    override fun onPlaybackLinesExhausted(): Boolean {
+        // 线路全废 → 自动换源:先把当前位置记下再拉起换源链。新源的进度键不同(键含源 key),
+        // 缺这一步就是"换个源从头播"。与手动换线/手动换源共用同一入口,位置口径只有一份
+        playContainer?.rememberProgressForSwitch()
+        return startDetailFallbackAfterLinesExhausted()
+    }
 
     /** 入口可见性由播放侧判定(剧集/线路多于一个才显示按钮),这里只兜住详情数据尚未就绪的时序 */
     override fun showEpisodeSheet() {
