@@ -418,7 +418,7 @@ private fun CollectCard(
         modifier = modifier
             .fillMaxWidth()
             .aspectRatio(2f / 3f)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(20.dp))
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
     ) {
         VodPoster(name = item.name, pic = item.pic, modifier = Modifier.fillMaxSize())

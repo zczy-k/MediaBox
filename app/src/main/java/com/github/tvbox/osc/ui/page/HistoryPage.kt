@@ -204,12 +204,12 @@ fun HistoryPage(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(
-                            start = 16.dp + navStart,
-                            end = 16.dp,
-                            top = topPad + 8.dp,
-                            bottom = 8.dp + navBottom,
+                            start = 20.dp + navStart,
+                            end = 20.dp,
+                            top = topPad + 12.dp,
+                            bottom = 12.dp + navBottom,
                         ),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
                     ) {
                         items(content.items, key = { HistoryViewModel.key(it) }) { item ->
                             val itemKey = HistoryViewModel.key(item)

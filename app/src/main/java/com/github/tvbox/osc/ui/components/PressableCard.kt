@@ -25,7 +25,7 @@ import androidx.compose.ui.unit.dp
 fun PressableCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    shape: Shape = RoundedCornerShape(16.dp),
+    shape: Shape = RoundedCornerShape(20.dp),
     onLongClick: (() -> Unit)? = null,
     enabled: Boolean = true,
     content: @Composable BoxScope.() -> Unit,

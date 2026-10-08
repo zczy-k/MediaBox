@@ -1,29 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- MediaBox 启动画面图标(Android 12+ 系统启动画面用):
-     品牌符号 = 圆角方框 + 居中播放三角,与 ic_launcher_foreground / ic_settings_play 同源。
-     按启动画面规范画布 288dp / viewport 1024,内容占中央 2/3(= 启动图标遮罩范围)。
-     不做动画:系统在应用首帧就绪后立即撤掉启动画面,避免任何等待感。
-     刻意不带 <aapt:attr> 渐变 —— windowSplashScreenAnimatedIcon 在部分 ROM 上
-     对 gradient 支持不稳,纯色 fill 最可靠;渐变由 ic_launcher_bg 承担。 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="288dp"
     android:height="288dp"
     android:viewportWidth="1024"
     android:viewportHeight="1024">
 
-    <!-- 圆角方框边框:外框 4 条 + 内填充挖空,合成一个"框" -->
     <path
-        android:fillColor="#3D5AFE"
-        android:fillType="evenOdd"
-        android:pathData="M200,200h624q80,0 80,80v464q0,80 -80,80H200q-80,0 -80,-80V280q0,-80 80,-80Zm72,72v560h560V272Z" />
+        android:fillColor="#00000000"
+        android:pathData="M300,220h424q100,0 100,100v384q0,100 -100,100H300q-100,0 -100,-100V320q0,-100 100,-100z"
+        android:strokeColor="#FF2563EB"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="48" />
 
-    <!-- 框内底色(浅),让三角在深色主题下也有对比 -->
     <path
-        android:fillColor="#EEF2FF"
-        android:pathData="M272,272h480v480H272Z" />
+        android:fillColor="#00000000"
+        android:pathData="M348,650V370l164,160 164,-160v280"
+        android:strokeColor="#FF18243B"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="56" />
 
-    <!-- 居中播放三角 -->
     <path
-        android:fillColor="#3D5AFE"
-        android:pathData="M436,364v296l248,-148Z" />
+        android:fillColor="#FF12B8A6"
+        android:pathData="M500,540l150,78 -150,78z" />
 </vector>

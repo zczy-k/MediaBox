@@ -59,7 +59,7 @@ fun SettingsCard(
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = shape ?: RoundedCornerShape(16.dp),
+        shape = shape ?: RoundedCornerShape(20.dp),
         color = color ?: MaterialTheme.colorScheme.cardContainer,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.32f)),
     ) {

@@ -82,8 +82,8 @@ internal fun DetailContent(
             val desc = remember(info.des) { cleanVodDescription(info.des) }
             Column(
                 modifier = Modifier
-                    .padding(start = 16.dp, end = 16.dp, top = 12.dp)
-                    .background(MaterialTheme.colorScheme.surfaceBright, RoundedCornerShape(16.dp))
+                    .padding(start = 20.dp, end = 20.dp, top = 16.dp)
+                    .background(MaterialTheme.colorScheme.surfaceBright, RoundedCornerShape(20.dp))
                     .padding(horizontal = 16.dp, vertical = 12.dp)
             ) {
                 Row(
@@ -309,8 +309,8 @@ internal fun ChipRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 6.dp, end = 6.dp, top = 12.dp)
-            .background(MaterialTheme.colorScheme.surfaceBright, RoundedCornerShape(16.dp))
+            .padding(start = 20.dp, end = 20.dp, top = 16.dp)
+            .background(MaterialTheme.colorScheme.surfaceBright, RoundedCornerShape(20.dp))
             .padding(vertical = 12.dp),
     ) {
         Row(

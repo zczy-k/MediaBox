@@ -196,6 +196,7 @@ fun HomePage(vm: HomeViewModel, contentPadding: PaddingValues = PaddingValues(0.
                     Box(
                         modifier = Modifier
                             .size(26.dp)
+                            .background(MaterialTheme.colorScheme.primary, CircleShape)
                             .drawBehind {
                                 capsuleLogo?.let { drawable ->
                                     val w = size.width
@@ -581,11 +582,11 @@ private fun PartitionSection(
     onRetry: (() -> Unit)? = null,
     cardWidth: Dp = 110.dp,
 ) {
-    Column(modifier = Modifier.padding(vertical = 8.dp)) {
+    Column(modifier = Modifier.padding(vertical = 12.dp)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 16.dp, end = 8.dp, bottom = 8.dp),
+                .padding(start = 20.dp, end = 12.dp, bottom = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -666,8 +667,8 @@ private fun PartitionSection(
             }
 
             HomeViewModel.PartitionState.Ready -> LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp),
             ) {
                 itemsIndexed(videos) { index, video ->
                     com.github.tvbox.osc.ui.components.VodCard(

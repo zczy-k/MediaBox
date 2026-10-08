@@ -40,7 +40,7 @@ fun VodCard(
             PressableCard(
                 onClick = onClick,
                 onLongClick = onLongClick,
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(20.dp),
             ) {
                 Box(modifier = Modifier.aspectRatio(posterAspectRatio)) {
                     VodPoster(
@@ -61,7 +61,7 @@ fun VodCard(
                 textAlign = TextAlign.Center,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 6.dp),
+                    .padding(top = 8.dp),
             )
         }
         return
@@ -71,7 +71,7 @@ fun VodCard(
         onClick = onClick,
         onLongClick = onLongClick,
         modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(20.dp),
     ) {
         Box(modifier = Modifier.aspectRatio(posterAspectRatio)) {
             VodPoster(
