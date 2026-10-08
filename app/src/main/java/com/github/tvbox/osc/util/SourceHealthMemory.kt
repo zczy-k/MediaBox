@@ -6,7 +6,6 @@ import android.net.NetworkCapabilities
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.runtime.mutableStateOf
-import com.github.tvbox.osc.base.AppContextHolder
 import org.json.JSONArray
 import org.json.JSONObject
 

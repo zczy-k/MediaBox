@@ -294,7 +294,13 @@ class DetailActivity : BaseActivity(), PageHost {
         playContainer?.setPreviewMode(!isFullBox())
     }
 
-    fun startDetailFallbackAfterLinesExhausted(): Boolean = vm.startFallbackAfterLinesExhausted()
+    /**
+     * 旧的无参入口(保留给"只拉起换源链、不记源级失败"的调用方)。
+     *
+     * <p>⚠️ 走这条路径**不记**源级失败 —— 拿不到"网络类还是源级"的判据时按不记账处理
+     * (宁可漏记一次,也不要因为一次断网把好源全部拉黑)。
+     */
+    fun startDetailFallbackAfterLinesExhausted(): Boolean = vm.startFallbackAfterLinesExhausted(false)
 
     override fun onResume() {
         super.onResume()
