@@ -143,12 +143,13 @@ class SourceHealthPolicyTest {
         val t1 = t0 + 6 * hour
         val normalized = SourceHealthPolicy.normalize(banned, t1)
         assertFalse(SourceHealthPolicy.isBlocked(normalized, t1))
-        // 解封后只差一次失败 ⇒ 不该立刻又封
+        // 解封后只差一次失败 ⇒ 不该立刻又封(升级次数仍停在 1,证据从 0 重新计)
         val oneMore = SourceHealthPolicy.recordFail(
             normalized, SourceFailKind.SEARCH_TIMEOUT, SourceHealthPolicy.contentKey("电影C"), t1,
         )
+        assertEquals(1, oneMore.banCount)
+        assertEquals(1, oneMore.fails.size)
         assertFalse(SourceHealthPolicy.isBlocked(oneMore, t1))
-        assertEquals(0, oneMore.banCount)
     }
 
     @Test
