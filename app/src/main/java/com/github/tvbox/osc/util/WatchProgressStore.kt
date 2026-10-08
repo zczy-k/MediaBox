@@ -157,8 +157,12 @@ object WatchProgressStore {
     }
 
     /**
-     * 换源/换线"接着看":把 [fromKey] 的位置继承给 [toKey],目标键已有记录则不覆盖
-     * (回滚原源时不该被别的源的位置顶掉)。
+     * 换源/换线"接着看":把 [fromKey] 的位置继承给 [toKey]。
+     *
+     * <p>**以当前位置为准 —— 目标键已有记录也覆盖**。这里曾经是"目标键已有记录则不覆盖",
+     * 理由是"回滚原源时不该被别的源的位置顶掉";真机实测证伪了它:用户在线路 A 从头看了几秒、
+     * 切到线路 B,而 B 的旧记录是 77 分钟(以前在那条线看过的位置)⇒ 继承被跳过、画面直接跳到 77 分钟,
+     * 与"换线/换源不打断观看"完全相反。记下的位置永远是"用户此刻看到哪儿",比目标键里的陈旧位置更权威。
      *
      * <p>判据用 [WatchProgressRules.shouldInherit](门槛远低于"续播点"的 30 秒):换线/换源是显式意图,
      * 不该因为"刚看开头"就被判成不值得继承 —— 那正是"换个源从头播"的用户可见症状。
@@ -172,9 +176,8 @@ object WatchProgressStore {
         if (isDiscarded(toKey)) return
         if (!WatchProgressRules.shouldInherit(positionMs)) return
         submit {
-            // 读-判-写必须在同一条串行通道里:排队期间同键可能已有更新值落盘,读到了就必须放弃继承
+            // 执行时复查:排队期间可能刚落下一个删除/刚打开无痕
             if (isDiscarded(toKey) || HistoryHelper.isIncognito()) return@submit
-            if (CacheManager.getCache(md5(toKey)) != null) return@submit
             CacheManager.save(md5(toKey), positionMs)
             remember(owner, toKey)
         }
