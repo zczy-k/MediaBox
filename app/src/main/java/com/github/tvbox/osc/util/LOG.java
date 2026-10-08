@@ -43,6 +43,7 @@ public class LOG {
      *   <li>{@code echo-line-heights} —— 线路画质读取侧(记忆里到底读到了什么)</li>
      *   <li>{@code echo-unavailable} —— 无资源标记的写入与粗筛结果(诊断"海报为什么不见了")</li>
      *   <li>{@code echo-detail} —— 详情加载与看门狗(卡在哪一步)</li>
+     *   <li>{@code echo-searchplan} —— 搜索批次规划与收尾统计(每批多少源/命中/失败/超时/最慢源耗时)</li>
      *   <li>{@code SubtitleCacheJanitor} —— 字幕缓存 LRU 裁剪结果</li>
      *   <li>{@code echo-source} / {@code source-prewarm} —— 聚合搜索预热与候选数</li>
      * </ul>
@@ -55,6 +56,10 @@ public class LOG {
             // ↓ v1.0.30:echo-line-heights 是**读取侧**,与写入侧的 echo-quality write-key 配对,
             //   两侧同看才能判断"记忆写进去了却读不回来"这类键不匹配问题。
             "echo-line-probe", "echo-line-heights", "echo-unavailable",
+            // ↓ 2026-10-08:**搜索批次观测**。此前"搜索慢"只能靠体感判断 —— 既没有每源耗时,
+            //   也没有"这个源是没命中还是挂了"的区分(全叫 Done)。echo-searchplan 落盘后,
+            //   首轮多快出结果、失败/超时各占多少、最慢源多久才有回包,都能在文件里直接读。
+            "echo-searchplan",
             // ↓ v1.0.41:**去广告链路此前完全不可见**。
             //   M3u8.purify 打的 "echo-fixAdM3u8 ..." 与 M3u8PurifyUseCase 打的
             //   "echo-m3u8..." 都没登记,于是被 fileLog 静默丢弃 ——

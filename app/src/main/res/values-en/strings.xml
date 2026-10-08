@@ -161,6 +161,9 @@
     <string name="search_load_more">Search more sources</string>
     <string name="search_progress">Searched %1$d/%2$d sources</string>
     <string name="search_all_sources_done">All %1$d sources searched</string>
+    <string name="search_progress_settled">Completed %1$d/%2$d sources</string>
+    <string name="search_source_failed">Source request failed</string>
+    <string name="search_source_timeout">Source timed out</string>
     <string name="search_card_unopenable">This source cannot open it directly. Try another source</string>
 
     <!-- Cast -->

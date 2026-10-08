@@ -46,6 +46,9 @@ object SearchSettings {
 
     private val NOISE_PATTERN = Regex("[\\s\\p{Z}\\p{P}\\p{S}]")
 
+    /** 别名分隔符:与 {@code AbsJson.AbsJsonVod.joinAliases} 的输出口径一致 */
+    private val ALIAS_SPLIT_PATTERN = Regex("[|,，、;；]")
+
     // 多词关键词切分(按空白),用于"每个词都出现"的低档相关度判定
     private val WHITESPACE_PATTERN = Regex("\\s+")
 
@@ -57,6 +60,36 @@ object SearchSettings {
     private val ASCII_DIGIT_PATTERN = Regex("[0-9]")
 
     private val ASCII_CODE_TOKEN_PATTERN = Regex("[a-z0-9]+", RegexOption.IGNORE_CASE)
+
+    /**
+     * 归一化缓存(2026-10-08 搜索准确度/性能改造)。
+     *
+     * <p>存在理由:搜索页里 {@link #relevanceScore} 每条结果至少被调用两次(过滤一次、排序一次),
+     * 一次搜索几百源、每源十几条就是**上万次**归一化;而 {@link #normalize} 每次都新建 StringBuilder、
+     * 跑两条正则 replace 再 lowercase。同一批结果里又有大量重复标题(不同源的同一部片子)。
+     *
+     * <p>容量刻意保守(512):搜索页生命周期很短,一次搜索涉及的标题种类通常远小于这个数,
+     * 不需要更激进的淘汰策略;满了整体清空,不做 LRU 维护。
+     */
+    private const val NORMALIZE_CACHE_CAPACITY = 512
+
+    private val normalizeCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /**
+     * [normalize] 的带缓存版本。
+     *
+     * <p>null 与空串不进缓存:null 的语义是"没有标题",与"标题归一化后为空串"在匹配上的处理不同,
+     * 不能混同(见 {@link #matches})。
+     */
+    fun normalizeCached(text: String?): String {
+        if (text.isNullOrEmpty()) return normalize(text)
+        normalizeCache[text]?.let { return it }
+        val normalized = normalize(text)
+        if (normalizeCache.size >= NORMALIZE_CACHE_CAPACITY) normalizeCache.clear()
+        normalizeCache[text] = normalized
+        return normalized
+    }
+
 
     fun isExactMatchEnabled(): Boolean = KV.get(KEY_EXACT_MATCH, false)
 
@@ -86,17 +119,34 @@ object SearchSettings {
         )
     }
 
-    /** 结果是否按给定模式保留 */
-    fun matches(name: String?, keyword: String?, mode: MatchMode): Boolean = when (mode) {
+    /** 结果是否按给定模式保留(只看标题)。 */
+    fun matches(name: String?, keyword: String?, mode: MatchMode): Boolean = matches(name, null, keyword, mode)
+
+    /**
+     * 结果是否按给定模式保留,**标题与别名一起参与**(2026-10-08)。
+     *
+     * <p>为什么必须看别名:JSON 型源的列表接口把副标题/英文名放在 vod_sub / vod_en,
+     * 客户端此前只按 name 过滤,于是"源站能搜到、客户端判不匹配"的结果被整批丢掉。
+     * 别名命中给到的分数略低于标题命中(见 [relevanceScore]),排序上仍让标题匹配优先。
+     */
+    fun matches(name: String?, alias: String?, keyword: String?, mode: MatchMode): Boolean = when (mode) {
         MatchMode.All -> true
         MatchMode.Smart -> {
-            val k = normalize(keyword)
-            k.isNotEmpty() && normalize(name).contains(k)
+            val k = normalizeCached(keyword)
+            k.isNotEmpty() && (normalizeCached(name).contains(k) || aliasesContain(alias, k))
         }
         // 精准文本仍要求全标题相等；但番号查询的“精准”应命中标题开头完整的番号 token，
         // 例如搜 MIAA-195 要能命中“ MIAA-195 + 标题”，不能要求整条影片标题只剩番号。
-        MatchMode.Exact -> isExactMatch(name, keyword) || hasExactNumberedCodePrefix(name, keyword)
+        MatchMode.Exact -> isExactMatch(name, keyword) || hasExactNumberedCodePrefix(name, keyword) ||
+            aliasesContain(alias, normalizeCached(keyword))
     }
+
+    /** 别名里是否有任一条归一化后包含关键词(别名按 {@code |} 分隔,口径同 AbsJson.joinAliases) */
+    private fun aliasesContain(alias: String?, normalizedKeyword: String): Boolean {
+        if (alias.isNullOrEmpty() || normalizedKeyword.isEmpty()) return false
+        return alias.split(ALIAS_SPLIT_PATTERN).any { normalizeCached(it).contains(normalizedKeyword) }
+    }
+
 
     private fun hasExactNumberedCodePrefix(name: String?, keyword: String?): Boolean {
         val title = name?.trim().orEmpty()
@@ -122,31 +172,53 @@ object SearchSettings {
 
     /**
      * 结果相关度(越高越贴合),用于排序让最佳匹配浮到最前:
-     * 4=归一化相等;3=以关键词开头;2=包含关键词;1=多词关键词的每个词都出现;0=不匹配。
+     * 5=归一化相等;4=以关键词开头;3=包含关键词;2=多词关键词的每个词都出现;
+     * 1=别名完全等于关键词;0=不匹配。
+     *
+     * <p>2026-10-08:分值整体上移一位,给"仅别名命中"留出位置 ——
+     * 别名命中不该和"标题包含"同级,否则一部片的英文名会把真正的标题匹配压下去。
      */
-    fun relevanceScore(name: String?, keyword: String?): Int {
-        val n = normalize(name)
-        val k = normalize(keyword)
-        if (n.isEmpty() || k.isEmpty()) return 0
-        if (n == k) return 4
-        if (n.startsWith(k)) return 3
-        if (n.contains(k)) return 2
+    fun relevanceScore(name: String?, keyword: String?): Int = relevanceScore(name, null, keyword)
+
+    /** 同 [relevanceScore],额外考虑别名(见 [matches] 的 KDoc) */
+    fun relevanceScore(name: String?, alias: String?, keyword: String?): Int {
+        val n = normalizeCached(name)
+        val k = normalizeCached(keyword)
+        if (k.isEmpty()) return 0
+        if (n.isEmpty()) return aliasScore(alias, k)
+        if (n == k) return 5
+        if (n.startsWith(k)) return 4
+        if (n.contains(k)) return 3
         val tokens = keyword.orEmpty().trim().split(WHITESPACE_PATTERN)
-            .map { normalize(it) }
+            .map { normalizeCached(it) }
             .filter { it.isNotEmpty() }
-        if (tokens.size > 1 && tokens.all { n.contains(it) }) return 1
+        if (tokens.size > 1 && tokens.all { n.contains(it) }) return 2
+        return aliasScore(alias, k)
+    }
+
+    /** 仅别名命中的分数:完全相等给 1(低于任何标题命中);只"包含"关系不给正分(当作不匹配) */
+    private fun aliasScore(alias: String?, normalizedKeyword: String): Int {
+        if (alias.isNullOrEmpty()) return 0
+        for (part in alias.split(ALIAS_SPLIT_PATTERN)) {
+            if (normalizeCached(part) == normalizedKeyword) return 1
+        }
         return 0
     }
 
     /**
-     * 番号类关键词的查询变体(2026-10-05)。
+     * 番号类关键词的查询变体(2026-10-05 引入,2026-10-08 改口径)。
      *
      * <p>背景:客户端搜索是**原样把关键词透传给源站搜索接口**,不做本地检索。很多源站的库里把番号
      * 存成**无分隔符**形式(如 `MIAA195`),而用户按标题里的写法输入带横杠的 `MIAA-195`,
      * 源站 `LIKE '%MIAA-195%'` 就匹配不上 → 客户端一条都收不到。
      *
-     * <p>故除原词外再补一个"去掉常见分隔符"的紧凑形式,让源站多匹配一次。原词始终排第一,
-     * 结果去重。无分隔符的关键词(如「庆余年」)只返回原词,不增加任何请求。
+     * <p>故除原词外再补一个"去掉常见分隔符"的紧凑形式。原词始终排第一,结果按 id/标题去重。
+     * 无分隔符的关键词(如「庆余年」)只返回原词,不增加任何请求。
+     *
+     * <p>⚠️ 2026-10-08:调用方**不要**对每个源无条件把全部变体都发出去 ——
+     * 变体是"主词没打中时的补充",不是"每次都补一刀"。见 [SearchViewModel] 的
+     * {@code runSourceSearch}:只有原词这一轮**没有任何有效命中**时才发紧凑形式,
+     * 因此普通片名(无分隔符)全程仍是每源一次请求。
      */
     fun queryVariants(keyword: String?): List<String> {
         val raw = keyword?.trim().orEmpty()
@@ -215,8 +287,8 @@ object SearchSettings {
 
     /** 精准匹配:归一化后相等。站点标题普遍带年份/集数等括注(如「庆余年(2019)」),直接相等会全滤掉 */
     fun isExactMatch(title: String?, keyword: String?): Boolean {
-        val normalized = normalize(title)
-        return normalized.isNotEmpty() && normalized == normalize(keyword)
+        val normalized = normalizeCached(title)
+        return normalized.isNotEmpty() && normalized == normalizeCached(keyword)
     }
 
     /** 归一化 = 全角转半角 → 删括注及其内容 → 删空白与标点 → 忽略大小写;主体文字之外的差异(如「第二季」)仍然区分 */

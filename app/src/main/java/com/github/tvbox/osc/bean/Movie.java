@@ -61,6 +61,18 @@ public class Movie implements Serializable {
         public UrlBean urlBean;
         @XStreamAlias("des")
         public String des;// <![CDATA[权来]
+        /**
+         * 别名/副标题/英文名,多个用 {@code |} 分隔(2026-10-08 搜索准确度改造)。
+         *
+         * <p>为什么需要:列表接口把别名放在 vod_sub / vod_en,而搜索匹配此前**只看 name**,
+         * 于是"用别名/英文名/副标题搜得到、却在本客户端被判不匹配"的结果被整批滤掉 ——
+         * 用户看到的现象是"明明源站有这部片子,App 里搜不到"。
+         *
+         * <p>来源:{@code AbsJson.AbsJsonVod.toXmlVideo()} 从 JSON 字段映射;XML 型源无对应字段,
+         * 保持为 null,匹配逻辑必须容忍 null。
+         */
+        @XStreamAlias("alias")
+        public String alias;
         public String sourceKey;
         @XStreamAlias("tag")
         public String tag;

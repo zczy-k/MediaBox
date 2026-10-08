@@ -24,6 +24,7 @@ import com.github.tvbox.osc.util.EpisodeTotals
 import com.github.tvbox.osc.util.HistoryHelper
 import com.github.tvbox.osc.util.HistoryWriter
 import com.github.tvbox.osc.util.LOG
+import com.github.tvbox.osc.util.OkGoHelper
 import com.github.tvbox.osc.util.SearchHelper
 import com.github.tvbox.osc.util.SourceIdentityMask
 import com.github.tvbox.osc.sourcedata.SourceViewModel
@@ -275,10 +276,37 @@ class DetailViewModel : ViewModel() {
     private fun cancelInFlightContent() {
         searchJob?.cancel()
         searchJob = null
+        val stopped = pendingSearchDone.keys.toList()
         pendingSearchDone.values.forEach { it.complete(Unit) }
         pendingSearchDone.clear()
+        //⚠️ 必须逐源撤:搜索请求 tag 自 2026-10-08 起是**按源唯一**的
+        // (SearchHelper.searchRequestTag),`cancelTag("search")` 已经打不中任何一条。
+        // 只 complete 协程而不撤网络请求,等于"UI 认为结束了、请求还在抢带宽"。
+        cancelSourceSearchRequests(stopped)
         cancelDetailTimeout()
         searchToken = SEARCH_SEQ.incrementAndGet()
+    }
+
+    /**
+     * 撤掉聚合搜索里仍在途的源请求(2026-10-08)。
+     *
+     * <p>与 SearchViewModel 同一手法:OkGo 的 tag 取消是精确匹配,`cancelTag("search")`
+     * 对 `search-<key>` 无效,因此按在途源逐个撤,再兜一层按 tag 扫默认客户端。
+     */
+    private fun cancelSourceSearchRequests(sourceKeys: Collection<String>) {
+        sourceKeys.forEach { key ->
+            val tag = SearchHelper.searchRequestTag(key)
+            try {
+                OkGo.getInstance().cancelTag(tag)
+            } catch (ignored: Throwable) {
+                LOG.d("DetailViewModel", "cancel fallback search failed key=" + key)
+            }
+            try {
+                com.github.catvod.net.OkHttp.cancel(OkGoHelper.getDefaultClient(), tag)
+            } catch (ignored: Throwable) {
+                LOG.d("DetailViewModel", "cancel fallback call failed key=" + key)
+            }
+        }
     }
 
     /** 内容级状态随片走:不清会串味(推荐位/换源候选/清晰度/换源快照都属上一部) */
@@ -1388,8 +1416,12 @@ class DetailViewModel : ViewModel() {
         cancelDetailTimeout()
         qualityProbeJob?.cancel()
         qualityProbeJob = null
+        cancelSourceSearchRequests(pendingSearchDone.keys.toList())
+        pendingSearchDone.clear()
         OkGo.getInstance().cancelTag("detail")
-        OkGo.getInstance().cancelTag("search")
+        // ⚠️ 保留老 tag 的撤销:搜索引擎自身已改为按源 tag,但仍可能有旧调用点/在途请求用它。
+        // 打中不了也无副作用,不能因为"现在按源撤了"就把这条删掉 —— 删掉等于放弃兜底。
+        OkGo.getInstance().cancelTag(SearchHelper.legacySearchRequestTag())
     }
 
     private fun candidateKey(video: Movie.Video): String =

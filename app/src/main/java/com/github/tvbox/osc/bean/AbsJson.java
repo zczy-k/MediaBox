@@ -163,7 +163,32 @@ public class AbsJson implements Serializable {
             video.urlBean = urlBean;
             // 简介回退:vod_content(详情正文)→ vod_blurb(短简介),避免简介字段被整段丢掉
             video.des = firstNonEmpty(vod_content, vod_blurb);// <![CDATA[权来]
+            // 别名/副标题/英文名:搜索匹配除了 name 也要看它们(见 Movie.Video.alias 的 KDoc)
+            video.alias = joinAliases(vod_sub, vod_en);
             return video;
+        }
+
+        /**
+         * 合并多个别名字段,去重、去空、去重复项,单条以 {@code |} 连接。
+         *
+         * <p>vod_sub 通常是 {@code "英文名,中文别名,其它副标题"} 的逗号串(见本类字段注释里的实例),
+         * vod_en 是纯英文名;两者可能有交集,故连接前先按"去空白后的原文"去重。
+         * 分隔符用 {@code |} 而不是逗号:逗号在 vod_sub 内部已被用作字段自身的分隔。
+         */
+        private static String joinAliases(String... candidates) {
+            if (candidates == null) return null;
+            java.util.LinkedHashSet<String> picked = new java.util.LinkedHashSet<>();
+            for (String raw : candidates) {
+                if (raw == null) continue;
+                for (String part : raw.split("[,，、;；|]")) {
+                    String alias = part.trim();
+                    // 单字别名噪声极大(源站常用单字母分组),且极易造成误命中;一律丢弃
+                    if (alias.length() < 2) continue;
+                    picked.add(alias);
+                }
+            }
+            if (picked.isEmpty()) return null;
+            return String.join("|", picked);
         }
 
         /** 取第一个非空(非 null / 非空串,trim 后)的候选值;全空返回 null */

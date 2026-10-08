@@ -65,6 +65,7 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
     val running by vm.running.collectAsStateWithLifecycle()
     val hasMore by vm.hasMore.collectAsStateWithLifecycle()
     val searchedCount by vm.searchedCount.collectAsStateWithLifecycle()
+    val settledCount by vm.settledCount.collectAsStateWithLifecycle()
     val totalCount by vm.totalCount.collectAsStateWithLifecycle()
     val hotSearch by vm.hotSearch.collectAsStateWithLifecycle()
     val suggest by vm.suggest.collectAsStateWithLifecycle()
@@ -190,6 +191,7 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
                 topPad = topPad,
                 hasMore = hasMore,
                 searchedCount = searchedCount,
+                settledCount = settledCount,
                 totalCount = totalCount,
                 onLoadMore = { vm.loadNextBatch() },
                 // 点开影片即暂停自动续批:把线程与爬虫让给详情取数,别让剩余上百个源继续抢
@@ -243,6 +245,7 @@ private fun SearchResultsContent(
     topPad: Dp,
     hasMore: Boolean,
     searchedCount: Int,
+    settledCount: Int,
     totalCount: Int,
     onLoadMore: () -> Unit,
     onCardClick: (Movie.Video) -> Unit,
@@ -288,6 +291,7 @@ private fun SearchResultsContent(
                 listState = railResultState,
                 hasMore = hasMore,
                 searchedCount = searchedCount,
+                settledCount = settledCount,
                 totalCount = totalCount,
                 onLoadMore = onLoadMore,
                 onCardClick = onCardClick,
@@ -303,6 +307,7 @@ private fun SearchResultsContent(
                 topPad = topPad,
                 hasMore = hasMore,
                 searchedCount = searchedCount,
+                settledCount = settledCount,
                 totalCount = totalCount,
                 onLoadMore = onLoadMore,
                 onCardClick = onCardClick,

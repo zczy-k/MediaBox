@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -209,6 +210,7 @@ internal fun RailResults(
     listState: LazyListState,
     hasMore: Boolean,
     searchedCount: Int,
+    settledCount: Int,
     totalCount: Int,
     onLoadMore: () -> Unit,
     onCardClick: (Movie.Video) -> Unit,
@@ -289,6 +291,8 @@ internal fun RailResults(
                     name = anonymousLabelOf[result.sourceKey].orEmpty(),
                     pending = result.state == SearchViewModel.ResultState.Pending,
                     queued = result.state == SearchViewModel.ResultState.Queued,
+                    failed = result.state == SearchViewModel.ResultState.Failed,
+                    timeout = result.state == SearchViewModel.ResultState.Timeout,
                     selected = selectedSource == result.sourceKey,
                     onClick = { onSelectSource(result.sourceKey) },
                 )
@@ -339,6 +343,7 @@ internal fun RailResults(
                     hasMore = hasMore,
                     running = running,
                     searchedCount = searchedCount,
+                    settledCount = settledCount,
                     totalCount = totalCount,
                     onLoadMore = onLoadMore,
                 )
@@ -347,6 +352,14 @@ internal fun RailResults(
     }
 }
 
+/**
+ * 站点栏里的一项(2026-10-08 起带终态语义)。
+ *
+ * @param pending 正在搜(转圈)
+ * @param queued 还没轮到搜(压暗)
+ * @param failed 源请求失败/解析失败 —— 与"搜完没这部片"是两回事,前者不该让用户以为换源没用
+ * @param timeout 等满单源限时仍无回包
+ */
 @Composable
 internal fun SearchRailItem(
     name: String,
@@ -354,9 +367,14 @@ internal fun SearchRailItem(
     selected: Boolean,
     onClick: () -> Unit,
     queued: Boolean = false,
+    failed: Boolean = false,
+    timeout: Boolean = false,
 ) {
+    val unavailable = failed || timeout
     val contentColor = when {
         selected -> MaterialTheme.colorScheme.onPrimary
+        // 失败/超时:标成 error色,让"这个源挂了"与"这个源没有这部片"在站点栏上一眼可分
+        unavailable -> MaterialTheme.colorScheme.error.copy(alpha = 0.75f)
         // 还没轮到搜的源压暗显示:与"正在搜"的转圈区分开,站点栏才不会几十个一起转
         queued -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
         else -> MaterialTheme.colorScheme.onSurface
@@ -387,6 +405,15 @@ internal fun SearchRailItem(
                     color = contentColor.copy(alpha = 0.6f),
                     strokeWidth = 1.5.dp,
                 )
+            } else if (unavailable) {
+                // 不用图标字体:一个小圆点即可,避免为一处状态引入新的资源依赖
+                Spacer(modifier = Modifier.width(6.dp))
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.error.copy(alpha = 0.8f)),
+                )
             }
         }
     }
@@ -397,12 +424,18 @@ internal fun SearchRailItem(
  *
  * <p>这个入口是"按需续搜"的必要条件 —— 只靠滚动触发,用户不会知道下面还有没搜的来源,
  * 空结果时更会误以为全库都没有。
+ *
+ * <p>2026-10-08:进度文案在"搜完了多少"与"还剩多少"之间切换。此前只显示 [searchedCount],
+ * 而它在批次启动时就 +N(是"已发起"),于是 24 个源刚发出去就显示"已搜索 24/300",
+ * 其中几十个还在转圈 —— 数字很大但结果没出来,观感上就是"搜不动了"。
+ * 现在有终态计数 [settledCount] 后,搜索进行中显示实际完成的条数。
  */
 @Composable
 internal fun SearchLoadMoreFooter(
     hasMore: Boolean,
     running: Boolean,
     searchedCount: Int,
+    settledCount: Int,
     totalCount: Int,
     onLoadMore: () -> Unit,
 ) {
@@ -414,10 +447,12 @@ internal fun SearchLoadMoreFooter(
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
-            text = if (hasMore) {
-                stringResource(R.string.search_progress, searchedCount, totalCount)
-            } else {
-                stringResource(R.string.search_all_sources_done, totalCount)
+            text = when {
+                !hasMore -> stringResource(R.string.search_all_sources_done, totalCount)
+                // 搜索中:报"已完成",数字与站点栏里不再转圈的源数一致
+                running -> stringResource(R.string.search_progress_settled, settledCount, totalCount)
+                // 空闲且还有剩余:此时 settled 基本等于 searched,"已搜索"更贴近用户视角
+                else -> stringResource(R.string.search_progress, searchedCount, totalCount)
             },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,

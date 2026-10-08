@@ -46,7 +46,22 @@ final class SearchLoader {
     }
 
     void getSearch(String sourceKey, String wd, String searchToken) {
-        getSearch(sourceKey, wd, searchToken, searchResult, "search");
+        getSearch(sourceKey, wd, searchToken, searchResult, requestTagFor(sourceKey));
+    }
+
+    /**
+     * 每个源派生唯一请求 tag(2026-10-08)。
+     *
+     * <p>此前所有搜索请求共用 {@code "search"} 一个 tag,于是"撤销"只能整批撤 ——
+     * 一个慢源超时后,连带把同批其它正在等的源一起撤掉;反过来,只想撤一个源时又做不到,
+     * 只能留着它继续占带宽。
+     *
+     * <p>字符串生成在 {@link com.github.tvbox.osc.util.SearchHelper#searchRequestTag},
+     * 与撤 tag 的 {@code SearchViewModel} 共用同一份,避免两处各写而漂移
+     * (漂移后的表现是"撤销静默失效":不报错、请求照跑,极难排查)。
+     */
+    static String requestTagFor(String sourceKey) {
+        return com.github.tvbox.osc.util.SearchHelper.searchRequestTag(sourceKey);
     }
 
     private void getSearch(String sourceKey, String wd, String searchToken, MutableLiveData<AbsXml> result, String requestTag) {

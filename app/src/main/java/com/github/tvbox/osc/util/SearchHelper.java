@@ -75,4 +75,27 @@ public class SearchHelper {
         return mCheckSources;
     }
 
+    /**
+     * 搜索请求的 tag(2026-10-08):按源唯一。
+     *
+     * <p>此前所有搜索请求共用一个 {@code "search"} tag,于是"撤销"只有整批这一种粒度:
+     * 一个慢源超时后连带把同批其它正在等的源一起撤掉;而只想撤某一个源时又做不到 ——
+     * 只能任它继续占带宽。这正是"越搜越卡"的一个来源。
+     *
+     * <p>放在这里而不是各自实现:打 tag 的地方({@code SearchLoader})与撤 tag 的地方
+     * ({@code SearchViewModel})分属不同包,字符串各写一份迟早漂移,而漂移后的表现是
+     * "撤销静默失效"—— 不报错、请求照跑,极难排查。
+     *
+     * <p>⚠️ 别指望 {@code cancelTag("search")} 能前缀命中 {@code "search-xxx"}:
+     * OkGo 的 tag 取消是**精确匹配**它自己那张登记表,不是前缀扫描。整批撤销必须遍历在途源逐个撤。
+     */
+    public static String searchRequestTag(String sourceKey) {
+        return "search-" + sourceKey;
+    }
+
+    /** 整批撤销用的 tag:不能替代逐源撤销,只用于"确实存在共用该 tag 的老调用点"时兜底 */
+    public static String legacySearchRequestTag() {
+        return "search";
+    }
+
 }
