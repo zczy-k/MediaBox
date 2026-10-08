@@ -15,8 +15,13 @@ import org.junit.Test
  */
 class VideoQualityPolicyTest {
 
-    private fun v(w: Int, h: Int, bw: Int = 0, c: VideoQualityPolicy.Confidence = VideoQualityPolicy.Confidence.MEASURED) =
-        VideoQualityPolicy.Variant(w, h, bw, c)
+    private fun v(
+        w: Int,
+        h: Int,
+        bw: Int = 0,
+        c: VideoQualityPolicy.Confidence = VideoQualityPolicy.Confidence.MEASURED,
+        flag: String = "",
+    ) = VideoQualityPolicy.Variant(w, h, bw, c, flag)
 
     @Test
     fun unknownSizeScoresZero_mainKey() {

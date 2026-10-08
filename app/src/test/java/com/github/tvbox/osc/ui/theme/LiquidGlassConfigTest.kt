@@ -18,7 +18,9 @@ class LiquidGlassConfigTest {
 
     @Test
     fun defaultTranslucency_isIdentity() {
-        val config = at(LiquidGlassState.DEFAULT_TRANSLUCENCY)
+        // 通透度已收敛成编译期常量(见 LiquidGlassState),这里直接断言**应用实际用的那个值**
+        // 是恒等点 —— 比断言一个可能被删掉的常量名更贴近"默认观感与改动前一致"的初衷
+        val config = at(LiquidGlassState.config.translucency)
         assertEquals(1f, config.containerAlphaScale, 0f)
         assertEquals(0f, config.contentBrightness, 0f)
         assertEquals(1f, config.contentContrast, 0f)

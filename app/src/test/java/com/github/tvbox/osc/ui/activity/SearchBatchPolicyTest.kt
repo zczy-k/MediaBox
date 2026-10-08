@@ -11,7 +11,9 @@ class SearchBatchPolicyTest {
     private fun source(key: String, quick: Boolean): SourceBean {
         val bean = SourceBean()
         bean.key = key
-        bean.quickSearch = if (quick) 1 else 0
+        // ⚠️ 必须调 setter:字段是 private,而 getter 叫 isQuickSearch()(布尔命名),
+        // Kotlin 属性合成不认这组访问器,写 `bean.quickSearch = …` 会去碰私有字段而编译不过
+        bean.setQuickSearch(if (quick) 1 else 0)
         return bean
     }
 
