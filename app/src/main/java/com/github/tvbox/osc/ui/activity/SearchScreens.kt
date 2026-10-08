@@ -270,9 +270,11 @@ internal fun RailResults(
     Row(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             state = railState,
-            modifier = Modifier.width(SearchRailWidth),
-            contentPadding = PaddingValues(start = 12.dp, end = 10.dp, top = topPad + 8.dp, bottom = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier
+                .width(SearchRailWidth + 8.dp)
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+            contentPadding = PaddingValues(start = 12.dp, end = 10.dp, top = topPad + 16.dp, bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             item(key = "rail_all") {
                 SearchRailItem(
@@ -354,15 +356,15 @@ internal fun SearchRailItem(
     queued: Boolean = false,
 ) {
     val contentColor = when {
-        selected -> MaterialTheme.colorScheme.onPrimaryContainer
+        selected -> MaterialTheme.colorScheme.onPrimary
         // 还没轮到搜的源压暗显示:与"正在搜"的转圈区分开,站点栏才不会几十个一起转
         queued -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
         else -> MaterialTheme.colorScheme.onSurface
     }
     Surface(
         onClick = onClick,
-        shape = RoundedCornerShape(16.dp),
-        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceBright,
+        shape = RoundedCornerShape(14.dp),
+        color = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(

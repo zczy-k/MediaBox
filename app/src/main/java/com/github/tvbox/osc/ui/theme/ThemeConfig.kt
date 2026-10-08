@@ -17,9 +17,9 @@ object ThemeMode {
  * - 配色方案只有浅/深两套,首次用到时算一次,之后切换零计算
  * - 删掉取色器 Sheet、预设色网格、风格选择器三个组件与对应状态
  */
-val MediaBoxSeedArgb: Int = 0xFF2563EB.toInt()
+val MediaBoxSeedArgb: Int = 0xFF0F766E.toInt()
 
-val MediaBoxPaletteStyle: PaletteStyle = PaletteStyle.TonalSpot
+val MediaBoxPaletteStyle: PaletteStyle = PaletteStyle.Vibrant
 
 /** 主题配置:只剩"明暗模式"一个维度 */
 data class ThemeConfig(

@@ -18,7 +18,7 @@ package com.github.tvbox.osc.ui.theme
  */
 object LiquidGlassState {
     val config: LiquidGlassConfig = LiquidGlassConfig(
-        navbarEnabled = true,
+        navbarEnabled = false,
         controlsEnabled = true,
         blurDp = 20f,
         distortionDp = 30f,

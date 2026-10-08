@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -33,7 +32,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -57,12 +55,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.drawscope.rotate
-import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -71,7 +67,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.github.tvbox.osc.R
 import com.github.tvbox.osc.bean.Movie
@@ -99,15 +94,9 @@ import com.github.tvbox.osc.ui.theme.cardContainer
 import com.github.tvbox.osc.util.HomeSettings
 import com.github.tvbox.osc.util.SiteSearch
 import com.github.tvbox.osc.util.SourceIdentityMask
-import com.kyant.capsule.ContinuousCapsule
 import com.github.tvbox.osc.ui.page.jumpToSearch
 import kotlin.math.roundToInt
 import com.github.tvbox.osc.ui.activity.SearchViewModel
-
-private val HomeSourceCapsuleMaxWidth = 240.dp
-
-// 自适应图标前景层在系统内的缩放系数，此处复刻以呈现与桌面图标一致的 logo 占比
-private const val CapsuleLogoZoom = 1.5f
 
 private val HomeTopBarControlSpacing = 8.dp
 
@@ -177,85 +166,68 @@ fun HomePage(vm: HomeViewModel, contentPadding: PaddingValues = PaddingValues(0.
         collapseEnabled = false,
         topBarStartInset = navStart,
         titleContent = {
-            BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier
-                        .widthIn(
-                            max = minOf(
-                                HomeSourceCapsuleMaxWidth,
-                                maxWidth - HomeTopBarControlSpacing,
-                            ),
-                        )
-                        .glassTopBarSurface(ContinuousCapsule, MaterialTheme.colorScheme.cardContainer)
-                        .heightIn(min = 40.dp)
-                        .clickable { showSourceSheet = true }
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    val capsuleLogo = remember { ContextCompat.getDrawable(context, R.drawable.ic_launcher_foreground) }
-                    Box(
-                        modifier = Modifier
-                            .size(26.dp)
-                            .background(MaterialTheme.colorScheme.primary, CircleShape)
-                            .drawBehind {
-                                capsuleLogo?.let { drawable ->
-                                    val w = size.width
-                                    val h = size.height
-                                    drawable.setBounds(
-                                        (w / 2 - w * CapsuleLogoZoom / 2).roundToInt(),
-                                        (h / 2 - h * CapsuleLogoZoom / 2).roundToInt(),
-                                        (w / 2 + w * CapsuleLogoZoom / 2).roundToInt(),
-                                        (h / 2 + h * CapsuleLogoZoom / 2).roundToInt(),
-                                    )
-                                    drawable.draw(drawContext.canvas.nativeCanvas)
-                                }
-                            },
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showSourceSheet = true }
+                    .padding(vertical = 3.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.app_name),
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        // ⚠️ 这里原来直接渲染 `currentSource?.name`,把真实站名(常带广告文案)
-                        // 长期挂在首页顶部。改为匿名编号,与下方换源面板同一口径。
                         text = currentSourceLabel,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                     Icon(
                         imageVector = Icons.Filled.ArrowDropDown,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp),
                     )
                 }
             }
         },
         actions = {
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(MaterialTheme.colorScheme.primary)
+                    .clickable { context.startActivity(Intent(context, SearchActivity::class.java)) }
+                    .padding(horizontal = 16.dp, vertical = 11.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Search,
+                    contentDescription = stringResource(R.string.common_search),
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = stringResource(R.string.common_search),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                )
+            }
+            Spacer(Modifier.width(HomeTopBarControlSpacing))
             Box(
                 modifier = Modifier
-                    .size(40.dp)
-                    .glassTopBarSurface(CircleShape, MaterialTheme.colorScheme.surfaceBright)
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                     .clickable { showSearchSettings = true },
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     painter = painterResource(R.drawable.ic_more_vert),
                     contentDescription = stringResource(R.string.search_settings),
-                    tint = MaterialTheme.colorScheme.onSurface,
-                )
-            }
-            Spacer(Modifier.width(HomeTopBarControlSpacing))
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .glassTopBarSurface(CircleShape, MaterialTheme.colorScheme.surfaceBright)
-                    .clickable {
-                        context.startActivity(Intent(context, SearchActivity::class.java))
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Search,
-                    contentDescription = stringResource(R.string.common_search),
                     tint = MaterialTheme.colorScheme.onSurface,
                 )
             }
@@ -306,7 +278,7 @@ fun HomePage(vm: HomeViewModel, contentPadding: PaddingValues = PaddingValues(0.
                     onCardClick = { video -> handleCardClick(vm, video, context) },
                     onCardLongClick = { video -> vodMenu.show(video) },
                 )
-            } else LazyColumn(
+            } else             LazyColumn(
                 state = listState,
                 modifier = Modifier
                     .fillMaxSize()
@@ -317,10 +289,30 @@ fun HomePage(vm: HomeViewModel, contentPadding: PaddingValues = PaddingValues(0.
                     ),
                 contentPadding = PaddingValues(
                     start = navStart,
-                    top = topPad + 8.dp,
+                    top = topPad + 12.dp,
                     bottom = 88.dp + navBottom,
                 ),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                item(key = "home_intro") {
+                    Column(
+                        modifier = Modifier
+                            .fillParentMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.home_recommend),
+                            style = MaterialTheme.typography.headlineMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = currentSourceLabel,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
                 item(key = "hero") {
                     if (rec.state == HomeViewModel.PartitionState.Ready && rec.videos.isNotEmpty()) {
                         HeroCarousel(

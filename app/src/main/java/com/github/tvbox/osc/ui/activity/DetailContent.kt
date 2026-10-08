@@ -83,8 +83,8 @@ internal fun DetailContent(
             Column(
                 modifier = Modifier
                     .padding(start = 20.dp, end = 20.dp, top = 16.dp)
-                    .background(MaterialTheme.colorScheme.surfaceBright, RoundedCornerShape(20.dp))
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    .background(MaterialTheme.colorScheme.surfaceBright, RoundedCornerShape(24.dp))
+                    .padding(horizontal = 16.dp, vertical = 16.dp)
             ) {
                 Row(
                     verticalAlignment = Alignment.Top,
@@ -128,56 +128,6 @@ internal fun DetailContent(
                                     .padding(horizontal = 6.dp, vertical = 2.dp),
                             )
                         }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            IconButton(
-                                onClick = { activity.openMusicPlayer() },
-                                modifier = Modifier.size(40.dp),
-                            ) {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_detail_music_player),
-                                    contentDescription = stringResource(R.string.detail_music_player),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(22.dp),
-                                )
-                            }
-                            IconButton(
-                                onClick = { activity.playContainer?.showCast() },
-                                modifier = Modifier.size(40.dp),
-                            ) {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_detail_cast),
-                                    contentDescription = stringResource(R.string.common_cast),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(22.dp),
-                                )
-                            }
-                            IconButton(
-                                onClick = { vm.toggleCollect() },
-                                modifier = Modifier.size(40.dp),
-                            ) {
-                                AnimatedContent(
-                                    targetState = collected,
-                                    transitionSpec = {
-                                        (scaleIn(initialScale = 0.6f) + fadeIn()) togetherWith
-                                                (scaleOut(targetScale = 0.6f) + fadeOut())
-                                    },
-                                    label = "collectIcon",
-                                ) { isCollected ->
-                                    Icon(
-                                        painter = painterResource(
-                                            if (isCollected) R.drawable.ic_tab_collect_filled else R.drawable.ic_tab_collect
-                                        ),
-                                        contentDescription = stringResource(if (isCollected) R.string.detail_uncollect else R.string.detail_collect),
-                                        tint = if (isCollected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(22.dp),
-                                    )
-                                }
-                            }
-                        }
                         val metaParts = listOfNotNull(
                             if (info.year > 0) info.year.toString() else null,
                             info.area?.takeIf { it.isNotBlank() },
@@ -199,6 +149,50 @@ internal fun DetailContent(
                                         .weight(1f)
                                         .padding(start = 8.dp),
                                 )
+                            }
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 10.dp)
+                                .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(18.dp)),
+                            horizontalArrangement = Arrangement.SpaceEvenly,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            IconButton(onClick = { activity.openMusicPlayer() }) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_detail_music_player),
+                                    contentDescription = stringResource(R.string.detail_music_player),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(22.dp),
+                                )
+                            }
+                            IconButton(onClick = { activity.playContainer?.showCast() }) {
+                                Icon(
+                                    painter = painterResource(R.drawable.ic_detail_cast),
+                                    contentDescription = stringResource(R.string.common_cast),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(22.dp),
+                                )
+                            }
+                            IconButton(onClick = { vm.toggleCollect() }) {
+                                AnimatedContent(
+                                    targetState = collected,
+                                    transitionSpec = {
+                                        (scaleIn(initialScale = 0.6f) + fadeIn()) togetherWith
+                                            (scaleOut(targetScale = 0.6f) + fadeOut())
+                                    },
+                                    label = "collectIcon",
+                                ) { isCollected ->
+                                    Icon(
+                                        painter = painterResource(
+                                            if (isCollected) R.drawable.ic_tab_collect_filled else R.drawable.ic_tab_collect
+                                        ),
+                                        contentDescription = stringResource(if (isCollected) R.string.detail_uncollect else R.string.detail_collect),
+                                        tint = if (isCollected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(22.dp),
+                                    )
+                                }
                             }
                         }
                     }

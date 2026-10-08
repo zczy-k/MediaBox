@@ -4,17 +4,19 @@ package com.github.tvbox.osc.ui.page
 
 import android.app.Activity
 import android.content.Intent
-import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,6 +28,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.Icon
@@ -33,8 +36,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.ShortNavigationBar
-import androidx.compose.material3.ShortNavigationBarItem
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -203,8 +204,8 @@ private fun MainContent() {
         }
     }
     val liquidGlassConfig = LiquidGlassState.config
-    val liquidGlassEnabled = liquidGlassConfig.navbarEnabled &&
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    // Redesigned navigation uses a solid dock instead of the legacy glass treatment.
+    val liquidGlassEnabled = false
     val liquidBackdropBgColor = MaterialTheme.colorScheme.surfaceContainer
     val liquidBackdropOnDraw: ContentDrawScope.() -> Unit =
         remember(liquidBackdropBgColor) {
@@ -269,40 +270,72 @@ private fun MainContent() {
                 contentWindowInsets = WindowInsets(0, 0, 0, 0),
                 bottomBar = {
                     if (surfaceNavVisible && !railMode) {
-                        ShortNavigationBar(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .windowInsetsPadding(WindowInsets.navigationBars)
+                                .padding(horizontal = 18.dp, vertical = 8.dp)
+                                .height(68.dp)
+                                .clip(RoundedCornerShape(24.dp))
+                                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
                             AppTab.entries.forEachIndexed { index, tab ->
-                                // 动作槽插在中间,外观就是普通未选中项(不占 pager 页,故恒 selected = false)
                                 if (!navLiveHidden && index == NavMetrics.actionSlotFor(AppTab.entries.size)) {
-                                    ShortNavigationBarItem(
-                                        selected = false,
-                                        onClick = openLive,
-                                        icon = {
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .fillMaxHeight()
+                                            .clickable(onClick = openLive),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .clip(RoundedCornerShape(18.dp))
+                                                .background(MaterialTheme.colorScheme.primary),
+                                            contentAlignment = Alignment.Center,
+                                        ) {
                                             Icon(
                                                 painterResource(liveActionItem.iconRes),
-                                                contentDescription = null,
+                                                contentDescription = liveActionItem.label,
+                                                tint = MaterialTheme.colorScheme.onPrimary,
+                                                modifier = Modifier.size(24.dp),
                                             )
-                                        },
-                                        label = null,
-                                    )
+                                        }
+                                    }
                                 }
                                 val selected = pagerState.targetPage == index
-                                ShortNavigationBarItem(
-                                    selected = selected,
-                                    onClick = { selectTab(index) },
-                                    icon = {
-                                        Icon(
-                                            painterResource(tab.icon),
-                                            contentDescription = stringResource(tab.labelRes),
-                                        )
-                                    },
-                                    label = if (selected) {
-                                        { Text(stringResource(tab.labelRes)) }
-                                    } else {
-                                        null
-                                    },
-                                )
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
+                                        .clip(RoundedCornerShape(18.dp))
+                                        .clickable(onClick = { selectTab(index) })
+                                        .background(
+                                            if (selected) MaterialTheme.colorScheme.primaryContainer
+                                            else Color.Transparent,
+                                        ),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+                                ) {
+                                    Icon(
+                                        painterResource(tab.icon),
+                                        contentDescription = stringResource(tab.labelRes),
+                                        tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(21.dp),
+                                    )
+                                    Text(
+                                        text = stringResource(tab.labelRes),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                    )
+                                }
                             }
                         }
                     }

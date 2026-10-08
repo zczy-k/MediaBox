@@ -286,11 +286,27 @@ fun SettingsPage(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(listState)
-                .padding(horizontal = 16.dp)
-                .padding(start = navStart, bottom = 8.dp + navBottom),
-            verticalArrangement = Arrangement.spacedBy(24.dp),
+                .padding(horizontal = 20.dp)
+                .padding(start = navStart, bottom = 16.dp + navBottom),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            Spacer(Modifier.height(topPad - 20.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = (topPad - 8.dp).coerceAtLeast(8.dp), bottom = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.settings_title),
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = stringResource(R.string.settings_preference_subtitle),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
 
             SettingsGroup(title = null) {
                 SettingsCard(SettingsCardPosition.FIRST) {

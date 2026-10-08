@@ -29,7 +29,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -49,7 +48,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -414,55 +412,51 @@ private fun CollectCard(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
-    Box(
+    Column(
         modifier = modifier
             .fillMaxWidth()
-            .aspectRatio(2f / 3f)
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(22.dp))
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        VodPoster(name = item.name, pic = item.pic, modifier = Modifier.fillMaxSize())
-        if (editMode) {
-            SelectCircle(
-                selected = selected,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(8.dp),
-            )
-        }
-        if (unavailable) {
-            Text(
-                text = stringResource(R.string.source_unavailable),
-                style = MaterialTheme.typography.labelSmall,
-                color = Color.White,
-                maxLines = 1,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(8.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.error.copy(alpha = 0.85f))
-                    .padding(horizontal = 8.dp, vertical = 2.dp),
-            )
-        }
         Box(
             modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        0.5f to Color.Transparent,
-                        1f to Color.Black.copy(alpha = 0.75f),
-                    )
-                ),
-        )
+                .fillMaxWidth()
+                .aspectRatio(2f / 3f)
+                .clip(RoundedCornerShape(22.dp)),
+        ) {
+            VodPoster(name = item.name, pic = item.pic, modifier = Modifier.fillMaxSize())
+            if (editMode) {
+                SelectCircle(
+                    selected = selected,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp),
+                )
+            }
+            if (unavailable) {
+                Text(
+                    text = stringResource(R.string.source_unavailable),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(8.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.error.copy(alpha = 0.9f))
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
+        }
         Text(
             text = item.name ?: "",
-            style = MaterialTheme.typography.titleLarge,
-            color = Color.White,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
             maxLines = 2,
+            minLines = 2,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(12.dp),
+            modifier = Modifier.padding(horizontal = 2.dp),
         )
     }
 }

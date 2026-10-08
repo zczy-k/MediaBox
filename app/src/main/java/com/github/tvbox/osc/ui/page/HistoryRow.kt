@@ -65,15 +65,15 @@ internal fun HistoryRow(
     ) {
         Row(
             modifier = Modifier
-                .clip(RoundedCornerShape(20.dp))
+                .clip(RoundedCornerShape(24.dp))
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-                .padding(horizontal = 12.dp, vertical = 12.dp)
+                .padding(10.dp)
                 .height(IntrinsicSize.Min),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
                 modifier = Modifier
-                    .width(64.dp)
+                    .width(82.dp)
                     .aspectRatio(2f / 3f),
             ) {
                 VodPoster(
@@ -96,21 +96,19 @@ internal fun HistoryRow(
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxHeight(),
-                verticalArrangement = Arrangement.SpaceBetween,
+                    .fillMaxHeight()
+                    .padding(vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = item.name ?: "",
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
-                    // 不再显示片源名:用户要的是"无感播放",列表里暴露"这条来自哪个站"既是多余信息,
-                    // 也与错误文案已做的源身份脱敏口径不一致(见 SourceIdentityMask)。
-                    // 源已失效的情形点进去后由详情页统一兜底(换源/空态),不必在这里提前标注。
                 }
                 Text(
                     text = if (item.playNote.isNullOrEmpty()) {
@@ -118,7 +116,7 @@ internal fun HistoryRow(
                     } else {
                         stringResource(R.string.history_last_watched, item.playNote)
                     },
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -147,24 +145,23 @@ internal fun HistoryRow(
                         progressEntered = true
                         progressAnim.animateTo(barProgress, spec)
                     }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                         LinearProgressIndicator(
                             progress = { progressAnim.value },
                             modifier = Modifier
-                                .weight(1f)
+                                .fillMaxWidth()
                                 .height(5.dp),
                             color = barColor,
                             trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
                             drawStopIndicator = {},
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = if (eps != null) {
                                 stringResource(
-                                        R.string.history_episode_progress,
-                                        (item.playIndex + 1).coerceIn(1, eps),
-                                        eps,
-                                    )
+                                    R.string.history_episode_progress,
+                                    (item.playIndex + 1).coerceIn(1, eps),
+                                    eps,
+                                )
                             } else {
                                 stringResource(R.string.history_watched_percent, (barProgress * 100).roundToInt())
                             },
