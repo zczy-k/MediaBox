@@ -124,9 +124,10 @@ class SearchSettingsTest {
         val smart = SearchSettings.MatchMode.Smart
         // 标题不含关键词,但别名里有 —— 必须保留
         assertTrue(SearchSettings.matches("流浪地球", "三体的异世界|Fated", "三体", smart))
-        // 别名以多种分隔符连接(口径同 AbsJson.joinAliases)
+        // 别名以多种分隔符连接(口径同 AbsJson.joinAliases):逗号、顿号、分号都要能切
         assertTrue(SearchSettings.matches("流浪地球", "三体剧版,官方中文", "三体", smart))
-        assertTrue(SearchSettings.matches("流浪地球", "译名A、译名B；译名C", "三体", smart))
+        assertTrue(SearchSettings.matches("流浪地球", "译名A、三体、译名B", "三体", smart))
+        assertTrue(SearchSettings.matches("流浪地球", "译名A；译名B、三体", "三体", smart))
         // 别名与标题都不含才滤掉
         assertFalse(SearchSettings.matches("琅琊榜", "琅琊榜|琅琊榜风起", "庆余年", smart))
         // 关键词为空仍不放行(空搜索不能把所有条目都收进来)

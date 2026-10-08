@@ -137,8 +137,18 @@ object SearchSettings {
         }
         // 精准文本仍要求全标题相等；但番号查询的“精准”应命中标题开头完整的番号 token，
         // 例如搜 MIAA-195 要能命中“ MIAA-195 + 标题”，不能要求整条影片标题只剩番号。
+        //
+        // ⚠️ 别名在精准模式下用**相等**而非包含（aliasEquals,不是 aliasesContain）：
+        // 「精准」的用户契约是"就是这部片子",别名写成「三体的异世界」也命中「三体」的话,
+        // 精准模式实际退化成了智能模式,开了等于没开。
         MatchMode.Exact -> isExactMatch(name, keyword) || hasExactNumberedCodePrefix(name, keyword) ||
-            aliasesContain(alias, normalizeCached(keyword))
+            aliasEquals(alias, normalizeCached(keyword))
+    }
+
+    /** 别名里是否有任一条归一化后**完全等于**关键词(别名按 {@code |} 分隔,口径同 AbsJson.joinAliases) */
+    private fun aliasEquals(alias: String?, normalizedKeyword: String): Boolean {
+        if (alias.isNullOrEmpty() || normalizedKeyword.isEmpty()) return false
+        return alias.split(ALIAS_SPLIT_PATTERN).any { normalizeCached(it) == normalizedKeyword }
     }
 
     /** 别名里是否有任一条归一化后包含关键词(别名按 {@code |} 分隔,口径同 AbsJson.joinAliases) */
@@ -197,13 +207,8 @@ object SearchSettings {
     }
 
     /** 仅别名命中的分数:完全相等给 1(低于任何标题命中);只"包含"关系不给正分(当作不匹配) */
-    private fun aliasScore(alias: String?, normalizedKeyword: String): Int {
-        if (alias.isNullOrEmpty()) return 0
-        for (part in alias.split(ALIAS_SPLIT_PATTERN)) {
-            if (normalizeCached(part) == normalizedKeyword) return 1
-        }
-        return 0
-    }
+    private fun aliasScore(alias: String?, normalizedKeyword: String): Int =
+        if (aliasEquals(alias, normalizedKeyword)) 1 else 0
 
     /**
      * 番号类关键词的查询变体(2026-10-05 引入,2026-10-08 改口径)。
