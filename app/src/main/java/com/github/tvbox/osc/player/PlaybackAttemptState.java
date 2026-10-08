@@ -70,31 +70,47 @@ final class PlaybackAttemptState {
      */
     String pendingInheritEpisode;
 
+    /** 与 {@link #pendingInheritEpisode} 配套的**集槽**(vod.playIndex):集名无从对比时用它兜底,-1 = 未记 */
+    int pendingInheritIndex = -1;
+
     /**
      * 记下"接着看"的位置(换线/换源前唯一入口)。
      *
      * <p>位置取**播放器实时值**优先:内核已释放(自动重试把内核收走了)时实时值读作 0,
      * 回落到已落盘的进度 —— 两个都不为正说明本来就没看过,此时不记(免得把一个 0 值当继承源)。
      */
-    void rememberProgressForSwitch(String key, long livePosition, long savedProgress, String episodeName) {
+    void rememberProgressForSwitch(String key, long livePosition, long savedProgress,
+                                   String episodeName, int episodeIndex) {
         if (key == null || key.isEmpty()) return;
         long position = livePosition > 0 ? livePosition : savedProgress;
         if (position <= 0) return;
         pendingInheritKey = key;
         pendingInheritProgress = position;
         pendingInheritEpisode = episodeName;
+        pendingInheritIndex = episodeIndex;
     }
 
     /**
-     * 待继承的位置是否适用于本次起播(= 记下的那一段与 {@code targetEpisode} 是同一集)。
-     * 集名任一侧为空 ⇒ 无从判定,放行(不因为拿不到集名就丢掉用户的位置)。
+     * 待继承的位置是否适用于本次起播。
+     *
+     * <p>三道判据,从严到宽:
+     * <ol>
+     *   <li>集名能确认同集(如 `第01集` ↔ `01`)⇒ 放行;</li>
+     *   <li>集名**确信是不同集**(两侧都能抽出集号且不同,如 `第1集` ↔ `第2集`)⇒ 拦下(这是换集,该从头播);</li>
+     *   <li>其余(任一侧抽不到集号,如 `1` ↔ `HD` 这种跨源命名差异)⇒ 只看**集槽**是否还在同一格:
+     *       同格放行、换格拦下。缺集名或集槽未知时一律放行(不因为拿不到信息就丢掉用户的位置)。</li>
+     * </ol>
      */
-    boolean pendingInheritAppliesTo(String targetEpisode) {
+    boolean pendingInheritAppliesTo(String targetEpisode, int targetIndex) {
         if (pendingInheritProgress <= 0 || pendingInheritKey == null || pendingInheritKey.isEmpty()) return false;
         String recorded = pendingInheritEpisode;
-        if (recorded == null || recorded.isEmpty()) return true;
-        if (targetEpisode == null || targetEpisode.isEmpty()) return true;
-        return EpisodeMatcher.isSameEpisode(recorded, targetEpisode);
+        boolean slotKept = pendingInheritIndex < 0 || pendingInheritIndex == targetIndex;
+        if (recorded == null || recorded.isEmpty() || targetEpisode == null || targetEpisode.isEmpty()) {
+            return slotKept;
+        }
+        if (EpisodeMatcher.isSameEpisode(recorded, targetEpisode)) return true;
+        if (EpisodeMatcher.isDifferentEpisode(recorded, targetEpisode)) return false;
+        return slotKept;
     }
 
     /** 清掉待继承:一次性语义 —— 不认的那一份也不能留到下一次起播 */
@@ -102,6 +118,7 @@ final class PlaybackAttemptState {
         pendingInheritKey = null;
         pendingInheritProgress = 0;
         pendingInheritEpisode = null;
+        pendingInheritIndex = -1;
     }
 
     // ==================== 会话标记 ====================

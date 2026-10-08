@@ -99,6 +99,23 @@ public final class EpisodeMatcher {
         return episodeMatchScore(one, extractEpisodeNumber(one), other) > 0;
     }
 
+    /**
+     * 两个集名是否**确信**指向不同集(两侧都能抽出集号,且集号不同)。
+     *
+     * <p>与 {@link #isSameEpisode} 的分工:那个回答"是否同一集",这个只回答"是否**能断定**不同集"。
+     * 换线/换源继承位置时用的是这个 —— 抽不到集号的命名(HD / 正片 / 序章 / 上部)两站经常完全不同写法,
+     * 拿"不是同一集"当结论会把同一集的位置继承误杀(实测:天堂源那一集叫 `1`,瓜子源叫 `HD`)。
+     * 任一侧为空或抽不到集号 ⇒ 无从断定,返回 false。
+     */
+    public static boolean isDifferentEpisode(String one, String other) {
+        if (isEmpty(one) || isEmpty(other)) {
+            return false;
+        }
+        int oneEpisode = extractEpisodeNumber(one);
+        int otherEpisode = extractEpisodeNumber(other);
+        return oneEpisode >= 0 && otherEpisode >= 0 && oneEpisode != otherEpisode;
+    }
+
     static int episodeMatchScore(String currentName, int currentEpisode, String targetName) {
         if (isEmpty(currentName) || isEmpty(targetName)) {
             return 0;

@@ -188,4 +188,31 @@ public class EpisodeMatcherTest {
         assertFalse(EpisodeMatcher.isSameEpisode("第1集", ""));
         assertFalse(EpisodeMatcher.isSameEpisode(null, null));
     }
+
+    // ---------- isDifferentEpisode(换线/换源继承位置的"确信换集"判据) ----------
+
+    @Test
+    public void isDifferentEpisode_bothNumberedAndDistinct() {
+        // 两侧都有集号且不同 ⇒ 能断定是换集,位置继承必须拦下
+        assertTrue(EpisodeMatcher.isDifferentEpisode("第1集", "第2集"));
+        assertTrue(EpisodeMatcher.isDifferentEpisode("01", "E05"));
+    }
+
+    @Test
+    public void isDifferentEpisode_sameNumberOrUnnumbered_isNotConfident() {
+        // 同集(写法不同)当然不是"不同集"
+        assertFalse(EpisodeMatcher.isDifferentEpisode("第01集", "01"));
+        // 实测场景:天堂源那一集叫 `1`,瓜子源叫 `HD` —— 抽不到集号,只是命名体系不同,不能判成换集
+        assertFalse(EpisodeMatcher.isDifferentEpisode("1", "HD"));
+        assertFalse(EpisodeMatcher.isDifferentEpisode("1", "正片"));
+        assertFalse(EpisodeMatcher.isDifferentEpisode("HD", "正片"));
+        // 清晰度后缀会被剔除,推不出集号
+        assertFalse(EpisodeMatcher.isDifferentEpisode("1080P", "720P"));
+    }
+
+    @Test
+    public void isDifferentEpisode_emptyName_isNotConfident() {
+        assertFalse(EpisodeMatcher.isDifferentEpisode("", "第2集"));
+        assertFalse(EpisodeMatcher.isDifferentEpisode("第1集", null));
+    }
 }

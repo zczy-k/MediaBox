@@ -934,9 +934,10 @@ public class PlaybackController {
         long live = (view == null) ? 0 : view.currentPosition();
         long saved = live > 0 ? 0 : getSavedProgress(key);
         VodInfo.VodSeries vs = (vod == null) ? null : currentSeries(vod.playFlag, vod.playIndex);
-        st.rememberProgressForSwitch(key, live, saved, vs == null ? null : vs.name);
+        int index = (vod == null) ? -1 : vod.playIndex;
+        st.rememberProgressForSwitch(key, live, saved, vs == null ? null : vs.name, index);
         LOG.i("echo-progress remember-for-switch live=" + live + " saved=" + saved
-                + " ep=" + (vs == null ? "-" : vs.name));
+                + " idx=" + index + " ep=" + (vs == null ? "-" : vs.name));
     }
 
     /**
@@ -1031,8 +1032,8 @@ public class PlaybackController {
         PlaybackProgress.onEpisodeStartNoScroll();
         startResolvePlayUrlTimeout();
         // 换线/换源前记下的位置:新线路/新源的进度键不同(键含线路与集名),写进新键缓存接着看
-        // (新键已有历史记录则不覆盖)。集名对不上 = 这次其实是换集 ⇒ 不认那份位置,从头播。
-        if (st.pendingInheritAppliesTo(vs.name)) {
+        // (新键已有历史记录则不覆盖)。守卫见 pendingInheritAppliesTo —— 换集不继承,跨源集名写法不同仍继承。
+        if (st.pendingInheritAppliesTo(vs.name, vod().playIndex)) {
             inheritProgressFrom(st.pendingInheritKey, st.pendingInheritProgress);
             LOG.i("echo-progress inherit " + st.pendingInheritProgress + "ms from " + st.pendingInheritKey);
         }

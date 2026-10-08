@@ -63,59 +63,81 @@ public class PlaybackAttemptStateTest {
     }
 
     // ---------- 换线/换源的位置继承 ----------
-    // 记下的位置只在"下一次起播还是同一集"时成立 —— 缺这道守卫,"记了位置却没播成 + 用户点下一集"
-    // 会把上一集的位置写进新一集的进度键(点下一集却从上一集中段开始播)。
+    // 记下的位置只在"下一次起播还是同一集"时成立。判据从严到宽:确认同集 → 放行;确信换集 → 拦;
+    // 其余(跨源集名写法完全不同,如 1 ↔ HD)按集槽是否还停在同一格决定。
+    // 真机踩过的坑:同一个片子,天堂源那一集叫 `1`、瓜子源叫 `HD`,旧判据把它当"换了集"⇒ 换源续播全失效。
 
     @Test
     public void rememberProgress_prefersLivePosition() {
         PlaybackAttemptState st = new PlaybackAttemptState();
-        st.rememberProgressForSwitch("src|1|lineA|0第1集", 90_000, 10_000, "第1集");
+        st.rememberProgressForSwitch("src|1|lineA|0第1集", 90_000, 10_000, "第1集", 0);
         assertEquals(90_000, st.pendingInheritProgress);
-        assertTrue(st.pendingInheritAppliesTo("第1集"));
+        assertTrue(st.pendingInheritAppliesTo("第1集", 0));
     }
 
     @Test
     public void rememberProgress_fallsBackToSavedWhenKernelGone() {
         // 自动重试把内核收走后实时位置读作 0,只能靠上一次落盘的值
         PlaybackAttemptState st = new PlaybackAttemptState();
-        st.rememberProgressForSwitch("k1", 0, 42_000, "第1集");
+        st.rememberProgressForSwitch("k1", 0, 42_000, "第1集", 3);
         assertEquals(42_000, st.pendingInheritProgress);
     }
 
     @Test
     public void rememberProgress_nothingWatched_isNotRecorded() {
         PlaybackAttemptState st = new PlaybackAttemptState();
-        st.rememberProgressForSwitch("k1", 0, 0, "第1集");
-        assertFalse(st.pendingInheritAppliesTo("第1集"));
+        st.rememberProgressForSwitch("k1", 0, 0, "第1集", 0);
+        assertFalse(st.pendingInheritAppliesTo("第1集", 0));
     }
 
     @Test
     public void pendingInherit_matchesOnlySameEpisode() {
         PlaybackAttemptState st = new PlaybackAttemptState();
-        st.rememberProgressForSwitch("k1", 90_000, 0, "第1集");
+        st.rememberProgressForSwitch("k1", 90_000, 0, "第1集", 0);
         // 各站集名写法不同,但同一集要认得出来
-        assertTrue(st.pendingInheritAppliesTo("01"));
-        assertFalse(st.pendingInheritAppliesTo("第2集"));
+        assertTrue(st.pendingInheritAppliesTo("01", 0));
+        // 确信换了集(两侧都有集号且不同)⇒ 拦下,否则"点下一集"会继承上一集的位置
+        assertFalse(st.pendingInheritAppliesTo("第2集", 1));
+    }
+
+    @Test
+    public void pendingInherit_crossSourceNaming_isNotTreatedAsEpisodeChange() {
+        // 实测:天堂源 `1` ↔ 瓜子源 `HD` —— 抽不到集号,只是命名体系不同,位置必须继承
+        PlaybackAttemptState st = new PlaybackAttemptState();
+        st.rememberProgressForSwitch("天堂170865超级无敌4K01", 797_937, 0, "1", 0);
+        assertTrue(st.pendingInheritAppliesTo("HD", 0));
+        assertTrue(st.pendingInheritAppliesTo("正片", 0));
+        // 但集槽换了 ⇒ 不是同一集,拦下(防"上部/下部"这类无集号的换集)
+        assertFalse(st.pendingInheritAppliesTo("HD", 1));
     }
 
     @Test
     public void pendingInherit_unknownEpisode_passesThrough() {
         // 集名任一侧为空 = 无从判定,不因为拿不到集名就丢掉用户的位置
         PlaybackAttemptState st = new PlaybackAttemptState();
-        st.rememberProgressForSwitch("k1", 90_000, 0, null);
-        assertTrue(st.pendingInheritAppliesTo("第9集"));
-        assertTrue(st.pendingInheritAppliesTo(null));
+        st.rememberProgressForSwitch("k1", 90_000, 0, null, 0);
+        assertTrue(st.pendingInheritAppliesTo("第9集", 0));
+        assertTrue(st.pendingInheritAppliesTo(null, 0));
 
-        st.rememberProgressForSwitch("k1", 90_000, 0, "第1集");
-        assertTrue(st.pendingInheritAppliesTo(null));
+        st.rememberProgressForSwitch("k1", 90_000, 0, "第1集", 0);
+        assertTrue(st.pendingInheritAppliesTo(null, 0));
+    }
+
+    @Test
+    public void pendingInherit_unknownSlot_doesNotBlock() {
+        // 拿不到集槽(-1)时不能凭空拦人
+        PlaybackAttemptState st = new PlaybackAttemptState();
+        st.rememberProgressForSwitch("k1", 90_000, 0, "1", -1);
+        assertTrue(st.pendingInheritAppliesTo("HD", 4));
     }
 
     @Test
     public void clearPendingInherit_isOneShot() {
         PlaybackAttemptState st = new PlaybackAttemptState();
-        st.rememberProgressForSwitch("k1", 90_000, 0, "第1集");
+        st.rememberProgressForSwitch("k1", 90_000, 0, "第1集", 0);
         st.clearPendingInherit();
-        assertFalse(st.pendingInheritAppliesTo("第1集"));
+        assertFalse(st.pendingInheritAppliesTo("第1集", 0));
         assertEquals(0, st.pendingInheritProgress);
+        assertEquals(-1, st.pendingInheritIndex);
     }
 }
