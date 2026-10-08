@@ -595,16 +595,16 @@ class SearchViewModel : ViewModel() {
         pendingOutcomes.clear()
         pendingSources.clear()
         sourceStartAt.clear()
-        if (back.isNotEmpty()) {
-            val backSet = back.toHashSet()
+        if (stopped.isNotEmpty()) {
+            val stoppedSet = stopped.toHashSet()
             results.value = results.value.map { existing ->
-                if (existing.sourceKey in backSet && existing.state == ResultState.Pending) {
+                if (existing.sourceKey in stoppedSet && existing.state == ResultState.Pending) {
                     existing.copy(state = ResultState.Queued)
                 } else {
                     existing
                 }
             }
-            val requeued = back.filter { key ->
+            val requeued = stopped.filter { key ->
                 results.value.any { it.sourceKey == key && it.state == ResultState.Queued }
             }
             queuedSourceKeys = requeued + queuedSourceKeys
