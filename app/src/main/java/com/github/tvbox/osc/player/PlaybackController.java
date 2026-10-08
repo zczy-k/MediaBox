@@ -918,6 +918,16 @@ public class PlaybackController {
     }
 
     /**
+     * 重试阶梯里最后一次读到的 EXO 错误是否为**网络类**(断网/被墙)。
+     *
+     * <p>收口时的用途:区分"网络断了"与"这个源本身放不出来"。前者不能算到源头上 ——
+     * 源健康台账若把断网期间的失败也计入,一次断网就能把所有源一起拉黑(见 util/SourceHealthMemory)。
+     */
+    public boolean lastFailureWasNetwork() {
+        return st.lastFailureNetwork;
+    }
+
+    /**
      * 换线/换源(手动或自动)前记下"接着看"的位置:下一次 {@link #play(boolean)} 会把它写进新进度键。
      *
      * <p>为什么收口成这一个方法:换线/换源一共四个入口(手动换线、手动换源、自动换线、线路耗尽后的

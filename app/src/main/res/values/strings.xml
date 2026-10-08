@@ -508,6 +508,10 @@
     <string name="settings_nav_live_hidden">导航栏隐藏直播</string>
     <string name="settings_nav_live_hidden_subtitle">开启后导航栏不再显示直播入口</string>
     <string name="settings_auto_switch_line">自动换线</string>
+    <string name="settings_auto_block_bad_sources">自动屏蔽反复不可用的源</string>
+    <string name="settings_auto_block_bad_sources_subtitle">同一源反复失败后自动停用一段时间;已屏蔽的源不再参与搜索与换源</string>
+    <string name="settings_source_blocked_count">已屏蔽 %1$d 个源</string>
+    <string name="settings_source_unblock_all">全部解除</string>
     <string name="settings_m3u8_purify">M3U8 净化</string>
     <string name="settings_danmu_switch">弹幕开关</string>
     <string name="settings_danmu_api">弹幕 API</string>

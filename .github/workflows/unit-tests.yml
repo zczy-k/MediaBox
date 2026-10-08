@@ -1,0 +1,74 @@
+name: Unit Tests
+
+# 只跑单测的独立工作流(2026-10-08 新增)。
+#
+# 为什么单独一个:`release.yml` 只做 assembleRelease/assembleDiag,**不跑 testDebugUnitTest** ——
+# 于是"CI 绿"从来不等于"单测过"(仓库里已有的坑,见项目记忆)。纯逻辑改动(判据/策略/解析)
+# 的单测值不值得跑,不该由"要不要出包"决定。
+#
+# 触发方式:仅手动(workflow_dispatch)。刻意**不**挂 push/PR —— 出包流程不受影响,
+# 不给日常提交增加等待;需要时点一下即可。
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Python 3.10 (Chaquopy build Python)
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.10'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      # 与 release.yml 同一套 SDK/NDK 准备:compileSdk 是版本目录里的新平台,
+      # 镜像预装的可能没有,缺了会让编译阶段直接失败(与"单测本身没过"混淆)
+      - name: Install required SDK/NDK & verify
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -name sdkmanager -type f | head -n1)"
+          [ -n "$SDKMANAGER" ] || { echo "::error::找不到 sdkmanager"; exit 1; }
+
+          sdkmanager() { "$SDKMANAGER" "$@"; }
+
+          echo "== 仓库里可用的 API 37 平台 / NDK 27 =="
+          ALL="$(sdkmanager --list 2>/dev/null)" || true
+          PLATFORM="$(echo "$ALL" | grep -oE 'platforms;android-37(\.[0-9]+)?' | sort -V | tail -n1 || true)"
+          NDK="$(echo "$ALL" | grep -oE 'ndk;27\.2\.12479018' | sort -V | tail -n1 || true)"
+          BUILD_TOOLS="$(echo "$ALL" | grep -oE 'build-tools;3[0-9]+\.[0-9]+\.[0-9]+' | sort -V | tail -n1 || true)"
+          echo "PLATFORM=$PLATFORM  NDK=$NDK  BUILD_TOOLS=$BUILD_TOOLS"
+          [ -n "$PLATFORM" ] || { echo "::error::仓库里找不到 android-37 平台"; exit 1; }
+          [ -n "$NDK" ] || { echo "::error::仓库里找不到 ndk;27.2.12479018"; exit 1; }
+
+          yes 2>/dev/null | sdkmanager --licenses > /dev/null 2>&1 || true
+          ARGS=("$PLATFORM" "$NDK")
+          [ -n "$BUILD_TOOLS" ] && ARGS+=("$BUILD_TOOLS")
+          sdkmanager "${ARGS[@]}"
+
+      - name: chmod gradlew
+        run: chmod +x gradlew
+
+      # -x Chaquopy 的 Python 依赖安装:那步要联网装 pip 包,与单测无关,
+      #   失败会被误读成"单测挂了"(与 dependabot 工作流同款处理)
+      - name: Run unit tests
+        run: ./gradlew testDebugUnitTest --no-daemon --stacktrace -x :pyramid:installDebugPythonRequirements
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: ignore

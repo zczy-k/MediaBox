@@ -39,6 +39,8 @@ public final class KVKeySpec implements KVDecoder.TypeRegistry {
     @Nullable
     static Type typeOfDynamic(@NonNull String key) {
         if (key.startsWith(HawkConfig.LIVE_GROUP_INDEX)) return TYPES.get(HawkConfig.LIVE_GROUP_INDEX);
+        // 源健康台账按点播源地址分桶(source_health_<md5>),键名带变量后缀,只能按前缀归类
+        if (key.startsWith(HawkConfig.SOURCE_HEALTH)) return TYPES.get(HawkConfig.SOURCE_HEALTH);
         if (key.startsWith(JS_RUNTIME_PREFIX) || key.startsWith(CACHE_PREFIX)) return TYPES.get(HawkConfig.API_URL);
         return null;
     }
@@ -73,6 +75,8 @@ public final class KVKeySpec implements KVDecoder.TypeRegistry {
         // 一并登记只为口径一致(登记表当前只用于 echo-kv 的类型日志与解码器构造,
         // 漏登记不会导致读写失败 —— 但别据此推断"漏了也没事",改成非 String 载荷就会)。
         register(HawkConfig.VIDEO_AVAILABILITY_MEMORY, "");
+        // 源健康台账 + 跨源覆盖索引(JSON 字符串;按源地址分桶,见 typeOfDynamic)
+        register(HawkConfig.SOURCE_HEALTH, "");
         register(HawkConfig.DANMU_API, "");
         // 画质参数(调色)预置名(PicturePreset 枚举名)
         register(HawkConfig.PICTURE_PRESET, "");
@@ -123,6 +127,8 @@ public final class KVKeySpec implements KVDecoder.TypeRegistry {
         register(HawkConfig.LIVE_SHOW_TIME, false);
         register(HawkConfig.M3U8_PURIFY, false);
         register(HawkConfig.AUTO_SWITCH_LINE, true);
+        // 防滥用封禁(默认开启):反复失败的源自动停用一段时间
+        register(HawkConfig.AUTO_BLOCK_BAD_SOURCES, true);
         register(HawkConfig.DEFAULT_LOAD_LIVE, false);
         register(HawkConfig.INCOGNITO, false);
         register(HawkConfig.GESTURE_CONTROL_DISABLED, false);

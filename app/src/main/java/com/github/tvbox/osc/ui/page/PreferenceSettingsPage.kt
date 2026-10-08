@@ -41,6 +41,7 @@ import com.github.tvbox.osc.util.HawkConfig
 import com.github.tvbox.osc.util.HomeSettings
 import com.github.tvbox.osc.util.HistoryMerge
 import com.github.tvbox.osc.util.LanguageManager
+import com.github.tvbox.osc.util.SourceHealthMemory
 import com.github.tvbox.osc.util.restartApp
 import kotlin.math.roundToInt
 import org.greenrobot.eventbus.EventBus
@@ -175,6 +176,35 @@ fun PreferenceSettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel =
                         checked = state.autoSwitchLine,
                         onCheckedChange = { vm.put(HawkConfig.AUTO_SWITCH_LINE, it) },
                     )
+                }
+                SettingsCard(SettingsCardPosition.MIDDLE) {
+                    SettingsSwitchRow(
+                        title = stringResource(R.string.settings_auto_block_bad_sources),
+                        leadingIconRes = R.drawable.ic_pref_auto_switch_line,
+                        subtitle = stringResource(R.string.settings_auto_block_bad_sources_subtitle),
+                        checked = state.autoBlockBadSources,
+                        onCheckedChange = {
+                            vm.put(HawkConfig.AUTO_BLOCK_BAD_SOURCES, it)
+                            vm.refreshState()
+                            // 开关一关,所有过滤判据立刻放行:首页按最新屏蔽集合本地重算源清单
+                            EventBus.getDefault().post(RefreshEvent(RefreshEvent.TYPE_SOURCE_BLOCK_CHANGE))
+                        },
+                    )
+                }
+                // 只在真有被屏蔽的源时出现:没有就整行隐藏,不留一个"0 个"的噪声入口。
+                // ⚠️ 文案里**绝不能出现源名**(产品红线:用户不该知道 App 有哪些源),所以只给数量。
+                if (state.blockedSourceCount > 0) {
+                    SettingsCard(SettingsCardPosition.MIDDLE) {
+                        SettingsRow(
+                            title = stringResource(R.string.settings_source_blocked_count, state.blockedSourceCount),
+                            valueText = stringResource(R.string.settings_source_unblock_all),
+                            onClick = {
+                                SourceHealthMemory.unblockAll()
+                                vm.refreshState()
+                                EventBus.getDefault().post(RefreshEvent(RefreshEvent.TYPE_SOURCE_BLOCK_CHANGE))
+                            },
+                        )
+                    }
                 }
                 SettingsCard(SettingsCardPosition.MIDDLE) {
                     SettingsSwitchRow(

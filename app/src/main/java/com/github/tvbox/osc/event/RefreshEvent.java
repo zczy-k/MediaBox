@@ -44,6 +44,18 @@ public class RefreshEvent {
      * 两边本来都在 EventBus 上,多一个事件类型比维护反向依赖便宜得多。
      */
     public static final int TYPE_VOD_UNAVAILABLE = 25;
+
+    /**
+     * 「被屏蔽的源」集合发生变化(自动封禁触发 / 设置页解除 / 开关切换)。
+     *
+     * <p>首页据此**本地**重算源清单与卡片可见性(不重新取数:封禁是本地状态变化,
+     * 没必要为了它重跑一遍首页请求)。为什么不复用 {@link #TYPE_API_URL_CHANGE}:
+     * 那个的语义是"换了点播源地址",订阅方(收藏页/历史页)会跟着做整轮重载 —— 这里只是过滤条件变了。
+     *
+     * <p>谁发:封禁的**调用方**(搜索/详情 ViewModel、设置页),而不是台账本身 ——
+     * 与 {@link #TYPE_VOD_UNAVAILABLE} 同款(标记在 AvailabilityMemory,广播在使用的 ViewModel)。
+     */
+    public static final int TYPE_SOURCE_BLOCK_CHANGE = 26;
     public int type;
     public Object obj;
 

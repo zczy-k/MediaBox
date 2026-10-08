@@ -17,6 +17,7 @@ import com.github.tvbox.osc.util.DefaultConfig
 import com.github.tvbox.osc.util.HomeSettings
 import com.github.tvbox.osc.util.LanguageManager
 import com.github.tvbox.osc.util.LOG
+import com.github.tvbox.osc.util.SourceHealthFilter
 import com.github.tvbox.osc.sourcedata.SourceRuntimeState
 import com.github.tvbox.osc.sourcedata.SourceViewModel
 import com.github.tvbox.osc.sourcedata.observeAsFlow
@@ -119,7 +120,9 @@ class HomeViewModel : ViewModel() {
                 if (msg.isNotEmpty()) actionMessages.tryEmit(msg)
             }
         }
-        sources.value = ApiConfig.get().getSwitchSourceBeanList()
+        // 需求规则 4:被屏蔽的源必须从首页换源 chip 列表中过滤掉,不予展示。
+        // 整表被滤空时 filter 内部 fail-open 回退(否则用户连切源都做不了)。
+        sources.value = SourceHealthFilter.filter(ApiConfig.get().getSwitchSourceBeanList())
         currentSource.value = ApiConfig.get().getHomeSourceBean()
         scope.launch {
             AppBootstrap.state.collect {
@@ -155,6 +158,36 @@ class HomeViewModel : ViewModel() {
         // 详情页确认某部片没资源了:把已加载的卡片摘掉(见 refreshAvailability)
         if (event.type == RefreshEvent.TYPE_VOD_UNAVAILABLE) {
             refreshAvailability()
+            return
+        }
+        // 被屏蔽的源集合变了(自动封禁 / 设置页解除 / 开关切换):本地重算源清单与卡片可见性。
+        // ⚠️ 刻意**不**重新取数:封禁是本地状态变化,没必要为它重跑一遍首页请求
+        if (event.type == RefreshEvent.TYPE_SOURCE_BLOCK_CHANGE) {
+            refreshSourceBlock()
+        }
+    }
+
+    /**
+     * 屏蔽集合变化后的**本地**重算(不联网):
+     * ① 源清单按最新屏蔽集合过滤(需求规则 4);
+     * ② 已加载的卡片按最新屏蔽集合重算可见性(需求规则 5)。
+     *
+     * <p>只做"摘掉"不做"补回":解除屏蔽后已隐掉的卡片要等下次取数才回来 ——
+     * 本地没有留未过滤副本,凭空补一张反而可能补错。源清单是纯粹的本地重建,解除后立刻恢复。
+     */
+    fun refreshSourceBlock() {
+        sources.value = SourceHealthFilter.filter(ApiConfig.get().getSwitchSourceBeanList())
+        val blocked = SourceHealthFilter.blockedKeys()
+        LOG.i("echo-srcban home-refresh blocked=" + blocked.size + " sources=" + sources.value.size)
+        if (blocked.isEmpty()) return
+        val curRec = rec.value
+        val recLeft = SourceHealthFilter.filterHomeCards(curRec.videos, loadingSourceKey, "rec")
+        if (recLeft.size != curRec.videos.size) {
+            rec.value = if (recLeft.isEmpty()) Rec(PartitionState.Empty, recLeft) else Rec(curRec.state, recLeft)
+        }
+        partitions.value = partitions.value.map { p ->
+            val left = SourceHealthFilter.filterHomeCards(p.videos, loadingSourceKey, p.sort.id)
+            if (left.size == p.videos.size) p else p.copy(videos = left)
         }
     }
 
@@ -172,7 +205,8 @@ class HomeViewModel : ViewModel() {
     }
 
     fun loadHome() {
-        sources.value = ApiConfig.get().getSwitchSourceBeanList()
+        // 规则 4:chip 列表过滤掉被屏蔽的源(与 init 里同一口径)
+        sources.value = SourceHealthFilter.filter(ApiConfig.get().getSwitchSourceBeanList())
         val home = ApiConfig.get().getHomeSourceBean()
         loadingSourceKey = if (home.key.isNullOrEmpty()) null else home.key
         LOG.i("echo--sort-loadHome: key=${loadingSourceKey} name=${home.name} srcCount=${sources.value.size}")
@@ -354,7 +388,10 @@ class HomeViewModel : ViewModel() {
 
     private fun loadRec(absXml: AbsSortXml?) {
         val raw = absXml?.videoList ?: emptyList()
-        val videos = AvailabilityMemory.filterPlayable(raw)
+        val playable = AvailabilityMemory.filterPlayable(raw)
+        // 需求规则 5:提供这些卡片的源已被屏蔽、且已知没有别的可用源收录时,不展示其图片
+        // (首页卡片只来自一个源,所以"仅有一个源"在这里就是"这个源");全被隐空时 fail-open 回退
+        val videos = SourceHealthFilter.filterHomeCards(playable, loadingSourceKey, "rec")
         // 粗筛掉了多少要留痕:数字异常(=全被筛掉)说明关键词口径过宽,会误杀正常影片,
         // 这时能第一时间发现。详见 AvailabilityHeuristic 的「零误杀」约定。
         if (raw.isNotEmpty() && videos.isEmpty()) {
@@ -414,7 +451,12 @@ class HomeViewModel : ViewModel() {
         // 方案 B 第一层:粗筛掉"看起来没资源"的卡片(产品要求:没资源的片子不该出现在首页)。
         // 在 ViewModel 层过滤而不是 UI 层 —— 首页有三个渲染点(推荐位/分区/加载更多),
         // 放这里一次全覆盖,UI 拿到的永远是干净列表。
-        val videos = AvailabilityMemory.filterPlayable(rawVideos)
+        // 防滥用封禁(规则 5)在同一处叠加:提供该卡的源被屏蔽、且已知没有别的可用源收录时不展示其图片
+        val videos = SourceHealthFilter.filterHomeCards(
+            AvailabilityMemory.filterPlayable(rawVideos),
+            loadingSourceKey,
+            sortId,
+        )
         if (rawVideos.isNotEmpty() && videos.isEmpty()) {
             LOG.i("echo-unavailable home-list filtered-all n=" + rawVideos.size + " sort=$sortId")
         }

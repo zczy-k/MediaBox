@@ -155,8 +155,15 @@ class DetailActivity : BaseActivity(), PageHost {
         // 线路全废 → 自动换源:先把当前位置记下再拉起换源链。新源的进度键不同(键含源 key),
         // 缺这一步就是"换个源从头播"。与手动换线/手动换源共用同一入口,位置口径只有一份
         playContainer?.rememberProgressForSwitch()
-        return startDetailFallbackAfterLinesExhausted()
+        // 该源放不出来,记一次源级失败(防滥用封禁);但**纯网络原因**不能算到源头上 ——
+        // 断网时所有源一起失败,算进去会把好好的源全拉黑。判据取重试阶梯最后一次读到的错误种类;
+        // 取不到引擎时按"网络类"处理(即不记账),宁可漏记也不要误封。
+        val networkOnly = PlaybackService.peek()?.controller()?.lastFailureWasNetwork() ?: true
+        return startDetailFallbackAfterLinesExhausted(sourceLevelFailure = !networkOnly)
     }
+
+    fun startDetailFallbackAfterLinesExhausted(sourceLevelFailure: Boolean): Boolean =
+        vm.startFallbackAfterLinesExhausted(sourceLevelFailure)
 
     /** 入口可见性由播放侧判定(剧集/线路多于一个才显示按钮),这里只兜住详情数据尚未就绪的时序 */
     override fun showEpisodeSheet() {

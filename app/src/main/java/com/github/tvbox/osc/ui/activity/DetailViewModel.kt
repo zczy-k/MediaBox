@@ -26,6 +26,9 @@ import com.github.tvbox.osc.util.HistoryWriter
 import com.github.tvbox.osc.util.LOG
 import com.github.tvbox.osc.util.OkGoHelper
 import com.github.tvbox.osc.util.SearchHelper
+import com.github.tvbox.osc.util.SourceFailKind
+import com.github.tvbox.osc.util.SourceHealthFilter
+import com.github.tvbox.osc.util.SourceHealthMemory
 import com.github.tvbox.osc.util.SourceIdentityMask
 import com.github.tvbox.osc.sourcedata.SourceViewModel
 import com.github.tvbox.osc.sourcedata.observeAsFlow
@@ -863,8 +866,11 @@ class DetailViewModel : ViewModel() {
         // 旧表里的 key 在新站表里基本对不上,直接拿去过滤会把候选池缩到 0 —— 表现为换源永远无可选项。
         val effectiveChecked = if (checked == null || SearchHelper.isSelectionStale(checked)) null else checked
         val home = ApiConfig.get().getHomeSourceBean()
-        val sources = ApiConfig.get().getSourceBeanList()
+        val candidatePool = ApiConfig.get().getSourceBeanList()
             .filter { it.isSearchable() && it.isQuickSearch() && (effectiveChecked == null || effectiveChecked.containsKey(it.key)) }
+        // 被屏蔽的源不进自动换源候选池(防滥用封禁机制,P2):放在 take(上限) **之前**,
+        // 免得坏源白占候选名额;整池被滤空时 fail-open 回退,不会让换源直接无候选。
+        val sources = SourceHealthFilter.filter(candidatePool)
             .sortedBy { it.key != home.key }
             .take(fallbackPoolCap)
         // 诊断包靠这行判断"预热到底有没有触发、候选池多大" —— 真机日志被 ROM 屏蔽时,
@@ -1254,9 +1260,26 @@ class DetailViewModel : ViewModel() {
      * <p>与 [onDetailUnavailable] / [handleEmptyDetail] 同因:候选只能来自聚合搜索,
      * 不先保证搜索在跑,[loadNextFallbackCandidate] 会在候选为空时直接收尾并清掉自动接管。
      */
-    fun startFallbackAfterLinesExhausted(): Boolean {
+    fun startFallbackAfterLinesExhausted(sourceLevelFailure: Boolean): Boolean {
+        if (sourceLevelFailure) recordSourcePlayFailure()
         ensureSourceSearchRunning()
         return startFallbackIfNeeded(auto = true, fromLinesExhausted = true)
+    }
+
+    /**
+     * 该源放不出来 ⇒ 记一次源级失败(防滥用封禁机制,P1 记录侧)。
+     *
+     * <p>调用方必须已经排除"纯网络原因"([sourceLevelFailure] 的来历见 DetailActivity):
+     * 断网/被墙是所有源一起失败,算到某一个源头上会把好好的源全拉黑。
+     *
+     * <p>归到"影片"维度用当前片名(而不是"源|片id"):同一部片在不同源的 id 不同,
+     * 按 id 计会把"同一部片在两个源都放不出来"当成 2 部,把"≥2 部不同影片"的门槛稀释掉。
+     */
+    private fun recordSourcePlayFailure() {
+        val title = vodInfo?.name ?: vodName
+        val banned = SourceHealthMemory.recordFail(SourceFailKind.PLAY_FAILED, sourceKey, title)
+        // 触发封禁 ⇒ 广播一次,让首页立刻重算源清单/卡片可见性(见 HomeViewModel.refreshSourceBlock)
+        if (banned) EventBus.getDefault().post(RefreshEvent(RefreshEvent.TYPE_SOURCE_BLOCK_CHANGE))
     }
 
     private fun startFallbackIfNeeded(auto: Boolean, fromLinesExhausted: Boolean = false): Boolean {

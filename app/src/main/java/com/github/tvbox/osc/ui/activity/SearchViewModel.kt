@@ -15,6 +15,9 @@ import com.github.tvbox.osc.util.LOG
 import com.github.tvbox.osc.util.OkGoHelper
 import com.github.tvbox.osc.util.SearchHelper
 import com.github.tvbox.osc.util.SearchSettings
+import com.github.tvbox.osc.util.SourceFailKind
+import com.github.tvbox.osc.util.SourceHealthFilter
+import com.github.tvbox.osc.util.SourceHealthMemory
 import com.github.tvbox.osc.util.UA
 import com.github.tvbox.osc.sourcedata.SourceViewModel
 import com.lzy.okgo.OkGo
@@ -351,9 +354,11 @@ class SearchViewModel : ViewModel() {
         stopPreviousSearch()
         val home = ApiConfig.get().getHomeSourceBean()
         val checked = checkedSources
-        val sources = ApiConfig.get().getSourceBeanList()
+        val pool = ApiConfig.get().getSourceBeanList()
             .filter { it.isSearchable() && (checked == null || checked.containsKey(it.key)) }
-            .sortedBy { it.key != home.key }
+        // 被屏蔽的源不参与搜索(防滥用封禁机制,P2):放在排序与分批**之前** ——
+        // 否则首轮"快速源"里还留着它,第一批照样要等它超时。整池被滤空时 fail-open 回退。
+        val sources = SourceHealthFilter.filter(pool).sortedBy { it.key != home.key }
         // ⚠️ 诊断:搜索到底搜了哪些源。别删。
         //
         // 为什么需要它:无资源标记在搜索页**从来没有命中过**(真机实测 rail-filter
@@ -636,6 +641,44 @@ class SearchViewModel : ViewModel() {
         }
         // 只在真正从"非终态"切进终态时计数,避免重复回包把进度算多
         if (updated != null) settledCount.value = (settledCount.value + 1).coerceAtMost(totalCount.value)
+        recordSourceOutcome(sourceKey, state, updated)
+    }
+
+    /**
+     * 把终态写进源健康台账(防滥用封禁机制,P1 记录侧)。
+     *
+     * <p>口径:
+     * <ul>
+     *   <li>**超时**一律记一次失败(需求规则 3);**请求失败**同类记一次 —— 两者都是"源没给出有效应答";</li>
+     *   <li>**无命中(`Empty`)绝不记**:源没这部片不是源的错;命中(`Done`)反过来登记"这些片名该源有收录",
+     *       供首页判断"这部片还有没有别的可用源";</li>
+     *   <li>计数按**搜索词**归到"影片"维度:同一轮里所有源失败都算同一部片 ⇒ 一次断网/一次全网抖动
+     *       最多凑到 1 部影片,达不到"≥2 部不同影片"的门槛,不会误封。</li>
+     * </ul>
+     */
+    private fun recordSourceOutcome(sourceKey: String, state: ResultState, settled: SourceResult?) {
+        when (state) {
+            ResultState.Timeout ->
+                notifyIfBanned(SourceHealthMemory.recordFail(SourceFailKind.SEARCH_TIMEOUT, sourceKey, searchedTitle.value))
+
+            ResultState.Failed ->
+                notifyIfBanned(SourceHealthMemory.recordFail(SourceFailKind.SEARCH_FAILED, sourceKey, searchedTitle.value))
+
+            ResultState.Done ->
+                settled?.videos?.takeIf { it.isNotEmpty() }?.let { videos ->
+                    SourceHealthMemory.recordCarriers(sourceKey, videos.mapNotNull { it.name })
+                }
+
+            else -> Unit
+        }
+    }
+
+    /** 触发封禁时广播一次,让首页(源清单/卡片可见性)立刻跟上 —— 不必等下次全网取数 */
+    private fun notifyIfBanned(banned: Boolean) {
+        if (!banned) return
+        // 与本文件其它处一致,用全限定名(该 VM 没有 import EventBus)
+        org.greenrobot.eventbus.EventBus.getDefault()
+            .post(com.github.tvbox.osc.event.RefreshEvent(com.github.tvbox.osc.event.RefreshEvent.TYPE_SOURCE_BLOCK_CHANGE))
     }
 
     /** 批次异常/取消时,仍停在 Pending 的源复位为 Queued,免得站点栏一直转圈 */

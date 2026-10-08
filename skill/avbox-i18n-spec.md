@@ -277,6 +277,8 @@ Android 13+ 的「系统设置 → 应用 → 语言」需要 `res/xml/locales_c
 >
 > **2026-09-26 复核**:上记条数为当日快照,其后增量已使其漂移 —— 当前四语声明数 = `values` **435** / `values-en` **435** / `values-b+zh+Hant` **435** / `values-zh-rHK` **71**(子集,与基础层无同值项)。本次新增 2 条:`history_incognito`(无痕下历史页空态)、`search_incognito`(无痕下搜索页空态);港层两处均用「記錄」以区别于基础层「紀錄」。
 
+> **2026-10-08 复核**:新增 4 条(防滥用封禁机制设置项)——`settings_auto_block_bad_sources`、`settings_auto_block_bad_sources_subtitle`、`settings_source_blocked_count`(带 `%1$d` 占位)、`settings_source_unblock_all`;三条完整层同步补齐,无港台差异条目(港层回落繁体基础层)。**实测基线**:`values` **555** / `values-en` **555** / `values-b+zh+Hant` **555** / `values-zh-rHK` **76**。⚠️ 上一条的 435 是 2026-09-26 快照,其后已漂移到 551(差额非本次引入,本次仅 +4);后续复核请以实际 `grep -c "<string name="` 为准,别直接沿用旧数字。
+
 **A. 静态检查(脚本可复现)**
 
 - `ui/`、`player/ui/` 下含中文的字符串字面量 = 0(白名单 = §1.3 R1–R5 的 `// i18n: keep` 行);

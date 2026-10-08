@@ -503,6 +503,10 @@
     <string name="settings_nav_live_hidden">Hide Live in Navigation Bar</string>
     <string name="settings_nav_live_hidden_subtitle">Hides the Live entry in the navigation bar</string>
     <string name="settings_auto_switch_line">Auto Switch Line</string>
+    <string name="settings_auto_block_bad_sources">Auto-block unreliable sources</string>
+    <string name="settings_auto_block_bad_sources_subtitle">Pause a source after repeated failures; blocked sources are skipped in search and source switching</string>
+    <string name="settings_source_blocked_count">Blocked sources: %1$d</string>
+    <string name="settings_source_unblock_all">Unblock all</string>
     <string name="settings_m3u8_purify">M3U8 Purify</string>
     <string name="settings_danmu_switch">Danmaku Switch</string>
     <string name="settings_danmu_api">Danmaku API</string>

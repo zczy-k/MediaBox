@@ -94,6 +94,16 @@ public class HawkConfig {
     /** 自定义字幕源(JSON 数组:[{name,url}],url 里用 {kw} 占位) */
     public static final String SUBTITLE_CUSTOM_SOURCES = "subtitle_custom_sources";
     public static final String SOURCES_FOR_SEARCH = "checked_sources_for_search";
+    /**
+     * 防滥用封禁开关(默认开启):某个源反复失败后自动停用一段时间,期间所有影片都不再选它。
+     * 台账与判据见 {@code util/SourceHealthMemory} 与 {@code util/SourceHealthPolicy}。
+     */
+    public static final String AUTO_BLOCK_BAD_SOURCES = "auto_block_bad_sources";
+    /**
+     * 源健康台账 + 跨源覆盖索引(JSON 字符串)。**按点播源地址分桶**:实际键名是
+     * {@code source_health_<md5(源地址)>}(源 key 只属于具体源集合,不分桶会让换仓后误屏蔽一批源)。
+     */
+    public static final String SOURCE_HEALTH = "source_health";
     public static final String REMOTE_TVBOX = "remote_tvbox_host";
     public static final String PLAYER_IS_LIVE = "player_is_live";
     public static final String DOH_JSON = "doh_json";

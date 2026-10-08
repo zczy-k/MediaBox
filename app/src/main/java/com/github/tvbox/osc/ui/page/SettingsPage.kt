@@ -63,6 +63,7 @@ import com.github.tvbox.osc.player.effect.anime4k.Anime4kTier
 import com.github.tvbox.osc.util.HawkConfig
 import com.github.tvbox.osc.util.MusicSettings
 import com.github.tvbox.osc.util.OkGoHelper
+import com.github.tvbox.osc.util.SourceHealthMemory
 import com.github.tvbox.osc.util.KV
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -81,6 +82,10 @@ data class SettingsState(
     val preferAac: Boolean,
     val musicPlayerPage: Boolean,
     val autoSwitchLine: Boolean,
+    /** 防滥用封禁开关(默认开):反复失败的源自动停用一段时间 */
+    val autoBlockBadSources: Boolean,
+    /** 当前被屏蔽的源数量(设置页展示 + "全部解除"入口的可见性) */
+    val blockedSourceCount: Int,
     val m3u8Purify: Boolean,
     val incognito: Boolean,
     val gestureControlDisabled: Boolean,
@@ -174,6 +179,10 @@ class SettingsViewModel : ViewModel() {
         preferAac = KV.get(HawkConfig.PLAY_PREFER_AAC, false),
         musicPlayerPage = MusicSettings.autoOpenPage(),
         autoSwitchLine = KV.get(HawkConfig.AUTO_SWITCH_LINE, true),
+        autoBlockBadSources = KV.get(HawkConfig.AUTO_BLOCK_BAD_SOURCES, true),
+        // 台账查询会顺带做到点自动解封(见 SourceHealthMemory.blockedKeys),所以这里读到的
+        // 一定是"此刻仍有效"的数量,不会把已解封的算进去
+        blockedSourceCount = SourceHealthMemory.blockedCount(),
         m3u8Purify = KV.get(HawkConfig.M3U8_PURIFY, false),
         incognito = KV.get(HawkConfig.INCOGNITO, false),
         gestureControlDisabled = KV.get(HawkConfig.GESTURE_CONTROL_DISABLED, false),
