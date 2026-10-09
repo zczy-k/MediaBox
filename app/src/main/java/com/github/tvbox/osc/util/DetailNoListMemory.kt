@@ -49,6 +49,9 @@ object DetailNoListMemory {
     /** 归属的桶(点播源地址的 MD5);地址变化时换桶 */
     private var cacheBucket: String? = null
 
+    /** 有未落盘的改动 */
+    private var dirty = false
+
     private fun now() = System.currentTimeMillis()
 
     // ==================== 记/清 ====================
