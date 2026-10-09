@@ -111,7 +111,10 @@ class SearchBatchPolicyTest {
     fun homeSourceIsNeverPenalized() {
         // 首页源即便刚超时也必须进首轮:用户正从这个源浏览,把它排到队尾等于"首轮一定慢"。
         // 这与"照样记它的失败证据"不矛盾 —— 记不记,和首轮让不让它上,是两件事。
-        val sources = listOf(source("home", quick = false), source("x", quick = true))
+        //
+        // 对照项刻意用一个**非快源**(quick=false):它只能靠 penalized 进延后列表,
+        // 这样"首页源豁免"才是唯一让 home 留在首轮的原因。
+        val sources = listOf(source("home", quick = false), source("x", quick = false))
         val (fast, deferred) = SearchBatchPolicy.splitFastRoundSources(
             sources,
             homeKey = "home",

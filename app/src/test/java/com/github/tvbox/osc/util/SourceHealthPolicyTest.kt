@@ -244,14 +244,19 @@ class SourceHealthPolicyTest {
     @Test
     fun httpFailureNeitherIncrementsNorResetsStreak() {
         // SEARCH_FAILED 不是"源答话了"(没资格把连续超时洗白),也不是超时(不凑这个数)。
-        // 全文用同一个片名 ⇒ distinct=1,确保不会误触规则 1,只验证规则 2 的加减口径
+        // 全文用同一个片名 ⇒ distinct=1,确保不会误触规则 1,只验证规则 2 的加减口径。
         val a = SourceHealthPolicy.contentKey("电影A")
         var s = state(fails = 1, titles = listOf("电影A"))
+        assertEquals(1, s.timeoutStreak)
         s = SourceHealthPolicy.recordFail(s, SourceFailKind.SEARCH_FAILED, a, t0 + 1)
+        // 计数不变 —— 这一条本身就是"HTTP 失败没有把连续超时洗白"的证据:
+        // 若它归零,下一次超时只会到 1,下面那次封禁根本不会发生
         assertEquals(1, s.timeoutStreak)
         s = SourceHealthPolicy.recordFail(s, SourceFailKind.SEARCH_TIMEOUT, a, t0 + 2)
-        assertEquals(2, s.timeoutStreak)
         assertTrue(SourceHealthPolicy.isBlocked(s, t0 + 2))
+        // 封禁即把计数归零(与规则 1 的"封禁清证据"同款)⇒ 解封后要重新连续两次
+        assertEquals(0, s.timeoutStreak)
+        // 且不走升级档位
         assertEquals(0, s.banCount)
     }
 
