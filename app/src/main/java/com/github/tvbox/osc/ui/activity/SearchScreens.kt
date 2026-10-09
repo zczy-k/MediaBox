@@ -219,6 +219,7 @@ internal fun RailResults(
     running: Boolean,
     selectedSource: String?,
     onSelectSource: (String?) -> Unit,
+    searchedTitle: String,
     topPad: Dp,
     railState: LazyListState,
     listState: LazyListState,

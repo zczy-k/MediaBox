@@ -308,6 +308,7 @@ private fun SearchResultsContent(
                 running = running,
                 selectedSource = selectedSource,
                 onSelectSource = onSelectSource,
+                searchedTitle = searchedTitle,
                 topPad = topPad,
                 railState = railState,
                 listState = railResultState,
