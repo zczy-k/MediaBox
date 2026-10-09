@@ -149,7 +149,8 @@ class SearchDedupPolicyTest {
                 item("s3|1", "B片"),
             ),
         )
-        assertEquals(listOf("B片", "A片"), g.map { it.titleKey })
+        // titleKey 是助手归一化后的小写形式
+        assertEquals(listOf("b片", "a片"), g.map { it.titleKey })
         assertEquals(listOf("s1|1", "s3|1"), g[0].members.map { it.id })
     }
 
