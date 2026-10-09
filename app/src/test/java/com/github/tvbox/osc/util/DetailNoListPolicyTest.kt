@@ -23,15 +23,16 @@ class DetailNoListPolicyTest {
 
     @Test
     fun `record 淘汰窗口外的旧证据`() {
-        val now = 30L * day + 1
+        // now=31 天:1L 距 now 31 天-1ms > 30 天 TTL → 淘汰;now-day(30 天整)在窗口内保留
+        val now = 31L * day
         val strikes = DetailNoListPolicy.record(listOf(1L, now - day), now = now)
-        // 1L 距 now 超过 30 天 → 淘汰;now-day 保留;追加本次
         assertEquals(listOf(now - day, now), strikes)
     }
 
     @Test
     fun `record 保留窗口边界内的证据(now - t == TTL 不淘汰)`() {
-        val now = 100L
+        // t = now - TTL 恰在边界上(判据 <= TTL 保留),且必须为正 ⇒ now 取 TTL+100
+        val now = DetailNoListPolicy.STRIKE_TTL_MS + 100
         val strikes = DetailNoListPolicy.record(listOf(now - DetailNoListPolicy.STRIKE_TTL_MS), now = now)
         assertEquals(listOf(now - DetailNoListPolicy.STRIKE_TTL_MS, now), strikes)
     }
@@ -62,7 +63,8 @@ class DetailNoListPolicyTest {
 
     @Test
     fun `窗口内两票触发索引型`() {
-        val now = 1000L
+        // now 必须大于 day,否则 now-day 为负、被 it>0 守卫过滤(证据口径:非正时间戳无效)
+        val now = 2L * day
         assertTrue(DetailNoListPolicy.isIndexLike(listOf(now - day, now - 1), now = now))
     }
 
