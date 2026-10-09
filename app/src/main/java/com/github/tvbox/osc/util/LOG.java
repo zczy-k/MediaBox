@@ -72,7 +72,12 @@ public class LOG {
             // ↓ 2026-10-09:S2 按源记忆("详情回包缺 list"→ 按索引型跳过详情请求)。
             //   v1.0.11-diag 真机测试时踩了本类注释警告的坑:前缀没登记,文件里查不到
             //   echo-dnolist,一度误判"record 没执行";实际代码在跑(行为已验证),纯日志被过滤。
-            "echo-dnolist"}
+            "echo-dnolist",
+            // ↓ 2026-10-09:**源完整度优先级**(权威集数/起播跳过/播放中纠偏)。
+            //   ⚠️ 本日第三次踩同一个坑:echo-completeness 没登记,真机 67 次详情成功
+            //   却 0 条日志,再次误判"record 没执行" —— 实际是纯日志被过滤。
+            //   教训升格为铁律:**LOG.i 的新前缀必须同步登记本数组**,提交前 grep 复核。
+            "echo-completeness"}
             // ⚠️ FILE_LOG=false(正式包)时折成空数组,让这批前缀**字面量也从 dex 里消失**。
             //
             // 背景:release 靠 proguard 的 -assumenosideeffects 已经把**调用点**全删了
