@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
@@ -30,6 +31,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -60,7 +62,10 @@ import com.github.tvbox.osc.R
 import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.ui.components.PressableCard
 import com.github.tvbox.osc.ui.components.VodPoster
+import com.github.tvbox.osc.ui.currentWindowWidthClass
+import com.github.tvbox.osc.ui.WindowSize
 import com.github.tvbox.osc.ui.theme.cardContainer
+import com.github.tvbox.osc.ui.theme.filterChipColors
 import kotlinx.coroutines.flow.distinctUntilChanged
 import com.github.tvbox.osc.util.SearchSettings
 import com.github.tvbox.osc.util.AvailabilityHeuristic
@@ -270,84 +275,196 @@ internal fun RailResults(
         if (rows.isNotEmpty()) listState.scrollToItem(0)
     }
 
-    Row(modifier = Modifier.fillMaxSize()) {
-        LazyColumn(
-            state = railState,
-            modifier = Modifier
-                .width(SearchRailWidth + 8.dp)
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh),
-            contentPadding = PaddingValues(start = 12.dp, end = 10.dp, top = topPad + 16.dp, bottom = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            item(key = "rail_all") {
-                SearchRailItem(
-                    name = stringResource(R.string.common_all),
-                    pending = running,
-                    selected = selectedSource == null,
-                    onClick = { onSelectSource(null) },
+    // 2026-10-09 响应式来源栏:手机竖屏(Compact)下左侧站点栏固定 140dp 约占 1/3 屏宽,
+    // 结果区被压窄到标题都截断(真机截图:meta"2026 · 中国…"被截)。Compact 时把来源栏
+    // 折叠成顶部横滑筛选条(与横排视图同款交互),结果区占满全宽;Medium/Expanded(平板/
+    // 横屏/TV)屏幕宽,侧栏保留 —— 侧栏能同时呈现 pending/queued/failed/timeout 状态点,
+    // 是信息量更高的形态,宽屏没有理由放弃。
+    val done = remember(results) { results.filter { it.videos.isNotEmpty() } }
+    if (currentWindowWidthClass() == WindowWidthClass.Compact) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            if (done.size > 1) {
+                SourceFilterChips(
+                    done = done,
+                    anonymousLabelOf = anonymousLabelOf,
+                    selectedSource = selectedSource,
+                    onSelectSource = onSelectSource,
+                    topPad = topPad,
                 )
             }
-            items(results, key = { "rail_${it.sourceKey}" }) { result ->
-                SearchRailItem(
-                    name = anonymousLabelOf[result.sourceKey].orEmpty(),
-                    pending = result.state == SearchViewModel.ResultState.Pending,
-                    queued = result.state == SearchViewModel.ResultState.Queued,
-                    failed = result.state == SearchViewModel.ResultState.Failed,
-                    timeout = result.state == SearchViewModel.ResultState.Timeout,
-                    selected = selectedSource == result.sourceKey,
-                    onClick = { onSelectSource(result.sourceKey) },
+            RailResultList(
+                listState = listState,
+                rows = rows,
+                running = running,
+                hasMore = hasMore,
+                searchedCount = searchedCount,
+                settledCount = settledCount,
+                totalCount = totalCount,
+                onLoadMore = onLoadMore,
+                onCardClick = onCardClick,
+                onLongClick = onCardLongClick,
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(
+                    start = 16.dp, end = 16.dp,
+                    top = if (done.size > 1) 8.dp else topPad + 8.dp,
+                    bottom = 12.dp,
+                ),
+            )
+        }
+    } else {
+        Row(modifier = Modifier.fillMaxSize()) {
+            LazyColumn(
+                state = railState,
+                modifier = Modifier
+                    .width(SearchRailWidth + 8.dp)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHigh),
+                contentPadding = PaddingValues(start = 12.dp, end = 10.dp, top = topPad + 16.dp, bottom = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                item(key = "rail_all") {
+                    SearchRailItem(
+                        name = stringResource(R.string.common_all),
+                        pending = running,
+                        selected = selectedSource == null,
+                        onClick = { onSelectSource(null) },
+                    )
+                }
+                items(results, key = { "rail_${it.sourceKey}" }) { result ->
+                    SearchRailItem(
+                        name = anonymousLabelOf[result.sourceKey].orEmpty(),
+                        pending = result.state == SearchViewModel.ResultState.Pending,
+                        queued = result.state == SearchViewModel.ResultState.Queued,
+                        failed = result.state == SearchViewModel.ResultState.Failed,
+                        timeout = result.state == SearchViewModel.ResultState.Timeout,
+                        selected = selectedSource == result.sourceKey,
+                        onClick = { onSelectSource(result.sourceKey) },
+                    )
+                }
+            }
+            VerticalDivider(
+                modifier = Modifier.padding(top = topPad + 8.dp, bottom = 12.dp),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+            )
+            RailResultList(
+                listState = listState,
+                rows = rows,
+                running = running,
+                hasMore = hasMore,
+                searchedCount = searchedCount,
+                settledCount = settledCount,
+                totalCount = totalCount,
+                onLoadMore = onLoadMore,
+                onCardClick = onCardClick,
+                onLongClick = onCardLongClick,
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(start = 10.dp, end = 12.dp, top = topPad + 8.dp, bottom = 12.dp),
+            )
+        }
+    }
+}
+
+/**
+ * 竖排视图的结果列表(紧凑/侧栏两形态共用):进度条 + 结果行 + 空态 + 续搜尾部。
+ */
+@Composable
+private fun RailResultList(
+    listState: LazyListState,
+    rows: List<Movie.Video>,
+    running: Boolean,
+    hasMore: Boolean,
+    searchedCount: Int,
+    settledCount: Int,
+    totalCount: Int,
+    onLoadMore: () -> Unit,
+    onCardClick: (Movie.Video) -> Unit,
+    onLongClick: (Movie.Video) -> Unit,
+    modifier: Modifier = Modifier,
+    contentPadding: PaddingValues,
+) {
+    LazyColumn(
+        state = listState,
+        modifier = modifier,
+        contentPadding = contentPadding,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        if (running) {
+            item(key = "rail_progress") {
+                LinearWavyProgressIndicator(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
                 )
             }
         }
-        VerticalDivider(
-            modifier = Modifier.padding(top = topPad + 8.dp, bottom = 12.dp),
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
-        )
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(start = 10.dp, end = 12.dp, top = topPad + 8.dp, bottom = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            if (running) {
-                item(key = "rail_progress") {
-                    LinearWavyProgressIndicator(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 8.dp),
-                    )
-                }
-            }
-            itemsIndexed(rows, key = { index, video -> "rail_row_${index}_${video.sourceKey}_${video.id}" }) { _, video ->
-                SearchResultRow(
-                    video = video,
-                    onClick = { onCardClick(video) },
-                    onLongClick = { onCardLongClick(video) },
+        itemsIndexed(rows, key = { index, video -> "rail_row_${index}_${video.sourceKey}_${video.id}" }) { _, video ->
+            SearchResultRow(
+                video = video,
+                onClick = { onCardClick(video) },
+                onLongClick = { onLongClick(video) },
+            )
+        }
+        if (rows.isEmpty() && !running && !hasMore) {
+            item(key = "rail_empty") {
+                Text(
+                    text = stringResource(R.string.search_site_empty),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 32.dp),
                 )
             }
-            if (rows.isEmpty() && !running && !hasMore) {
-                item(key = "rail_empty") {
-                    Text(
-                        text = stringResource(R.string.search_site_empty),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 32.dp),
-                    )
-                }
-            }
-            item(key = "rail_more") {
-                SearchLoadMoreFooter(
-                    hasMore = hasMore,
-                    running = running,
-                    searchedCount = searchedCount,
-                    settledCount = settledCount,
-                    totalCount = totalCount,
-                    onLoadMore = onLoadMore,
-                )
-            }
+        }
+        item(key = "rail_more") {
+            SearchLoadMoreFooter(
+                hasMore = hasMore,
+                running = running,
+                searchedCount = searchedCount,
+                settledCount = settledCount,
+                totalCount = totalCount,
+                onLoadMore = onLoadMore,
+            )
+        }
+    }
+}
+
+/**
+ * 紧凑屏(手机竖屏)的来源筛选条:横滑 chips(全部 + 各源匿名标签),与横排视图同款交互。
+ *
+ * <p>只列**有结果**的源(done):没结果的源在这里是纯噪音 —— 侧栏形态才有"哪个源挂了/
+ * 还没轮到"的状态语义,compact 下退化为"能点出结果来的源"。
+ */
+@Composable
+private fun SourceFilterChips(
+    done: List<SearchViewModel.SourceResult>,
+    anonymousLabelOf: Map<String, String>,
+    selectedSource: String?,
+    onSelectSource: (String?) -> Unit,
+    topPad: Dp,
+) {
+    LazyRow(
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.padding(top = topPad + 8.dp, bottom = 2.dp),
+    ) {
+        item(key = "chips_all") {
+            FilterChip(
+                selected = selectedSource == null,
+                onClick = { onSelectSource(null) },
+                label = { Text(stringResource(R.string.common_all)) },
+                shape = RoundedCornerShape(20.dp),
+                colors = MaterialTheme.colorScheme.filterChipColors(),
+            )
+        }
+        items(done, key = { "chips_${it.sourceKey}" }) { result ->
+            FilterChip(
+                selected = selectedSource == result.sourceKey,
+                onClick = { onSelectSource(result.sourceKey) },
+                label = { Text(anonymousLabelOf[result.sourceKey].orEmpty()) },
+                shape = RoundedCornerShape(20.dp),
+                colors = MaterialTheme.colorScheme.filterChipColors(),
+            )
         }
     }
 }
