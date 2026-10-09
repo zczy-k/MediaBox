@@ -14,6 +14,7 @@ import com.github.tvbox.osc.util.KV
 import com.github.tvbox.osc.util.LOG
 import com.github.tvbox.osc.util.OkGoHelper
 import com.github.tvbox.osc.util.SearchHelper
+import com.github.tvbox.osc.util.SearchResultCache
 import com.github.tvbox.osc.util.SearchSettings
 import com.github.tvbox.osc.util.SourceFailKind
 import com.github.tvbox.osc.util.SourceHealthFilter
@@ -143,6 +144,12 @@ class SearchViewModel : ViewModel() {
     /** 本轮是否已经进过"后续批"(首轮只搜快速源);用于决定本批大小 */
     private var startedNonFastRound = false
 
+    /**
+     * 本轮已做过超时重试的源(P4-A):每源每关键词**只重试一次**,
+     * 重试再超时就永久保持 Timeout —— 不设重试上限会反复拖长收尾时间。
+     */
+    private val retriedKeys = mutableSetOf<String>()
+
     private val scope = viewModelScope
 
 
@@ -187,6 +194,15 @@ class SearchViewModel : ViewModel() {
          * 改词或退出搜索页后仍在途的请求会继续抢带宽与线程,正是"搜索越用越卡"的来源之一。
          */
         private const val SEARCH_TIMEOUT_MS = 8_000L
+
+        /**
+         * 超时源**单次重试**的限时(P4-A,2026-10-09)。
+         *
+         * <p>刻意取首搜限时(8s)的一半:8s 都没答话的源,大概率是网络抖动而非慢站 ——
+         * 给 4s 概率性挽回即可,不值得再等一个完整限时。重试整批并发执行(信号量兜住),
+         * 用户额外等待的上界就是 4s,不会拖长观影路径。
+         */
+        private const val RETRY_TIMEOUT_MS = 4_000L
 
         private const val DOUBAN_HOT_URL =
             "https://movie.douban.com/j/new_search_subjects?sort=U&range=0,10&tags=&playable=1&start=0&year_range="
@@ -390,6 +406,18 @@ class SearchViewModel : ViewModel() {
         sitesEmpty.value = sources.isEmpty()
         totalCount.value = sources.size
         searchableCount.value = ApiConfig.get().getSourceBeanList().count { it.isSearchable() }
+        retriedKeys.clear()
+        // P3 stale-while-revalidate(2026-10-09):同关键词 24h 内有缓存 ⇒ 先把命中列表灌进
+        // 结果区(秒开,源态直接 Done),新一轮分批搜索照常执行,回包经 mergeResult 并入覆盖。
+        // 缓存只存命中源,Empty/Timeout/Failed 不缓存 —— 那些源本轮照常真实搜索。
+        val cached = SearchResultCache.load(SearchSettings.normalizedTitle(t))
+        if (cached.isNotEmpty()) {
+            results.value = results.value.map { r ->
+                val hit = cached[r.sourceKey]
+                if (hit.isNullOrEmpty()) r else r.copy(videos = hit, state = ResultState.Done, arrivedAt = ++arriveSeq)
+            }
+            LOG.i("echo-searchplan cache-hydrate kw=" + searchedTitle.value + " sources=" + cached.size)
+        }
         searchedCount.value = 0
         settledCount.value = 0
         // 查询变体:番号类关键词(带横杠/下划线等)除原词外还有一个紧凑形式。
@@ -495,19 +523,21 @@ class SearchViewModel : ViewModel() {
     }
 
     /** 批次启动的唯一实现:[loadNextBatch] 按批取 key、[searchAllRemaining] 全量投入,之后路径完全一致。 */
-    private fun launchBatch(keys: List<String>) {
+    private fun launchBatch(keys: List<String>, timeoutMs: Long = SEARCH_TIMEOUT_MS, isRetry: Boolean = false) {
         val myToken = token
-        queuedSourceKeys = queuedSourceKeys.drop(keys.size)
-        hasMore.value = queuedSourceKeys.isNotEmpty()
-        searchedCount.value += keys.size
+        if (!isRetry) {
+            queuedSourceKeys = queuedSourceKeys.drop(keys.size)
+            hasMore.value = queuedSourceKeys.isNotEmpty()
+            searchedCount.value += keys.size
+            // 队列被消耗过就不是首轮了:下一批恢复 DEFAULT_BATCH_SIZE,把延后源一批批搜完
+            if (queuedSourceKeys.isNotEmpty()) startedNonFastRound = true
+        }
         markPending(keys)
         running.value = true
         batchInFlight = true
         inFlightKeys = keys
         val myBatch = ++batchSeq
         val tokenStr = myToken.toString()
-        // 队列被消耗过就不是首轮了:下一批恢复 DEFAULT_BATCH_SIZE,把延后源一批批搜完
-        if (queuedSourceKeys.isNotEmpty()) startedNonFastRound = true
         batchJob = scope.launch {
             try {
                 coroutineScope {
@@ -523,7 +553,7 @@ class SearchViewModel : ViewModel() {
                                 try {
                                     // 单源限时。超时后显式撤掉这条源的网络请求,
                                     // 避免"UI 已判超时、请求还在 OkGo 队列里跑"。
-                                    val settled = withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
+                                    val settled = withTimeoutOrNull(timeoutMs) {
                                         val state = runSourceSearch(myToken, tokenStr, key, outcome)
                                         state
                                     }
@@ -566,7 +596,40 @@ class SearchViewModel : ViewModel() {
             if (myToken != token) return@launch
             running.value = false
             logBatchSummary(myBatch, keys.size)
-            maybeContinueBatching()
+            // P3:剩余队列已空 = 本轮全部源收口 ⇒ 保存命中缓存(仅命中源,重试批收口会再存一次,
+            // 把重试挽回的源也纳入缓存)
+            if (queuedSourceKeys.isEmpty()) {
+                SearchResultCache.save(
+                    SearchSettings.normalizedTitle(searchedTitle.value),
+                    results.value.mapNotNull { r -> if (r.videos.isEmpty()) null else r.sourceKey to r.videos }.toMap(),
+                )
+            }
+            if (isRetry) {
+                // 重试批收口:不管成败都回到既有续批节奏,重试不再嵌套重试
+                maybeContinueBatching()
+            } else {
+                // P4-A:本批有超时源且尚未重试过 ⇒ 4s 限时重试一轮(每源每关键词仅一次);
+                // 没有可重试对象才进入既有自动续批
+                val retriable = results.value
+                    .filter { it.state == ResultState.Timeout && it.sourceKey in keys && retriedKeys.add(it.sourceKey) }
+                    .map { it.sourceKey }
+                if (retriable.isNotEmpty()) {
+                    // 复位终态:settleSource 只写非终态,Timeout 必须先回到 Pending;
+                    // 同时回退 settledCount(该源刚被计过一次 Timeout 终态,重试完成会再计一次)
+                    results.value = results.value.map { r ->
+                        if (r.sourceKey in retriable && r.state == ResultState.Timeout) {
+                            settledCount.value = (settledCount.value - 1).coerceAtLeast(0)
+                            r.copy(state = ResultState.Pending, elapsedMs = -1L)
+                        } else {
+                            r
+                        }
+                    }
+                    LOG.i("echo-searchplan retry-start n=" + retriable.size + " timeoutMs=" + RETRY_TIMEOUT_MS)
+                    launchBatch(keys = retriable, timeoutMs = RETRY_TIMEOUT_MS, isRetry = true)
+                } else {
+                    maybeContinueBatching()
+                }
+            }
         }
     }
 
