@@ -84,6 +84,56 @@ class SearchBatchPolicyTest {
         assertEquals(listOf("x"), deferred)
     }
 
+    /**
+     * 降权(2026-10-09):近期搜索超时的源排到队尾,但**照搜**。
+     *
+     * <p>断言三件事:① 降权的快源被挤出首轮;② 降权源排在健康延后源**之后**(真正的"队尾");
+     * ③ 一个都没少 —— 降权不是屏蔽,静默丢弃就是准确度事故。
+     */
+    @Test
+    fun penalizedSourcesGoToTailButAreNeverDropped() {
+        val sources = listOf(
+            source("home", quick = true),
+            source("quickHealthy", quick = true),
+            source("quickDead", quick = true),
+            source("slowHealthy", quick = false),
+            source("slowDead", quick = false),
+        )
+        val penalized = setOf("quickDead", "slowDead")
+        val (fast, deferred) = SearchBatchPolicy.splitFastRoundSources(sources, homeKey = "home", penalized = penalized)
+        assertEquals(listOf("home", "quickHealthy"), fast)
+        // 健康的延后源在前,降权的垫底
+        assertEquals(listOf("slowHealthy", "quickDead", "slowDead"), deferred)
+        assertEquals(sources.size, (fast + deferred).toSet().size)
+    }
+
+    @Test
+    fun homeSourceIsNeverPenalized() {
+        // 首页源即便刚超时也必须进首轮:用户正从这个源浏览,把它排到队尾等于"首轮一定慢"。
+        // 这与"照样记它的失败证据"不矛盾 —— 记不记,和首轮让不让它上,是两件事。
+        val sources = listOf(source("home", quick = false), source("x", quick = true))
+        val (fast, deferred) = SearchBatchPolicy.splitFastRoundSources(
+            sources,
+            homeKey = "home",
+            penalized = setOf("home"),
+        )
+        assertEquals(listOf("home"), fast)
+        assertEquals(listOf("x"), deferred)
+    }
+
+    @Test
+    fun penalizedUnknownKeysAreIgnored() {
+        // 台账里可能留着已不在源清单里的 key(换仓/删源):不能因此改变任何源的位置
+        val sources = listOf(source("a", quick = true), source("b", quick = false))
+        val (fast, deferred) = SearchBatchPolicy.splitFastRoundSources(
+            sources,
+            homeKey = "home",
+            penalized = setOf("已经不存在的源"),
+        )
+        assertEquals(listOf("a"), fast)
+        assertEquals(listOf("b"), deferred)
+    }
+
     @Test
     fun firstRoundUsesFastLimitAndLaterRoundsFallBackToDefault() {
         val queued = (1..500).map { "S$it" }

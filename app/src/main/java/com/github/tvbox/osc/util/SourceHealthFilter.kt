@@ -34,6 +34,17 @@ object SourceHealthFilter {
         if (SourceHealthMemory.isEnabled()) SourceHealthMemory.blockedKeys() else emptySet()
 
     /**
+     * 本轮需要**降权**的源集合(近期超时)。
+     *
+     * <p>与 [blockedKeys] 的区别是"降权 ≠ 屏蔽":这些源照搜,只是排到队尾、
+     * 不占首轮快速源的并发额度。所以它**不需要** fail-open —— 排序最坏只是没起作用,
+     * 不会让用户"搜不到"。
+     */
+    @JvmStatic
+    fun penalizedKeys(): Set<String> =
+        if (SourceHealthMemory.isEnabled()) SourceHealthMemory.penalizedKeys() else emptySet()
+
+    /**
      * 过滤源列表(首页换源 chip、搜索池、详情换源池共用)。
      *
      * <p>需求规则 4:被屏蔽的源必须从首页换源 chip 列表中过滤掉,不予展示。

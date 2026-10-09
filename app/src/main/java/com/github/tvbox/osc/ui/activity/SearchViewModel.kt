@@ -388,14 +388,20 @@ class SearchViewModel : ViewModel() {
         queryVariants = SearchSettings.queryVariants(t)
         startedNonFastRound = false
         // 首轮只搜"首页源 + quickSearch 源",其余排到后面按需展开(2026-10-08)。
-        // 队列顺序 = 快速源在前、延后源在后,所以批大小策略能自然形成"先快后全"。
-        val (fastKeys, deferredKeys) = SearchBatchPolicy.splitFastRoundSources(sources, home.key)
+        // 队列顺序 = 快速源在前、延后源在后(降权源垫底),所以批大小策略能自然形成"先快后全"。
+        //
+        // 降权(2026-10-09):上一轮搜索里超时的源排到队尾。超时是"内容无关"的证据 ——
+        // 与这次搜什么片无关,所以跨关键词同样成立。降权不放宽准确度:它们照搜,只是不占首轮额度,
+        // 于是"首屏"由上一轮**答过话**的源组成,命中更快;死源在队尾被慢慢消化。
+        val penalized = SourceHealthFilter.penalizedKeys()
+        val (fastKeys, deferredKeys) = SearchBatchPolicy.splitFastRoundSources(sources, home.key, penalized)
         queuedSourceKeys = fastKeys + deferredKeys
         hasMore.value = queuedSourceKeys.isNotEmpty()
         batchingPaused = false
         LOG.i(
             "echo-searchplan token=" + token + " total=" + sources.size +
                 " fast=" + fastKeys.size + " deferred=" + deferredKeys.size +
+                " defer=" + penalized.size +
                 " variants=" + queryVariants.size + " threads=" + semaphorePermits
         )
         if (sources.isEmpty()) {
@@ -650,8 +656,9 @@ class SearchViewModel : ViewModel() {
      * <p>口径:
      * <ul>
      *   <li>**超时**一律记一次失败(需求规则 3);**请求失败**同类记一次 —— 两者都是"源没给出有效应答";</li>
-     *   <li>**无命中(`Empty`)绝不记**:源没这部片不是源的错;命中(`Done`)反过来登记"这些片名该源有收录",
-     *       供首页判断"这部片还有没有别的可用源";</li>
+     *   <li>**无命中(`Empty`)绝不记失败**:源没这部片不是源的错。但它是**"源还活着"**的证据,
+     *       要反过来把连续超时计数清零(2026-10-09);</li>
+     *   <li>**命中(`Done`)**同样清零连续超时,并登记"这些片名该源有收录",供首页判断"还有没有别的可用源";</li>
      *   <li>计数按**搜索词**归到"影片"维度:同一轮里所有源失败都算同一部片 ⇒ 一次断网/一次全网抖动
      *       最多凑到 1 部影片,达不到"≥2 部不同影片"的门槛,不会误封。</li>
      * </ul>
@@ -664,10 +671,16 @@ class SearchViewModel : ViewModel() {
             ResultState.Failed ->
                 notifyIfBanned(SourceHealthMemory.recordFail(SourceFailKind.SEARCH_FAILED, sourceKey, searchedTitle.value))
 
-            ResultState.Done ->
+            ResultState.Done -> {
                 settled?.videos?.takeIf { it.isNotEmpty() }?.let { videos ->
                     SourceHealthMemory.recordCarriers(sourceKey, videos.mapNotNull { it.name })
                 }
+                // 答话了(哪怕只是答"我有这些")⇒ 连续超时归零
+                SourceHealthMemory.recordAnswered(sourceKey)
+            }
+
+            // 答"我没有"也是答话:源是活的,只是这部片它没有
+            ResultState.Empty -> SourceHealthMemory.recordAnswered(sourceKey)
 
             else -> Unit
         }

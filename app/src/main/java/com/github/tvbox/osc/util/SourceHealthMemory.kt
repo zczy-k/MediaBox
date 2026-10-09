@@ -104,8 +104,8 @@ object SourceHealthMemory {
         }
         val contentKey = SourceHealthPolicy.contentKey(title)
         val t = now()
-        var banned = false
         var newlyBanned = false
+        var escalated = false
         synchronized(lock) {
             val bucket = load()
             val before = bucket.health[key] ?: SourceHealthState()
@@ -113,23 +113,54 @@ object SourceHealthMemory {
             val after = SourceHealthPolicy.recordFail(before, kind, contentKey, t)
             bucket.health[key] = after
             trimHealth(bucket)
-            banned = after.manualLocked || after.bannedUntil > t
+            val banned = after.manualLocked || after.bannedUntil > t
             newlyBanned = banned && !wasBlocked
+            // 按"升级次数有没有涨"区分两条规则的产物:涨了 = 走了升级档位(规则 1)
+            escalated = after.banCount > before.banCount
             dirty = true
             LOG.i(
                 "echo-srcban fail kind=" + kind + " source=" + key + " content=" + contentKey +
                     " fails=" + after.fails.size + " banCount=" + after.banCount +
+                    " streak=" + after.timeoutStreak +
                     " banned=" + banned + " locked=" + after.manualLocked
             )
         }
-        // 封禁/升级是低频且必须可靠的转折点:当场落盘,别赌 2 秒窗口
-        if (banned) {
+        if (escalated) {
+            // 升级档位是低频、且"升到永久"不可逆的转折点:当场落盘,别赌 2 秒窗口
             flushNow()
             bumpRevision()
         } else {
+            // ⚠️ 规则 2 的临时封禁会**成批**发生:一轮搜索里几百个源同时到达"连续超时 2 次",
+            // 若也逐个 flushNow,就是把整张台账 JSON 重复序列化几百次(台账上限 400 源)。
+            // 所以走合并落盘;代价是进程在这 2 秒内被杀会丢掉这几次临时封禁 ——
+            // 可接受:证据(fails)还在,下次超时会重新触发,而 1 小时封禁本身是低风险的。
+            if (newlyBanned) bumpRevision()
             scheduleFlush()
         }
         return newlyBanned
+    }
+
+    /**
+     * 源**给出了答案**(搜索有命中或无命中)⇒ 连续超时计数归零(规则 2 的重置入口)。
+     *
+     * <p>不做网络/开关之外的任何判断:能走到这里就说明该源这一轮答话了,这就是"它还活着"的证据。
+     * 与 [recordFail] 一样**合并落盘**,不为一次成功单独写盘。
+     */
+    @JvmStatic
+    fun recordAnswered(sourceKey: String?) {
+        if (!isEnabled()) return
+        val key = sourceKey?.trim().orEmpty()
+        if (key.isEmpty()) return
+        synchronized(lock) {
+            val bucket = load()
+            val before = bucket.health[key] ?: return
+            val after = SourceHealthPolicy.recordAnswered(before)
+            if (after === before) return
+            bucket.health[key] = after
+            dirty = true
+            LOG.i("echo-srcban answered source=" + key + " streak=0")
+        }
+        scheduleFlush()
     }
 
     /**
@@ -219,6 +250,26 @@ object SourceHealthMemory {
     fun blockedCount(): Int = blockedKeys().size
 
     /**
+     * 本轮需要**降权**的源集合:最近 [SourceHealthPolicy.DEFER_MS] 内有过搜索超时。
+     *
+     * <p>降权 ≠ 屏蔽:这些源**照搜**,只是不占用首轮"快速源"的并发额度(见 [SearchBatchPolicy])。
+     * 所以它是纯读、不写盘、也不需要 fail-open —— 最坏情况只是排序没起作用。
+     */
+    @JvmStatic
+    fun penalizedKeys(): Set<String> {
+        if (!isEnabled()) return emptySet()
+        val t = now()
+        synchronized(lock) {
+            val bucket = load()
+            val out = HashSet<String>()
+            for ((key, state) in bucket.health) {
+                if (SourceHealthPolicy.shouldDefer(state, t)) out.add(key)
+            }
+            return out
+        }
+    }
+
+    /**
      * 覆盖索引里,这部影片还有没有**没被封**的源收录。
      *
      * @param title      影片名
@@ -243,7 +294,7 @@ object SourceHealthMemory {
         synchronized(lock) {
             val bucket = load()
             val targets = bucket.health.filterValues {
-                it.manualLocked || it.bannedUntil > 0L || it.fails.isNotEmpty()
+                it.manualLocked || it.bannedUntil > 0L || it.fails.isNotEmpty() || it.timeoutStreak > 0
             }.keys
             if (targets.isEmpty()) return
             for (key in targets) {
@@ -308,6 +359,9 @@ object SourceHealthMemory {
                         banCount = obj.optInt("banCount"),
                         bannedUntil = obj.optLong("until"),
                         manualLocked = obj.optBoolean("locked"),
+                        // optInt 对缺失键返回 0 ⇒ 加了字段的旧台账读出来是"无连续超时",向后兼容,
+                        // 不需要任何迁移(与 banCount 当初加进来时同款)
+                        timeoutStreak = obj.optInt("timeoutStreak"),
                     )
                 }
             }
@@ -336,7 +390,13 @@ object SourceHealthMemory {
         val root = JSONObject()
         val healthJson = JSONObject()
         for ((key, state) in bucket.health) {
-            if (state.fails.isEmpty() && state.banCount == 0 && state.bannedUntil == 0L && !state.manualLocked) continue
+            // 全零条目不落盘(台账瘦身)。⚠️ timeoutStreak 也要参与判空:连续超时计数非零时
+            // 该源必须被持久化,否则重启后计数丢失、要重新超时两次才封 —— 白白多等一轮。
+            if (state.fails.isEmpty() && state.banCount == 0 && state.bannedUntil == 0L &&
+                !state.manualLocked && state.timeoutStreak == 0
+            ) {
+                continue
+            }
             val obj = JSONObject()
             val arr = JSONArray()
             for (e in state.fails) {
@@ -346,6 +406,7 @@ object SourceHealthMemory {
             obj.put("banCount", state.banCount)
             obj.put("until", state.bannedUntil)
             obj.put("locked", state.manualLocked)
+            obj.put("timeoutStreak", state.timeoutStreak)
             healthJson.put(key, obj)
         }
         val coverageJson = JSONObject()

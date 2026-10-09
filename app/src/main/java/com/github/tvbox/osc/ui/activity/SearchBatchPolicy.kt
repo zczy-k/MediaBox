@@ -41,16 +41,34 @@ internal object SearchBatchPolicy {
      * <p>⚠️ **不排除**任何源:慢源/非快速源只是延后,仍可通过"搜索更多来源"或滑动搜到。
      * 静默丢弃慢源会让"库里明明有这部片子却搜不到",那是准确度事故,不是优化。
      *
-     * @param sources 已按用户勾选与 searchable 过滤、并排好序的源
-     * @return 首轮 key(去重)与延后 key
+     * @param sources   已按用户勾选与 searchable 过滤、并排好序的源
+     * @param penalized 本轮要**降权**的源(近期搜索超时,见 SourceHealthPolicy.shouldDefer)。
+     *                  降权 ≠ 屏蔽:它们照搜,只是排到**整个队列的最后**,不占首轮的并发额度。
+     * @return 首轮 key(去重)与延后 key(健康延后源在前、降权源垫底)
      */
-    fun splitFastRoundSources(sources: List<SourceBean>, homeKey: String): Pair<List<String>, List<String>> {
+    fun splitFastRoundSources(
+        sources: List<SourceBean>,
+        homeKey: String,
+        penalized: Set<String> = emptySet(),
+    ): Pair<List<String>, List<String>> {
         val fast = LinkedHashSet<String>()
-        val deferred = ArrayList<String>()
+        val healthyDeferred = ArrayList<String>()
+        val penalizedDeferred = ArrayList<String>()
         for (source in sources) {
-            if (source.key == homeKey || source.isQuickSearch()) fast.add(source.key) else deferred.add(source.key)
+            val isHome = source.key == homeKey
+            val isPenalized = penalized.isNotEmpty() && penalized.contains(source.key)
+            // 首页源**永不被降权**:用户刚从这个源看到片子,最可能就在这,把它排到队尾等于"首轮一定慢"。
+            // 这与 SourceHealthMemory 里"首页源不豁免"不矛盾 —— 那里说的是"照样记它的失败证据",
+            // 不是"首轮不许它上"。
+            if (isHome || (source.isQuickSearch() && !isPenalized)) {
+                fast.add(source.key)
+            } else if (isPenalized) {
+                penalizedDeferred.add(source.key)
+            } else {
+                healthyDeferred.add(source.key)
+            }
         }
-        return fast.toList() to deferred
+        return fast.toList() to (healthyDeferred + penalizedDeferred)
     }
 
     /**
