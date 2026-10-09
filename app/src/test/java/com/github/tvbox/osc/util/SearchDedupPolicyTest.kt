@@ -14,13 +14,22 @@ class SearchDedupPolicyTest {
 
     private data class Item(val id: String, val idn: SearchDedupPolicy.FilmIdentity)
 
+    /**
+     * 模拟调用方(搜索页)的归一化契约:策略收到的 titleKey 是**已归一化**的标题
+     * (生产环境走 SearchSettings.normalizedTitle)。测试里用等价的简化归一化。
+     */
+    private fun normalizeTitle(t: String): String =
+        t.filter { !it.isWhitespace() && !PUNCT.contains(it) }.lowercase()
+
+    private val PUNCT = "：:．.,，、()（）[]【】《》-—_·"
+
     private fun item(
         id: String,
         title: String,
         year: Int = 0,
         area: String = "",
         type: String = "",
-    ) = Item(id, SearchDedupPolicy.FilmIdentity(title, year, area, type))
+    ) = Item(id, SearchDedupPolicy.FilmIdentity(normalizeTitle(title), year, area, type))
 
     private fun group(items: List<Item>) = SearchDedupPolicy.group(items) { it.idn }
 
@@ -47,8 +56,10 @@ class SearchDedupPolicyTest {
         assertFalse(SearchDedupPolicy.compatible(a, b))
         val c = SearchDedupPolicy.FilmIdentity("x", 0, "大陆", "喜剧")
         assertFalse(SearchDedupPolicy.compatible(a, c))
-        val d = SearchDedupPolicy.FilmIdentity("x", 0, "Da陆", "剧情")
-        assertTrue(SearchDedupPolicy.compatible(a, d))
+        // ignoreCase 用同长度的大小写差异验证(中文无大小写,借 ASCII 段验证)
+        val base = SearchDedupPolicy.FilmIdentity("x", 0, "HongKong", "剧情")
+        val d = SearchDedupPolicy.FilmIdentity("x", 0, "hongkong", "剧情")
+        assertTrue(SearchDedupPolicy.compatible(base, d))
     }
 
     // ==================== group ====================
