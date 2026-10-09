@@ -268,6 +268,8 @@ private fun SearchResultsContent(
     totalCount: Int,
     searchableSources: Int,
     onLoadMore: () -> Unit,
+    onSearchAll: () -> Unit,
+    onOpenSourceSettings: () -> Unit,
     onCardClick: (Movie.Video) -> Unit,
     onCardLongClick: (Movie.Video) -> Unit,
 ) {
@@ -315,6 +317,8 @@ private fun SearchResultsContent(
                 totalCount = totalCount,
                 searchableSources = searchableSources,
                 onLoadMore = onLoadMore,
+                onSearchAll = onSearchAll,
+                onOpenSourceSettings = onOpenSourceSettings,
                 onCardClick = onCardClick,
                 onCardLongClick = onCardLongClick,
             )
@@ -332,6 +336,8 @@ private fun SearchResultsContent(
                 totalCount = totalCount,
                 searchableSources = searchableSources,
                 onLoadMore = onLoadMore,
+                onSearchAll = onSearchAll,
+                onOpenSourceSettings = onOpenSourceSettings,
                 onCardClick = onCardClick,
                 onCardLongClick = onCardLongClick,
             )
