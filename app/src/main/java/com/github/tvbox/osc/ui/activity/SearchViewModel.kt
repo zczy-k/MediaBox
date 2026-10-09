@@ -472,6 +472,31 @@ class SearchViewModel : ViewModel() {
             hasMore.value = false
             return
         }
+        launchBatch(keys)
+    }
+
+    /**
+     * 一次性把**剩余全部来源**投入搜索(2026-10-09):"搜索全部来源"按钮的执行入口。
+     *
+     * <p>与 [loadNextBatch] 共用同一套批次机制(在途标记/取消回滚/批日志),只是不做批次大小
+     * 截断 —— 用户显式要求全搜,分批节流让位;并发仍由信号量(32)兜住,不会瞬时打满请求。
+     * 已在途批([batchInFlight])期间点击无效,与续搜按钮同口径。
+     */
+    fun searchAllRemaining() {
+        val myToken = token
+        if (myToken == 0 || batchInFlight) return
+        if (queuedSourceKeys.isEmpty()) {
+            hasMore.value = false
+            return
+        }
+        batchingPaused = false
+        startedNonFastRound = true
+        launchBatch(queuedSourceKeys.toList())
+    }
+
+    /** 批次启动的唯一实现:[loadNextBatch] 按批取 key、[searchAllRemaining] 全量投入,之后路径完全一致。 */
+    private fun launchBatch(keys: List<String>) {
+        val myToken = token
         queuedSourceKeys = queuedSourceKeys.drop(keys.size)
         hasMore.value = queuedSourceKeys.isNotEmpty()
         searchedCount.value += keys.size

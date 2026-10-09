@@ -59,6 +59,8 @@ internal fun SearchListResults(
     totalCount: Int,
     searchableSources: Int,
     onLoadMore: () -> Unit,
+    onSearchAll: () -> Unit,
+    onOpenSourceSettings: () -> Unit,
     onCardClick: (Movie.Video) -> Unit,
     onCardLongClick: (Movie.Video) -> Unit,
 ) {
@@ -232,6 +234,8 @@ internal fun SearchListResults(
                 totalCount = totalCount,
                 searchableSources = searchableSources,
                 onLoadMore = onLoadMore,
+                onSearchAll = onSearchAll,
+                onOpenSourceSettings = onOpenSourceSettings,
             )
         }
     }

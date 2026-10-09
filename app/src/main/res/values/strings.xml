@@ -325,6 +325,7 @@
     <string name="search_match_exact">精准(完全一致)</string>
     <string name="search_sites">搜索站点</string>
     <string name="search_scope_narrow_hint">当前仅勾选 %1$d/%2$d 个可搜源，可在首页「搜索设置」调整范围</string>
+    <string name="search_load_all">搜索全部来源</string>
     <string name="search_sites_none_hint">未选择站点，将搜不到结果</string>
     <string name="search_sites_selected_hint">已选 %1$d/%2$d，全选即搜索全部站点</string>
     <string name="search_sites_empty">暂无可用站点</string>

@@ -220,6 +220,8 @@ internal fun RailResults(
     totalCount: Int,
     searchableSources: Int,
     onLoadMore: () -> Unit,
+    onSearchAll: () -> Unit,
+    onOpenSourceSettings: () -> Unit,
     onCardClick: (Movie.Video) -> Unit,
     onCardLongClick: (Movie.Video) -> Unit,
 ) {
@@ -304,6 +306,8 @@ internal fun RailResults(
                 totalCount = totalCount,
                 searchableSources = searchableSources,
                 onLoadMore = onLoadMore,
+                onSearchAll = onSearchAll,
+                onOpenSourceSettings = onOpenSourceSettings,
                 onCardClick = onCardClick,
                 onLongClick = onCardLongClick,
                 modifier = Modifier.weight(1f),
@@ -358,6 +362,8 @@ internal fun RailResults(
                 totalCount = totalCount,
                 searchableSources = searchableSources,
                 onLoadMore = onLoadMore,
+                onSearchAll = onSearchAll,
+                onOpenSourceSettings = onOpenSourceSettings,
                 onCardClick = onCardClick,
                 onLongClick = onCardLongClick,
                 modifier = Modifier.weight(1f),
@@ -381,6 +387,8 @@ private fun RailResultList(
     totalCount: Int,
     searchableSources: Int,
     onLoadMore: () -> Unit,
+    onSearchAll: () -> Unit,
+    onOpenSourceSettings: () -> Unit,
     onCardClick: (Movie.Video) -> Unit,
     onLongClick: (Movie.Video) -> Unit,
     modifier: Modifier = Modifier,
@@ -430,6 +438,8 @@ private fun RailResultList(
                 totalCount = totalCount,
                 searchableSources = searchableSources,
                 onLoadMore = onLoadMore,
+                onSearchAll = onSearchAll,
+                onOpenSourceSettings = onOpenSourceSettings,
             )
         }
     }
@@ -562,6 +572,8 @@ internal fun SearchLoadMoreFooter(
     totalCount: Int,
     searchableSources: Int = 0,
     onLoadMore: () -> Unit,
+    onSearchAll: (() -> Unit)? = null,
+    onOpenSourceSettings: (() -> Unit)? = null,
 ) {
     Column(
         modifier = Modifier
@@ -584,18 +596,41 @@ internal fun SearchLoadMoreFooter(
         )
         // 2026-10-09 防静默收窄:勾选表只存了 10 个源时,footer 恒显示"已搜索全部 10 个来源",
         // 用户无从知道订阅里还有 300+ 个源根本没参与(真机踩过:影视源全被旧勾选排除)。
-        // 勾选数 < 可搜总数时明示比例与调整入口。
+        // 勾选数 < 可搜总数时明示比例与调整入口;有回调时整行可点击直达搜索设置。
         if (searchableSources > totalCount && totalCount > 0) {
             Text(
                 text = stringResource(R.string.search_scope_narrow_hint, totalCount, searchableSources),
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
                 textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .let { m -> if (onOpenSourceSettings != null) m.clickable { onOpenSourceSettings() } else m },
             )
         }
         if (hasMore) {
-            OutlinedButton(onClick = onLoadMore, enabled = !running) {
-                Text(stringResource(R.string.search_load_more))
+            // 两个续搜入口并排同权:左边按批续(默认节流),右边一次性搜完全部剩余源。
+            // 样式同为 OutlinedButton、搜索中同时禁用,交互与"搜索更多来源"完全一致。
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                OutlinedButton(
+                    onClick = onLoadMore,
+                    enabled = !running,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text(stringResource(R.string.search_load_more), maxLines = 1)
+                }
+                if (onSearchAll != null) {
+                    OutlinedButton(
+                        onClick = onSearchAll,
+                        enabled = !running,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(stringResource(R.string.search_load_all), maxLines = 1)
+                    }
+                }
             }
         }
     }

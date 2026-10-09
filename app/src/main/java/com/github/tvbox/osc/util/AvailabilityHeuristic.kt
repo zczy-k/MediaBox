@@ -48,6 +48,11 @@ object AvailabilityHeuristic {
         "该资源已", "资源已", "播放失败",
         "维护中", "站点维护", "暂停服务", "停止服务", "停止更新", "永久维护",
         "censored", "404", "not found", "已过期",
+        // ↓ 2026-10-09(P1-B):英文站的自述措辞。同样只收语义明确的短语 ——
+        //   "Coming Soon"是站点明确说"现在没有可播内容",属于本筛语义;
+        //   刻意不收 "unavailable" 单词本身:它可能出现在正常描述里,短语形式已够用。
+        "no video", "no videos", "no resources", "no resource", "no content",
+        "not available", "coming soon", "temporarily unavailable",
     )
 
     /** 命中即认为不可用。纯 ASCII/中文小写比较,避免大小写漏判。 */

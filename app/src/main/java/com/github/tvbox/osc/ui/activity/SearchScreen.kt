@@ -43,6 +43,7 @@ import com.github.tvbox.osc.ui.components.AppTopBarScaffold
 import com.github.tvbox.osc.ui.components.LoadState
 import com.github.tvbox.osc.ui.components.LoadStateBox
 import com.github.tvbox.osc.ui.components.SearchField
+import com.github.tvbox.osc.ui.components.SearchSettingsSheet
 import com.github.tvbox.osc.ui.components.VodCardMenu
 import com.github.tvbox.osc.ui.components.glassTopBarSurface
 import com.github.tvbox.osc.ui.components.rememberVodCardMenuState
@@ -78,6 +79,8 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
     val sitesEmpty by vm.sitesEmpty.collectAsStateWithLifecycle()
     val vodMenu = rememberVodCardMenuState()
     var resultLayout by remember { mutableStateOf(SearchSettings.resultLayout()) }
+    // 搜索设置弹层:footer 的"勾选范围"提示行可直达(2026-10-09),改完自动按新范围重搜
+    var showSearchSettings by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         if (SearchViewModel.isCheckedSourcesStale()) {
@@ -196,6 +199,8 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
                 totalCount = totalCount,
                 searchableSources = searchableCount,
                 onLoadMore = { vm.loadNextBatch() },
+                onSearchAll = { vm.searchAllRemaining() },
+                onOpenSourceSettings = { showSearchSettings = true },
                 // 点开影片即暂停自动续批:把线程与爬虫让给详情取数,别让剩余上百个源继续抢
                 onCardClick = {
                     vm.pauseBatching()
@@ -215,6 +220,18 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
                 onCardLongClick = { vodMenu.show(it) },
             )
         }
+    }
+
+    if (showSearchSettings) {
+        SearchSettingsSheet(
+            onDismiss = { showSearchSettings = false },
+            onSelectionChanged = {
+                // 与 HomePage 同口径刷新选择缓存;搜索页额外按新范围立即重搜当前关键词
+                SearchViewModel.loadCheckedSources()
+                selectedSource = null
+                submit(query)
+            },
+        )
     }
 
     val menuContext = LocalContext.current
