@@ -64,6 +64,7 @@ import com.github.tvbox.osc.ui.components.PressableCard
 import com.github.tvbox.osc.ui.components.VodPoster
 import com.github.tvbox.osc.ui.currentWindowWidthClass
 import com.github.tvbox.osc.ui.WindowSize
+import com.github.tvbox.osc.ui.WindowWidthClass
 import com.github.tvbox.osc.ui.theme.cardContainer
 import com.github.tvbox.osc.ui.theme.filterChipColors
 import kotlinx.coroutines.flow.distinctUntilChanged
