@@ -1559,7 +1559,7 @@ class DetailViewModel : ViewModel() {
             }
         }
         completenessOwnCount = if (countable) best else 0
-        if (best > 1) CompletenessMemory.record(titleKey, best)
+        if (best > 1) CompletenessMemory.record(titleKey, best, info.sourceKey ?: sourceKey)
         LOG.i(
             "echo-completeness record title=$titleKey countable=$countable best=$best" +
                 " authority=${CompletenessMemory.authority(titleKey)} own=${completenessOwnCount}"
