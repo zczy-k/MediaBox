@@ -12,6 +12,7 @@ import com.github.tvbox.osc.util.CompletenessMemory
 import com.github.tvbox.osc.util.DetailNoListMemory
 import com.github.tvbox.osc.util.SearchSettings
 import com.github.tvbox.osc.util.SourceCompletenessPolicy
+import com.github.tvbox.osc.util.QualityLabelPolicy
 import com.github.tvbox.osc.bean.AbsXml
 import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.bean.VodInfo
@@ -872,12 +873,11 @@ class DetailViewModel : ViewModel() {
                         val cap = App.getInstance()?.let { DeviceCapability.capHeight(it) } ?: 0
                         val remembered = VideoQualityMemory.lookupAll(recordKey, recordId, siteOrder)
                         LineQualitySelector.pickFromMemory(remembered, cap)
-                            // P-完整性:质量记忆缺失时,按"可数集数最多"选线(同源多线路集数可不同);
-                            // 全部不可数(电影/网盘式铺列)回落站点默认第一条
-                            ?: mostCompleteFlag(info)
+                            // P-质量维度:实测记忆缺失时,按"标签档→覆盖当前集→可数集数"选线
+                            ?: bestFlagByLabelAndCompleteness(info)
                             ?: siteOrder.firstOrNull()
                     } else {
-                        mostCompleteFlag(info) ?: siteOrder.firstOrNull()
+                        bestFlagByLabelAndCompleteness(info) ?: siteOrder.firstOrNull()
                     }
                 }
                 restoreFallbackEpisode(info)
@@ -1293,17 +1293,29 @@ class DetailViewModel : ViewModel() {
         list?.getOrNull(index)?.url?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
 
     /**
-     * P-完整性线路级 tie-break(2026-10-09):可数集数最多的线路优先(同源多线路集数可不同);
-     * 并列/全部不可数返回 null,回落站点默认顺序。质量记忆存在时由质量选择主导,本方法只兜底。
+     * P-质量维度线路级排序(2026-10-10):四级键取最优线路——
+     * ①自报标签档(HIGH>PLAIN>TC,实测缺失时的先验) ②覆盖当前播放位置(多集剧护栏:
+     * 防"4K 但只有 3 集"的线路在看第 45 集时被误选) ③可数集数降序 ④站点默认序。
+     * 实测画质记忆存在时由 [LineQualitySelector] 主导,本方法只兜底;
+     * 电影(全不可数)标签档自然成为主导——与完整性豁免设计互补。
      */
-    private fun mostCompleteFlag(info: VodInfo): String? {
+    private fun bestFlagByLabelAndCompleteness(info: VodInfo): String? {
         var best: String? = null
-        var bestCount = 1
+        var bestLabel = -1
+        var bestCovers = false
+        var bestCount = 0
         info.seriesMap?.forEach { (flag, list) ->
-            val count = EpisodeTotals.episodeCount(list.map { s -> s.name as String? }) ?: return@forEach
-            if (count > bestCount) {
-                bestCount = count
+            val label = QualityLabelPolicy.priorityFromLabel(flag)
+            val count = EpisodeTotals.episodeCount(list.map { s -> s.name as String? }) ?: 0
+            val covers = list.size > info.playIndex
+            if (label > bestLabel ||
+                (label == bestLabel && covers && !bestCovers) ||
+                (label == bestLabel && covers == bestCovers && count > bestCount)
+            ) {
                 best = flag
+                bestLabel = label
+                bestCovers = covers
+                bestCount = count
             }
         }
         return best
@@ -1523,14 +1535,20 @@ class DetailViewModel : ViewModel() {
      * 后面的候选会随着信息变多获得更准的排序。
      */
     private fun sortFallbackCandidatesByCompleteness() = synchronized(fallbackCandidates) {
-        fallbackCandidates.sortByDescending { video ->
-            val authority = CompletenessMemory.authority(SearchSettings.normalizedTitle(video.name))
-            val prior = SourceCompletenessPolicy.priorCountFromNote(video.note)
-            SourceCompletenessPolicy.rankScore(
-                SourceCompletenessPolicy.tier(prior, authority),
-                prior,
-            )
-        }
+        fallbackCandidates.sortWith(
+            compareByDescending<Movie.Video> { video ->
+                val authority = CompletenessMemory.authority(SearchSettings.normalizedTitle(video.name))
+                val prior = SourceCompletenessPolicy.priorCountFromNote(video.note)
+                SourceCompletenessPolicy.rankScore(
+                    SourceCompletenessPolicy.tier(prior, authority),
+                    prior,
+                )
+                // P-质量维度 tie-break:同完整度分内,标称高清/4K 的源优先,TC 沉底;
+                // 电影(权威未知,全员同分)由此获得画质排序——多集剧集数仍主导
+            }.thenByDescending { video ->
+                QualityLabelPolicy.priorityFromLabel(video.note)
+            }
+        )
     }
 
     /**
