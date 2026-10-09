@@ -8,6 +8,7 @@ import com.github.tvbox.osc.R
 import com.github.tvbox.osc.base.App
 import com.github.tvbox.osc.util.LanguageManager
 import com.github.tvbox.osc.util.AvailabilityMemory
+import com.github.tvbox.osc.util.DetailNoListMemory
 import com.github.tvbox.osc.bean.AbsXml
 import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.bean.VodInfo
@@ -559,7 +560,11 @@ class DetailViewModel : ViewModel() {
                 sourceBean == null,
                 // 索引型源(indexs=1)声明了"只走搜索不进详情":它的详情回包注定没有正片数据,
                 // 发出去就是白等一轮再看聚合搜索兜底。直接早退走聚合搜索,省掉这 20~45 秒。
-                indexSource = sourceBean?.isIndexSource() == true,
+                //
+                // S2 升级判据(2026-10-09):配置没声明但**实测行为就是索引型**的源
+                // (回包是合法 JSON 却缺 list,30 天内 ≥2 次,见 DetailNoListPolicy)
+                // 也按索引型对待 —— js_douban 这类"漏声明"的源不再白等一轮详情超时。
+                indexSource = sourceBean?.isIndexSource() == true || DetailNoListMemory.isIndexLike(sourceKey),
             )
         ) {
             onDetailUnavailable()
@@ -668,6 +673,17 @@ class DetailViewModel : ViewModel() {
             loadNextFallbackCandidate()
             return
         }
+        // ⚠️ 换源链还在跑(fallbackActive)时**绝不**提前宣布"暂无片源"(2026-10-09 真机实测修正)。
+        //
+        // 15s 预算只是"当前源"的体验预算,不是给整条换源链判死刑的 —— 实测 js_douban
+        // 预算到点时(candidates=0 searching=true fallbackActive=true),候选正在加载,
+        // 旧判据直接 force Empty,把还有 39 秒才到终态的链提前掐死在"暂无片源"上;
+        // 而链自己的终态("已轮询完所有片源与线路",见 [finishFallbackWithoutResult])
+        // 本来就会正确收口。这里让路即可:链会走到终态,或候选到了起播。
+        if (fallbackActive) {
+            LOG.i("echo-detail-budget-expired defer-to-fallback key=$sourceKey id=$vodId")
+            return
+        }
         enterEmpty(str(R.string.detail_empty_source), force = true)
     }
 
@@ -768,6 +784,10 @@ class DetailViewModel : ViewModel() {
             // 不清的话,后续任何一次聚合搜索回包都会因currentSourceConfirmedEmpty
             // 为真而触发换源接管 —— 用户明明已经看到详情了,却被后台悄悄切到别的站去。
             currentSourceConfirmedEmpty = false
+            // 详情取到了内容 ⇒ "该源详情缺 list"的记忆作废(源在正常服务详情,别再跳过它)。
+            // 这是画像唯一的"恢复"通道:此刻 sourceKey 还是请求时的 key(重赋值在后面),
+            // 清的正是这份回包归属的源。空详情不清 —— 空详情正是证据本身。
+            DetailNoListMemory.clear(sourceKey)
             // 自动换源全程静默(用户要的是"无感播放"):不再提示"站点切换至X" ——
             // 那既暴露了当前用的是哪个站,对用户也是纯噪音。真失败时另有终局提示兜底。
             if (isSourceErrorMsg(absXml.msg)) {

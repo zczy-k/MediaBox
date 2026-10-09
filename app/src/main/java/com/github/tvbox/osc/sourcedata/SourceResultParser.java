@@ -10,6 +10,7 @@ import com.github.tvbox.osc.bean.AbsSortXml;
 import com.github.tvbox.osc.bean.AbsXml;
 import com.github.tvbox.osc.bean.MovieSort;
 import com.github.tvbox.osc.event.RefreshEvent;
+import com.github.tvbox.osc.util.DetailNoListMemory;
 import com.github.tvbox.osc.util.LOG;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
@@ -233,6 +234,12 @@ final class SourceResultParser {
             // 不分通道:详情/列表两类回包都可能缺 list(前缀 echo--parse 已在日志白名单)。
             if (absJson.list == null) {
                 LOG.i("echo--parse-no-list:" + sourceKey + " (回包缺少 list 字段,按空结果处理)");
+                // S2 升级判据(2026-10-09):合法 JSON 却缺 list 是该源的**应用层行为**,
+                // 记入按源记忆;30 天窗口内攒够 2 次,详情请求直接跳过(见 DetailViewModel.loadDetail)。
+                // 只记详情通道:搜索回包缺 list 另有语义,不进这份画像。
+                if (result == detailResult) {
+                    DetailNoListMemory.record(sourceKey);
+                }
             }
             SourceHelper.absXml(data, sourceKey, searchToken);
             data.detailToken = detailToken;
