@@ -8,7 +8,10 @@ import com.github.tvbox.osc.R
 import com.github.tvbox.osc.base.App
 import com.github.tvbox.osc.util.LanguageManager
 import com.github.tvbox.osc.util.AvailabilityMemory
+import com.github.tvbox.osc.util.CompletenessMemory
 import com.github.tvbox.osc.util.DetailNoListMemory
+import com.github.tvbox.osc.util.SearchSettings
+import com.github.tvbox.osc.util.SourceCompletenessPolicy
 import com.github.tvbox.osc.bean.AbsXml
 import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.bean.VodInfo
@@ -874,6 +877,7 @@ class DetailViewModel : ViewModel() {
                     }
                 }
                 vodInfo = info
+                recordCompleteness(info)
                 publishLineQualityHeights()
                 // 详情就绪即探一次未测线路:第一次观看也有画质标签(这里不做"有记忆才探"的 gating)
                 probeMissingLineQualities()
@@ -1073,6 +1077,7 @@ class DetailViewModel : ViewModel() {
             }.filter { candidateKeys.add(candidateKey(it)) }
             if (fresh.isNotEmpty()) {
                 synchronized(fallbackCandidates) { fallbackCandidates.addAll(fresh) }
+                sortFallbackCandidatesByCompleteness()
                 publishSourceChips()
                 if (shouldAutoTakeOver()) loadNextFallbackCandidate()
             }
@@ -1454,6 +1459,43 @@ class DetailViewModel : ViewModel() {
     }
 
     /**
+     * 按完整度排序候选(P-完整性方案,2026-10-09):
+     * 排序分 = [SourceCompletenessPolicy.rankScore](权威已知时按档位+先验集数,未知时中性)。
+     * 稳定排序:同分保留到达序。取候选前重排一次 —— 换源链推进中权威随详情加载单调上涨,
+     * 后面的候选会随着信息变多获得更准的排序。
+     */
+    private fun sortFallbackCandidatesByCompleteness() = synchronized(fallbackCandidates) {
+        fallbackCandidates.sortByDescending { video ->
+            val authority = CompletenessMemory.authority(SearchSettings.normalizedTitle(video.name))
+            val prior = SourceCompletenessPolicy.priorCountFromNote(video.note)
+            SourceCompletenessPolicy.rankScore(
+                SourceCompletenessPolicy.tier(prior, authority),
+                prior,
+            )
+        }
+    }
+
+    /**
+     * 详情就绪后记录该片权威集数(只增不减)与当前源实绩。
+     * 取 seriesMap 各线路可数集数的最大值(episodeCount 对"多版本铺列"返回 null,天然过滤);
+     * count ≤ 1(电影/单集)不记录 —— 完整度只在多集剧场景有意义。
+     */
+    private fun recordCompleteness(info: VodInfo) {
+        val title = searchTitle.ifEmpty { info.name ?: vodName }
+        val titleKey = SearchSettings.normalizedTitle(title)
+        if (titleKey.isEmpty()) return
+        var best = 0
+        info.seriesMap?.values?.forEach { list ->
+            val count = EpisodeTotals.episodeCount(list.map { s -> s.name as String? })
+            if (count != null && count > best) best = count
+        }
+        if (best > 1) {
+            CompletenessMemory.record(titleKey, best)
+            LOG.i("echo-completeness record title=$titleKey count=$best authority=${CompletenessMemory.authority(titleKey)}")
+        }
+    }
+
+    /**
      * 取下一个候选换源。
      *
      * @return true = 已取到候选并在加载中,或聚合搜索仍在跑(结论未定,别急着报"无有效源");
@@ -1461,6 +1503,7 @@ class DetailViewModel : ViewModel() {
      */
     private fun loadNextFallbackCandidate(): Boolean {
         while (true) {
+            if (fallbackCandidates.size > 1) sortFallbackCandidatesByCompleteness()
             val video = synchronized(fallbackCandidates) {
                 if (fallbackCandidates.isEmpty()) null else fallbackCandidates.removeAt(0)
             } ?: break
