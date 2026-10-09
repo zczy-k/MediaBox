@@ -296,6 +296,9 @@ object SearchSettings {
         return normalized.isNotEmpty() && normalized == normalizeCached(keyword)
     }
 
+    /** 归一化标题的对外只读入口(同名聚合的归并键用;内部走带缓存的 [normalizeCached]) */
+    fun normalizedTitle(name: String?): String = normalizeCached(name)
+
     /** 归一化 = 全角转半角 → 删括注及其内容 → 删空白与标点 → 忽略大小写;主体文字之外的差异(如「第二季」)仍然区分 */
     internal fun normalize(text: String?): String {
         if (text == null) return ""

@@ -69,6 +69,7 @@ import com.github.tvbox.osc.ui.theme.cardContainer
 import com.github.tvbox.osc.ui.theme.filterChipColors
 import kotlinx.coroutines.flow.distinctUntilChanged
 import com.github.tvbox.osc.util.SearchSettings
+import com.github.tvbox.osc.util.SearchDedupPolicy
 import com.github.tvbox.osc.util.AvailabilityHeuristic
 import com.github.tvbox.osc.util.AvailabilityMemory
 import com.github.tvbox.osc.util.LOG
@@ -205,6 +206,13 @@ internal fun LayoutSwitchCard(
 
 internal val SearchRailWidth = 140.dp
 
+/** 同名聚合组(P2):[key] 供 LazyColumn 稳定 Diff,[representative] 为点击打开的条目 */
+private data class SearchDedupGroup(
+    val key: String,
+    val videos: List<Movie.Video>,
+    val representative: Movie.Video,
+)
+
 @Composable
 internal fun RailResults(
     results: List<SearchViewModel.SourceResult>,
@@ -264,13 +272,50 @@ internal fun RailResults(
                 result.videos.filterNot { AvailabilityHeuristic.mightBeUnavailable(it, unavailableMarks) }
             }
     }
+    // P2 同名聚合(2026-10-09):仅"全部"视图聚合;归并键=归一化标题(SearchSettings.normalizedTitle),
+    // 同名不同片由身份相容性校验拦截 —— 年份/地区/类型任一"双方都确知且互相矛盾"即拆组
+    // (同名翻拍/剧场版不会误并),宁漏并不误并,与可用性粗筛同一设计哲学。
+    // 组键 = "grp_归一化标题#子组序",与列表位置无关:新结果并入同组不改 key,
+    // LazyColumn 原地更新、滚动位置与动画稳定;无有效标题的条目退回 sourceKey+id 行键。
+    // 单源视图(选中某源)不聚合 —— 该视图本身就是"展开后的来源",聚合反而多余。
+    val dedupGroups: List<SearchDedupGroup> = remember(rows, selectedSource, searchedTitle) {
+        if (selectedSource != null) {
+            rows.map { v -> SearchDedupGroup("row_${v.sourceKey}_${v.id}", listOf(v), v) }
+        } else {
+            SearchDedupPolicy
+                .group(rows) { v ->
+                    SearchDedupPolicy.FilmIdentity(
+                        titleKey = SearchSettings.normalizedTitle(v.name),
+                        year = v.year,
+                        area = v.area?.trim().orEmpty(),
+                        type = v.type?.trim().orEmpty(),
+                    )
+                }
+                .map { g ->
+                    // 组内代表(点击打开的条目)按确定性规则选:相关度最高 → 原名等于关键词 →
+                    // sourceKey/id 兜底,避免同一组两次渲染选出不同代表导致海报闪跳
+                    val rep = g.members.minWith(
+                        compareByDescending<Movie.Video> {
+                            SearchSettings.relevanceScore(it.name, it.alias, searchedTitle)
+                        }.thenByDescending { it.name?.trim() == searchedTitle }
+                            .thenBy { it.sourceKey.orEmpty() }
+                            .thenBy { it.id.orEmpty() },
+                    )
+                    val tk = SearchSettings.normalizedTitle(rep.name)
+                    val key = if (tk.isEmpty()) "row_${rep.sourceKey}_${rep.id}"
+                    else "grp_${tk}#${g.subIndex}"
+                    SearchDedupGroup(key, g.members, rep)
+                }
+        }
+    }
     // 这条是「搜索页粗筛到底执行没执行」的唯一可观测点(轨道视图),别删。
     // 之前这里一行日志都没有,导致 search-purge 实测 0 次也无法判断过滤是否生效。
-    LaunchedEffect(rows.size, unavailableMarks.size) {
+    LaunchedEffect(rows.size, unavailableMarks.size, dedupGroups.size) {
         val raw = results.fold(0) { acc, r -> acc + r.videos.size }
         LOG.i(
             "echo-unavailable rail-filter raw=" + raw +
-                " shown=" + rows.size + " marks=" + unavailableMarks.size +
+                " shown=" + rows.size + " groups=" + dedupGroups.size +
+                " marks=" + unavailableMarks.size +
                 " rev=" + marksRevision
         )
     }
@@ -298,7 +343,7 @@ internal fun RailResults(
             }
             RailResultList(
                 listState = listState,
-                rows = rows,
+                groups = dedupGroups,
                 running = running,
                 hasMore = hasMore,
                 searchedCount = searchedCount,
@@ -354,7 +399,7 @@ internal fun RailResults(
             )
             RailResultList(
                 listState = listState,
-                rows = rows,
+                groups = dedupGroups,
                 running = running,
                 hasMore = hasMore,
                 searchedCount = searchedCount,
@@ -379,7 +424,7 @@ internal fun RailResults(
 @Composable
 private fun RailResultList(
     listState: LazyListState,
-    rows: List<Movie.Video>,
+    groups: List<SearchDedupGroup>,
     running: Boolean,
     hasMore: Boolean,
     searchedCount: Int,
@@ -409,14 +454,17 @@ private fun RailResultList(
                 )
             }
         }
-        itemsIndexed(rows, key = { index, video -> "rail_row_${index}_${video.sourceKey}_${video.id}" }) { _, video ->
+        // 稳定 key = 组键("grp_归一化标题#子组序"/无标题回退行键):与列表位置无关,
+        // 新结果并入同组只改组内容不改行身份;不同组之间键必然不同(同键身份冲突已拆子组)
+        items(groups, key = { it.key }) { group ->
             SearchResultRow(
-                video = video,
-                onClick = { onCardClick(video) },
-                onLongClick = { onLongClick(video) },
+                video = group.representative,
+                sourceCount = group.videos.size,
+                onClick = { onCardClick(group.representative) },
+                onLongClick = { onLongClick(group.representative) },
             )
         }
-        if (rows.isEmpty() && !running && !hasMore) {
+        if (groups.isEmpty() && !running && !hasMore) {
             item(key = "rail_empty") {
                 Text(
                     text = stringResource(R.string.search_site_empty),
@@ -654,6 +702,7 @@ internal fun SearchResultRow(
     video: Movie.Video,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    sourceCount: Int = 1,
 ) {
     PressableCard(
         onClick = onClick,
@@ -707,6 +756,15 @@ internal fun SearchResultRow(
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
+            }
+            // P2 同名聚合角标:该标题共有 N 个来源可用(N>1 才显示)。
+            // 点击行为与整卡一致(打开代表条目,换源链兜底);信息是"可用源数"而非源身份。
+            if (sourceCount > 1) {
+                SearchTag(
+                    text = stringResource(R.string.search_result_source_count, sourceCount),
+                    emphasized = false,
+                    modifier = Modifier.padding(end = 2.dp),
+                )
             }
         }
     }
