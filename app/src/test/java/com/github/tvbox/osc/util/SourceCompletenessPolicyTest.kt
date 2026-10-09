@@ -71,6 +71,22 @@ class SourceCompletenessPolicyTest {
         assertEquals(SourceCompletenessPolicy.Tier.BACKUP, SourceCompletenessPolicy.tier(1, A50))
     }
 
+    // ==================== missingRange(第三批:面板缺集标注) ====================
+
+    @Test
+    fun `落后线路返回缺失区间`() {
+        assertEquals(31 to 50, SourceCompletenessPolicy.missingRange(30, 50))
+        assertEquals(49 to 50, SourceCompletenessPolicy.missingRange(48, 50))
+    }
+
+    @Test
+    fun `完整或不可数或权威未知返回null`() {
+        assertEquals(null, SourceCompletenessPolicy.missingRange(50, 50))
+        assertEquals(null, SourceCompletenessPolicy.missingRange(55, 50))
+        assertEquals(null, SourceCompletenessPolicy.missingRange(0, 50))
+        assertEquals(null, SourceCompletenessPolicy.missingRange(30, 0))
+    }
+
     // ==================== rankScore ====================
 
     @Test

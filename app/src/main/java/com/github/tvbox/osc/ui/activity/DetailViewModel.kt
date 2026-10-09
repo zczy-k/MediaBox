@@ -1279,6 +1279,15 @@ class DetailViewModel : ViewModel() {
         bumpRevision()
     }
 
+    /** P-完整性:当前片的权威集数(选集面板"缺集"标注用);0=未知 */
+    fun completenessAuthority(): Int = CompletenessMemory.authority(completenessTitleKey)
+
+    /** P-完整性:某线路的可数集数(集名不可数返回 null);选集面板"缺集"标注用 */
+    fun lineEpisodeCount(flagName: String?): Int? {
+        val list = vodInfo?.seriesMap?.get(flagName) ?: return null
+        return EpisodeTotals.episodeCount(list.map { s -> s.name as String? })
+    }
+
     /** 该线路在该集上是否有可直接探测的直链(与 PlayLoader.shouldDirectPlay 同口径) */
     private fun directUrlOf(list: List<VodInfo.VodSeries>?, index: Int): String? =
         list?.getOrNull(index)?.url?.takeIf { it.startsWith("http://") || it.startsWith("https://") }

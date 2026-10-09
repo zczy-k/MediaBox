@@ -14,21 +14,40 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.github.tvbox.osc.R
 import com.github.tvbox.osc.bean.VodInfo
 import com.github.tvbox.osc.ui.theme.filterChipColors
+import com.github.tvbox.osc.util.SourceCompletenessPolicy
 
 /**
- * 线路 chip 的显示名:「线路N」,实测到画质时再补「 · 1080P」。
+ * 线路 chip 的显示名:「线路N」,实测到画质时再补「 · 1080P」,
+ * 权威集数已知且该线路落后时再补「 · 缺31-50集」(P-完整性第三批,2026-10-09)。
  *
  * <p>画质取的是**实测值**([DetailViewModel.lineQualityHeights]),不是站点自报的 flag ——
  * flag 常写成假的清晰度,有的还直接带站名/域名。没测到就只显示序号,不编。
+ * 缺集标注同理:只在"权威已知 + 该线路可数集数落后"时显示,拿不准就不标。
  *
  * <p>抽成顶层函数是因为**三个入口**(详情页正文、竖屏选集面板、横屏全屏侧滑面板)
  * 必须给出完全一致的标签,否则用户在两处看到同一个线路却是两个名字。
  */
 @Composable
-internal fun lineLabel(index: Int, flagName: String?, heights: Map<String, Int>): String {
+internal fun lineLabel(
+    index: Int,
+    flagName: String?,
+    heights: Map<String, Int>,
+    lineCount: Int? = null,
+    authority: Int = 0,
+): String {
     val base = stringResource(R.string.detail_line_index, index + 1)
     val suffix = LineLabelPolicy.qualitySuffix(flagName?.let { heights[it] } ?: 0)
-    return if (suffix.isEmpty()) base else "$base · $suffix"
+    val missing = SourceCompletenessPolicy.missingRange(lineCount ?: 0, authority)
+    val missingText = when {
+        missing == null -> ""
+        missing.first == missing.second -> stringResource(R.string.detail_line_missing_one, missing.first)
+        else -> stringResource(R.string.detail_line_missing_range, missing.first, missing.second)
+    }
+    return buildList {
+        add(base)
+        if (suffix.isNotEmpty()) add(suffix)
+        if (missingText.isNotEmpty()) add(missingText)
+    }.joinToString(" · ")
 }
 
 /**
@@ -71,7 +90,7 @@ internal fun DetailLineSection(
             FilterChip(
                 selected = flag.name == currentFlag,
                 onClick = { vm.onFlagClick(flag.name ?: "") },
-                label = { Text(lineLabel(index, flag.name, lineHeights)) },
+                label = { Text(lineLabel(index, flag.name, lineHeights, vm.lineEpisodeCount(flag.name), vm.completenessAuthority())) },
                 shape = RoundedCornerShape(20.dp),
                 colors = MaterialTheme.colorScheme.filterChipColors(),
             )

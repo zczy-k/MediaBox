@@ -322,6 +322,8 @@
     <string name="search_scope_narrow_hint">目前僅勾選 %1$d/%2$d 個可搜源，可在首頁「搜尋設定」調整範圍</string>
     <string name="search_load_all">搜尋全部來源</string>
     <string name="search_result_source_count">%1$d 個來源</string>
+    <string name="detail_line_missing_range">缺%1$d-%2$d集</string>
+    <string name="detail_line_missing_one">缺%1$d集</string>
     <string name="search_sites_none_hint">未選擇站點，將搜尋不到結果</string>
     <string name="search_sites_selected_hint">已選 %1$d/%2$d，全選即搜尋全部站點</string>
     <string name="search_sites_empty">暫無可用站點</string>

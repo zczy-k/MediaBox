@@ -63,6 +63,16 @@ object SourceCompletenessPolicy {
     }
 
     /**
+     * 线路缺失区间(P-完整性第三批,选集面板标注用):该线路可数集数 [count] 落后权威
+     * [authority] 时返回缺失区间 (count+1 .. authority);不落后/不可数/权威未知返回 null。
+     * 单集缺失返回 (N, N),由调用方决定文案形态。
+     */
+    fun missingRange(count: Int, authority: Int): Pair<Int, Int>? {
+        if (authority <= 0 || count <= 0 || count >= authority) return null
+        return (count + 1) to authority
+    }
+
+    /**
      * 换源链排序分(越大越优先)。四段含义:
      * <ul>
      *   <li>完整(3000+):最优先;同档内集数多者优先 —— "更新越快权重越高";</li>
