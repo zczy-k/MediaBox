@@ -218,6 +218,7 @@ internal fun RailResults(
     searchedCount: Int,
     settledCount: Int,
     totalCount: Int,
+    searchableSources: Int,
     onLoadMore: () -> Unit,
     onCardClick: (Movie.Video) -> Unit,
     onCardLongClick: (Movie.Video) -> Unit,
@@ -301,6 +302,7 @@ internal fun RailResults(
                 searchedCount = searchedCount,
                 settledCount = settledCount,
                 totalCount = totalCount,
+                searchableSources = searchableSources,
                 onLoadMore = onLoadMore,
                 onCardClick = onCardClick,
                 onLongClick = onCardLongClick,
@@ -354,6 +356,7 @@ internal fun RailResults(
                 searchedCount = searchedCount,
                 settledCount = settledCount,
                 totalCount = totalCount,
+                searchableSources = searchableSources,
                 onLoadMore = onLoadMore,
                 onCardClick = onCardClick,
                 onLongClick = onCardLongClick,
@@ -376,6 +379,7 @@ private fun RailResultList(
     searchedCount: Int,
     settledCount: Int,
     totalCount: Int,
+    searchableSources: Int,
     onLoadMore: () -> Unit,
     onCardClick: (Movie.Video) -> Unit,
     onLongClick: (Movie.Video) -> Unit,
@@ -424,6 +428,7 @@ private fun RailResultList(
                 searchedCount = searchedCount,
                 settledCount = settledCount,
                 totalCount = totalCount,
+                searchableSources = searchableSources,
                 onLoadMore = onLoadMore,
             )
         }
@@ -555,6 +560,7 @@ internal fun SearchLoadMoreFooter(
     searchedCount: Int,
     settledCount: Int,
     totalCount: Int,
+    searchableSources: Int = 0,
     onLoadMore: () -> Unit,
 ) {
     Column(
@@ -576,6 +582,17 @@ internal fun SearchLoadMoreFooter(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
+        // 2026-10-09 防静默收窄:勾选表只存了 10 个源时,footer 恒显示"已搜索全部 10 个来源",
+        // 用户无从知道订阅里还有 300+ 个源根本没参与(真机踩过:影视源全被旧勾选排除)。
+        // 勾选数 < 可搜总数时明示比例与调整入口。
+        if (searchableSources > totalCount && totalCount > 0) {
+            Text(
+                text = stringResource(R.string.search_scope_narrow_hint, totalCount, searchableSources),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                textAlign = TextAlign.Center,
+            )
+        }
         if (hasMore) {
             OutlinedButton(onClick = onLoadMore, enabled = !running) {
                 Text(stringResource(R.string.search_load_more))

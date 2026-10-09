@@ -57,6 +57,7 @@ internal fun SearchListResults(
     searchedCount: Int,
     settledCount: Int,
     totalCount: Int,
+    searchableSources: Int,
     onLoadMore: () -> Unit,
     onCardClick: (Movie.Video) -> Unit,
     onCardLongClick: (Movie.Video) -> Unit,
@@ -229,6 +230,7 @@ internal fun SearchListResults(
                 searchedCount = searchedCount,
                 settledCount = settledCount,
                 totalCount = totalCount,
+                searchableSources = searchableSources,
                 onLoadMore = onLoadMore,
             )
         }

@@ -319,6 +319,7 @@
     <string name="search_match_smart">智能(含關鍵詞)</string>
     <string name="search_match_exact">精準(完全一致)</string>
     <string name="search_sites">搜尋站點</string>
+    <string name="search_scope_narrow_hint">目前僅勾選 %1$d/%2$d 個可搜源，可在首頁「搜尋設定」調整範圍</string>
     <string name="search_sites_none_hint">未選擇站點，將搜尋不到結果</string>
     <string name="search_sites_selected_hint">已選 %1$d/%2$d，全選即搜尋全部站點</string>
     <string name="search_sites_empty">暫無可用站點</string>

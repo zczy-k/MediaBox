@@ -67,6 +67,7 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
     val searchedCount by vm.searchedCount.collectAsStateWithLifecycle()
     val settledCount by vm.settledCount.collectAsStateWithLifecycle()
     val totalCount by vm.totalCount.collectAsStateWithLifecycle()
+    val searchableCount by vm.searchableCount.collectAsStateWithLifecycle()
     val hotSearch by vm.hotSearch.collectAsStateWithLifecycle()
     val suggest by vm.suggest.collectAsStateWithLifecycle()
     var query by remember { mutableStateOf("") }
@@ -193,6 +194,7 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
                 searchedCount = searchedCount,
                 settledCount = settledCount,
                 totalCount = totalCount,
+                searchableSources = searchableCount,
                 onLoadMore = { vm.loadNextBatch() },
                 // 点开影片即暂停自动续批:把线程与爬虫让给详情取数,别让剩余上百个源继续抢
                 onCardClick = {
@@ -247,6 +249,7 @@ private fun SearchResultsContent(
     searchedCount: Int,
     settledCount: Int,
     totalCount: Int,
+    searchableSources: Int,
     onLoadMore: () -> Unit,
     onCardClick: (Movie.Video) -> Unit,
     onCardLongClick: (Movie.Video) -> Unit,
@@ -293,6 +296,7 @@ private fun SearchResultsContent(
                 searchedCount = searchedCount,
                 settledCount = settledCount,
                 totalCount = totalCount,
+                searchableSources = searchableSources,
                 onLoadMore = onLoadMore,
                 onCardClick = onCardClick,
                 onCardLongClick = onCardLongClick,
@@ -309,6 +313,7 @@ private fun SearchResultsContent(
                 searchedCount = searchedCount,
                 settledCount = settledCount,
                 totalCount = totalCount,
+                searchableSources = searchableSources,
                 onLoadMore = onLoadMore,
                 onCardClick = onCardClick,
                 onCardLongClick = onCardLongClick,

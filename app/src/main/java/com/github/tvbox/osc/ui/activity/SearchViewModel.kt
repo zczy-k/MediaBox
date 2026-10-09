@@ -104,6 +104,15 @@ class SearchViewModel : ViewModel() {
      */
     val settledCount = MutableStateFlow(0)
 
+    /**
+     * 当前订阅**全部可搜源**数(2026-10-09)。
+     *
+     * <p>与 [totalCount](= 本次实际参与搜索的勾选源数)配对:两者差距大说明勾选表在悄悄收窄
+     * 搜索范围 —— 真机踩过:勾选表里只存了 10 个源(来源不明的旧配置残留),333 个可搜源里
+     * 影视源全被排除,用户以为"其他源没结果",实际是**根本没搜**。搜索页 footer 据此显示提示。
+     */
+    val searchableCount = MutableStateFlow(0)
+
 
     val hotSearch = MutableStateFlow<List<String>>(emptyList())
 
@@ -380,6 +389,7 @@ class SearchViewModel : ViewModel() {
         results.value = sources.map { SourceResult(it.key, it.name.orEmpty(), ResultState.Queued, emptyList()) }
         sitesEmpty.value = sources.isEmpty()
         totalCount.value = sources.size
+        searchableCount.value = ApiConfig.get().getSourceBeanList().count { it.isSearchable() }
         searchedCount.value = 0
         settledCount.value = 0
         // 查询变体:番号类关键词(带横杠/下划线等)除原词外还有一个紧凑形式。
