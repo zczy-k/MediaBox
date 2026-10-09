@@ -32,6 +32,7 @@ import com.github.tvbox.osc.util.SourceHealthFilter
 import com.github.tvbox.osc.util.SourceHealthMemory
 import com.github.tvbox.osc.util.TrailerPolicy
 import com.github.tvbox.osc.util.SourceIdentityMask
+import com.github.tvbox.osc.util.TitleMatcher
 import com.github.tvbox.osc.sourcedata.SourceViewModel
 import com.github.tvbox.osc.sourcedata.observeAsFlow
 import com.lzy.okgo.OkGo
@@ -108,6 +109,14 @@ class DetailViewModel : ViewModel() {
     val qualitySelected = MutableStateFlow(0)
     val sourceChips = MutableStateFlow<List<SourceChip>>(emptyList())
     val sourcesSearching = MutableStateFlow(false)
+
+    /**
+     * 聚合搜索进度(S6 分批递进,2026-10-09):详情页 Loading 态据实显示"正在搜索片源 N/M"。
+     * 修复前无候选时用户对着转圈最长 ~59s 零反馈(120 源 × 单源 8s 超时 ÷ 并发 12),
+     * 搜索本身不变,只是把"系统在动"这件事告诉用户;搜索结束/换代/链收口时置 null。
+     */
+    data class SearchProgress(val done: Int, val total: Int, val candidates: Int)
+    val searchProgress = MutableStateFlow<SearchProgress?>(null)
     val relatedVideos = MutableStateFlow<List<Movie.Video>>(emptyList())
     val episodeSheet = MutableStateFlow(false)
     val toastEvent = MutableStateFlow<String?>(null)
@@ -964,30 +973,49 @@ class DetailViewModel : ViewModel() {
         LOG.i("echo-source-search start title=" + title + " pool=" + sources.size + " token=$myToken")
         sourcesSearching.value = sources.isNotEmpty()
         relatedVideos.value = emptyList()
+        searchProgress.value = if (sources.isEmpty()) null else SearchProgress(0, sources.size, 0)
         if (sources.isEmpty()) return
         searchJob = viewModelScope.launch {
-            coroutineScope {
-                sources.map { bean ->
-                    async {
-                        semaphore.withPermit {
-                            val done = CompletableDeferred<Unit>()
-                            pendingSearchDone.put(bean.key, done)?.complete(Unit)
-                            try {
-                                withTimeoutOrNull(SOURCE_SEARCH_TIMEOUT_MS) {
-                                    withContext(Dispatchers.IO) {
-                                        searchCaller.getSearch(bean.key, title, tokenStr)
+            val doneCount = java.util.concurrent.atomic.AtomicInteger()
+            // S6 分批递进(2026-10-09):整池一次 awaitAll 有两个毛病 —— ①换片/换代后旧搜索
+            // 要等全池跑完(最长 ~59s)才让路;②用户在整个等待期零进度反馈。分批后每批之间
+            // 是检查点:换代立刻 abort(在途批照跑完,不中断单源),进度按源粒度上报。
+            // 刻意不做批间空窗收口:命中与否由候选事件驱动(不变),收口仍等全池 ——
+            // "库里明明有却提前宣判"是准确性事故,不做。
+            for ((batchIdx, batch) in sources.chunked(SEARCH_BATCH_SIZE).withIndex()) {
+                if (tokenStr != currentTokenStr()) {
+                    LOG.i("echo-source-search abort stale batch=$batchIdx token=$myToken")
+                    return@launch
+                }
+                coroutineScope {
+                    batch.map { bean ->
+                        async {
+                            semaphore.withPermit {
+                                val done = CompletableDeferred<Unit>()
+                                pendingSearchDone.put(bean.key, done)?.complete(Unit)
+                                try {
+                                    withTimeoutOrNull(SOURCE_SEARCH_TIMEOUT_MS) {
+                                        withContext(Dispatchers.IO) {
+                                            searchCaller.getSearch(bean.key, title, tokenStr)
+                                        }
+                                        done.await()
                                     }
-                                    done.await()
+                                } finally {
+                                    pendingSearchDone.remove(bean.key)
+                                    publishSearchProgress(doneCount.incrementAndGet(), sources.size)
                                 }
-                            } finally {
-                                pendingSearchDone.remove(bean.key)
                             }
                         }
-                    }
-                }.awaitAll()
+                    }.awaitAll()
+                }
+                LOG.i(
+                    "echo-source-search batch-done batch=$batchIdx done=${doneCount.get()}" +
+                        " total=${sources.size} token=$myToken"
+                )
             }
             if (tokenStr == currentTokenStr()) {
                 sourcesSearching.value = false
+                searchProgress.value = null
                 if (shouldAutoTakeOver()) loadNextFallbackCandidate()
                 // 聚合搜索全部结束 = 兜底链的结论已定论。
                 // 若此时页面还停在加载态,说明 [enterEmpty] 曾因为"搜索在途"而延后过
@@ -998,6 +1026,12 @@ class DetailViewModel : ViewModel() {
                 settleDeferredEmpty()
             }
         }
+    }
+
+    /** 搜索进度上报(源级完成即发;候选数带上一份,Loading 态能顺带显示"已找到 K 个来源") */
+    private fun publishSearchProgress(done: Int, total: Int) {
+        val candidates = synchronized(fallbackCandidates) { fallbackCandidates.size }
+        searchProgress.value = SearchProgress(done, total, candidates)
     }
 
     /**
@@ -1024,7 +1058,7 @@ class DetailViewModel : ViewModel() {
             pendingSearchDone.remove(data.sourceKey)?.complete(Unit)
             val videos = data.movie?.videoList.orEmpty()
             val fresh = videos.filter {
-                !it.id.isNullOrEmpty() && it.name?.trim() == searchTitle
+                !it.id.isNullOrEmpty() && TitleMatcher.isSameTitle(it.name, searchTitle)
                         && !usedSourceKeys.contains(it.sourceKey)
                         && it.sourceKey != sourceKey
             }.filter { candidateKeys.add(candidateKey(it)) }
@@ -1034,7 +1068,7 @@ class DetailViewModel : ViewModel() {
                 if (shouldAutoTakeOver()) loadNextFallbackCandidate()
             }
             val related = videos.filter {
-                !it.id.isNullOrEmpty() && it.name?.trim() != searchTitle
+                !it.id.isNullOrEmpty() && !TitleMatcher.isSameTitle(it.name, searchTitle)
                         && !(it.sourceKey == sourceKey && it.id == vodId)
             }
             if (related.isNotEmpty()) {
@@ -1529,6 +1563,7 @@ class DetailViewModel : ViewModel() {
         fallbackKeepCurrentDetail = false
         fallbackLoadingCandidate = false
         detailTimeoutScheduled = false
+        searchProgress.value = null
         cancelDetailTimeout()
         triedKeys.clear()
         if (!keepChips) {
@@ -1925,6 +1960,12 @@ class DetailViewModel : ViewModel() {
         private const val FIRST_WATCH_PROBE_LINES = 3
         /** 单个候选站的同名搜索超时。原 30s:聚合订阅动辄数百站,单站卡住会拖垮整轮候选收集 */
         private const val SOURCE_SEARCH_TIMEOUT_MS = 8_000L
+        /**
+         * S6 分批递进的批大小(2026-10-09)。取 [SOURCE_SEARCH_CONCURRENCY] 的 ~2.5 倍:
+         * 批内保持信号量饱和,批间是"换代 abort + 批日志"的检查点。再大会退化回
+         * "整池一次 awaitAll"的旧毛病;再小则批间空隙增多,总耗时被批边界拉长。
+         */
+        private const val SEARCH_BATCH_SIZE = 30
 
         /**
          * 加载体验预算:停在 Loading 超过它就必须给确定画面。

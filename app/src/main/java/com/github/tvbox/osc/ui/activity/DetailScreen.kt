@@ -68,6 +68,7 @@ fun DetailScreen(activity: DetailActivity, vm: DetailViewModel) {
     val playSignal by vm.playSignal.collectAsStateWithLifecycle()
     val toast by vm.toastEvent.collectAsStateWithLifecycle()
     val finish by vm.finishEvent.collectAsStateWithLifecycle()
+    val searchProgress by vm.searchProgress.collectAsStateWithLifecycle()
     val vodMenu = rememberVodCardMenuState()
 
     val configuration = LocalConfiguration.current
@@ -230,6 +231,24 @@ fun DetailScreen(activity: DetailActivity, vm: DetailViewModel) {
                             Spacer(modifier = Modifier.height(16.dp))
                         }
                         ContainedLoadingIndicator()
+                        // S6(2026-10-09):聚合搜索进行中显示实况进度 —— 修复前无候选时
+                        // 用户对着纯转圈最长 ~59s,分不清"在搜"还是"死了"。null = 搜索不在跑,不显示
+                        searchProgress?.let { p ->
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = if (p.candidates > 0) {
+                                    stringResource(
+                                        R.string.detail_search_progress_found,
+                                        p.done, p.total, p.candidates,
+                                    )
+                                } else {
+                                    stringResource(R.string.detail_search_progress, p.done, p.total)
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                textAlign = TextAlign.Center,
+                            )
+                        }
                     }
                 }
 

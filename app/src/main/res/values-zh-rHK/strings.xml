@@ -39,6 +39,8 @@
     <string name="player_get_url_timeout">獲取播放地址超時</string>
     <string name="player_play_timeout">播放超時</string>
     <string name="player_play_failed_all">已輪詢完所有片源與線路，均無法流暢播放</string>
+    <string name="detail_search_progress">正在搜尋片源 %1$d/%2$d…</string>
+    <string name="detail_search_progress_found">正在搜尋片源 %1$d/%2$d · 已找到 %3$d 個來源</string>
     <string name="force_update_title">發現新版本</string>
     <string name="force_update_message">目前版本 v%1$s，必須更新到 v%2$s 後才能繼續使用</string>
     <string name="force_update_now">立即更新</string>
