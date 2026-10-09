@@ -161,6 +161,15 @@ class DetailViewModel : ViewModel() {
     private var detailRequestToken = 0
 
     private val fallbackCandidates = ArrayList<Movie.Video>()
+
+    // P-完整性方案(2026-10-09):当前片的权威参照系与起播/纠偏状态
+    // completenessTitleKey/OwnCount 由 recordCompleteness 在详情就绪时写入
+    private var completenessTitleKey = ""
+    private var completenessOwnCount = 0
+    /** 起播跳过当前源(记忆已知严重不全)后等待换源链结果;链收口无果回退起播当前源 */
+    private var pendingCompletenessSkip = false
+    /** 播放中纠偏每部片只触发一次,防止候选事件反复引发切换 */
+    private var completenessCorrected = false
     private val candidateKeys = HashSet<String>()
     private val triedKeys = HashSet<String>()
     private val usedSourceKeys = HashSet<String>()
@@ -862,9 +871,13 @@ class DetailViewModel : ViewModel() {
                     info.playFlag = if (allowQualitySelection) {
                         val cap = App.getInstance()?.let { DeviceCapability.capHeight(it) } ?: 0
                         val remembered = VideoQualityMemory.lookupAll(recordKey, recordId, siteOrder)
-                        LineQualitySelector.pickFromMemory(remembered, cap) ?: siteOrder.firstOrNull()
+                        LineQualitySelector.pickFromMemory(remembered, cap)
+                            // P-完整性:质量记忆缺失时,按"可数集数最多"选线(同源多线路集数可不同);
+                            // 全部不可数(电影/网盘式铺列)回落站点默认第一条
+                            ?: mostCompleteFlag(info)
+                            ?: siteOrder.firstOrNull()
                     } else {
-                        siteOrder.firstOrNull()
+                        mostCompleteFlag(info) ?: siteOrder.firstOrNull()
                     }
                 }
                 restoreFallbackEpisode(info)
@@ -888,6 +901,24 @@ class DetailViewModel : ViewModel() {
                 vodName = mVideo.name ?: vodName
                 publishHeader()
                 if (!playingList.isNullOrEmpty()) switchSnapshot = null
+                // P-完整性起播决策:记忆已知当前源"严重不全"(如 1/50)⇒ 不起播它,留在 Loading
+                // 走换源链(候选已按完整度排序,最全候选先试);链收口无果时回退起播当前源
+                // (见 finishFallbackWithoutResult 的 pendingCompletenessSkip 分支)。
+                // 权威未知 / 非"严重不全"档:照常秒开,聚合在播放中并行,不受影响。
+                if (completenessOwnCount > 1 &&
+                    SourceCompletenessPolicy.tier(
+                        completenessOwnCount,
+                        CompletenessMemory.authority(completenessTitleKey),
+                    ) == SourceCompletenessPolicy.Tier.BACKUP
+                ) {
+                    pendingCompletenessSkip = true
+                    LOG.i(
+                        "echo-completeness skip-origin own=$completenessOwnCount" +
+                            " auth=${CompletenessMemory.authority(completenessTitleKey)}"
+                    )
+                    startFallbackIfNeeded(auto = true)
+                    return@launch
+                }
                 pageState.value = PageState.Ready
                 // 当前源已取到:聚合搜索预热没有存在意义了,直接撤掉(省一整轮上百站搜索)
                 mainHandler.removeCallbacks(sourceSearchPrewarm)
@@ -1078,6 +1109,7 @@ class DetailViewModel : ViewModel() {
             if (fresh.isNotEmpty()) {
                 synchronized(fallbackCandidates) { fallbackCandidates.addAll(fresh) }
                 sortFallbackCandidatesByCompleteness()
+                maybeCorrectCompleteness()
                 publishSourceChips()
                 if (shouldAutoTakeOver()) loadNextFallbackCandidate()
             }
@@ -1250,6 +1282,23 @@ class DetailViewModel : ViewModel() {
     /** 该线路在该集上是否有可直接探测的直链(与 PlayLoader.shouldDirectPlay 同口径) */
     private fun directUrlOf(list: List<VodInfo.VodSeries>?, index: Int): String? =
         list?.getOrNull(index)?.url?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+
+    /**
+     * P-完整性线路级 tie-break(2026-10-09):可数集数最多的线路优先(同源多线路集数可不同);
+     * 并列/全部不可数返回 null,回落站点默认顺序。质量记忆存在时由质量选择主导,本方法只兜底。
+     */
+    private fun mostCompleteFlag(info: VodInfo): String? {
+        var best: String? = null
+        var bestCount = 1
+        info.seriesMap?.forEach { (flag, list) ->
+            val count = EpisodeTotals.episodeCount(list.map { s -> s.name as String? }) ?: return@forEach
+            if (count > bestCount) {
+                bestCount = count
+                best = flag
+            }
+        }
+        return best
+    }
 
     /**
      * 探测用第几集:取当前播放集,越界时回落到 0。
@@ -1478,21 +1527,34 @@ class DetailViewModel : ViewModel() {
     /**
      * 详情就绪后记录该片权威集数(只增不减)与当前源实绩。
      * 取 seriesMap 各线路可数集数的最大值(episodeCount 对"多版本铺列"返回 null,天然过滤);
-     * count ≤ 1(电影/单集)不记录 —— 完整度只在多集剧场景有意义。
+     * count ≤ 1(电影/单集/集名不可数)不写权威 —— **但无条件打日志**:
+     * 2026-10-09 真机核验发现"静默跳过"导致 echo-completeness 全程 0 条,
+     * 无法区分"没执行"与"集名不可数" —— 可观测性纪律:诊断日志不该有守卫。
      */
     private fun recordCompleteness(info: VodInfo) {
         val title = searchTitle.ifEmpty { info.name ?: vodName }
         val titleKey = SearchSettings.normalizedTitle(title)
-        if (titleKey.isEmpty()) return
+        completenessTitleKey = titleKey
+        if (titleKey.isEmpty()) {
+            completenessOwnCount = 0
+            LOG.i("echo-completeness record skip: empty title key")
+            return
+        }
         var best = 0
+        var countable = false
         info.seriesMap?.values?.forEach { list ->
             val count = EpisodeTotals.episodeCount(list.map { s -> s.name as String? })
-            if (count != null && count > best) best = count
+            if (count != null) {
+                countable = true
+                if (count > best) best = count
+            }
         }
-        if (best > 1) {
-            CompletenessMemory.record(titleKey, best)
-            LOG.i("echo-completeness record title=$titleKey count=$best authority=${CompletenessMemory.authority(titleKey)}")
-        }
+        completenessOwnCount = if (countable) best else 0
+        if (best > 1) CompletenessMemory.record(titleKey, best)
+        LOG.i(
+            "echo-completeness record title=$titleKey countable=$countable best=$best" +
+                " authority=${CompletenessMemory.authority(titleKey)} own=${completenessOwnCount}"
+        )
     }
 
     /**
@@ -1544,8 +1606,45 @@ class DetailViewModel : ViewModel() {
         sourceViewModel.getDetail(sourceKey, vodId, true, requestToken)
     }
 
+    /**
+     * P-完整性播放中纠偏(2026-10-09):当前源"严重不全"(如 1/50)且聚合发现了**完整档**候选
+     * ⇒ 静默自动换源(走既有换源链:候选按完整度排序、集数/进度继承、失败回滚)。
+     *
+     * <p>护栏:仅 Ready 态触发(Loading 态由起播跳过路径负责);不在换源链上时才触发;
+     * 每部片一次([completenessCorrected]);候选必须**先验即完整档**才值得打断当前播放
+     * —— 轻微落后不纠偏,避免频繁切换打扰。
+     */
+    private fun maybeCorrectCompleteness() {
+        if (completenessCorrected) return
+        if (pageState.value !is PageState.Ready) return
+        if (fallbackActive || fallbackLoadingCandidate) return
+        val auth = CompletenessMemory.authority(completenessTitleKey)
+        if (auth <= 0 || completenessOwnCount <= 1) return
+        if (SourceCompletenessPolicy.tier(completenessOwnCount, auth) != SourceCompletenessPolicy.Tier.BACKUP) return
+        val better = synchronized(fallbackCandidates) {
+            fallbackCandidates.any { c ->
+                val prior = SourceCompletenessPolicy.priorCountFromNote(c.note)
+                SourceCompletenessPolicy.tier(prior, auth) == SourceCompletenessPolicy.Tier.COMPLETE
+            }
+        }
+        if (!better) return
+        completenessCorrected = true
+        LOG.i("echo-completeness correct-trigger own=$completenessOwnCount auth=$auth")
+        startFallbackIfNeeded(auto = true)
+    }
+
     private fun finishFallbackWithoutResult() {
         val keep = fallbackKeepCurrentDetail
+        // P-完整性:起播跳过当前源后链收口无果(候选全失败/全不更全)⇒ 回退起播当前(不完整)源
+        // —— 有得播总比空态好;"跳过"只承诺"先试更全的",不承诺"当前源不能用"
+        if (pendingCompletenessSkip && vodInfo != null) {
+            pendingCompletenessSkip = false
+            LOG.i("echo-completeness skip-exhausted fallback-to-origin")
+            resetEngineState(keepChips = true)
+            pageState.value = PageState.Ready
+            requestPlay()
+            return
+        }
         resetEngineState(keepChips = true)
         if (!keep && rollbackManualSwitch()) return
         if (!keep && pageState.value != PageState.Ready) {
@@ -1616,6 +1715,8 @@ class DetailViewModel : ViewModel() {
         fallbackLoadingCandidate = false
         detailTimeoutScheduled = false
         searchProgress.value = null
+        pendingCompletenessSkip = false
+        completenessCorrected = false
         cancelDetailTimeout()
         triedKeys.clear()
         if (!keepChips) {

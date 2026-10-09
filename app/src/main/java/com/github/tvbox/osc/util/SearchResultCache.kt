@@ -111,6 +111,8 @@ object SearchResultCache {
                 .take(MAX_KEYWORDS)
                 .forEach { (k, _) -> root.optJSONObject(k)?.let { trimmed.put(k, it) } }
             KV.put(bucket, trimmed.toString())
+            // 无条件打印:保存是否发生原本无法从日志判断(2026-10-09 核验发现的观测缺口)
+            LOG.i("echo-searchplan cache-saved kw=" + normalizedKeyword + " sources=" + hits.size + " kws=" + trimmed.length())
         } catch (th: Throwable) {
             LOG.i("echo-searchplan cache-save-failed: " + th.message)
         }
