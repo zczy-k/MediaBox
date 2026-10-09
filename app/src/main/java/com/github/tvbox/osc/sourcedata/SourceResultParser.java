@@ -228,6 +228,12 @@ final class SourceResultParser {
                 throw new IllegalStateException("json 非空但解析不出对象: " + json);
             }
             AbsXml data = absJson.toAbsXml();
+            // 回包非空但缺 list 字段 ⇒ 详情必然是空的。以前这里只会抛 NPE 再被吞,
+            // 排查时只能看到"详情为空"却不知道为什么;补一条让"站点没给正片数据"可见。
+            // 不分通道:详情/列表两类回包都可能缺 list(前缀 echo--parse 已在日志白名单)。
+            if (absJson.list == null) {
+                LOG.i("echo--parse-no-list:" + sourceKey + " (回包缺少 list 字段,按空结果处理)");
+            }
             SourceHelper.absXml(data, sourceKey, searchToken);
             data.detailToken = detailToken;
             if (searchResult == result) {

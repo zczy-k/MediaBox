@@ -54,7 +54,7 @@ class DetailResponseGuardTest {
 
     @Test
     fun detailTargetsThatCannotBeLoaded() {
-        // 这三种目标走 loadDetail 的早退分支(onDetailUnavailable)。早退**同样必须换代次** ——
+        // 这些目标走 loadDetail 的早退分支(onDetailUnavailable)。早退**同样必须换代次** ——
         // V4 首版把换代次写在早退之后,于是"空 id / msearch 占位 / 源不在当前订阅"这类换片只改内容
         // 不换代,上一代的迟到回包被放行(同源不同片时连 sourceKey 比对都拦不住)。
         assertTrue(DetailResponseGuard.isUnloadableTarget(vodId = "", sourceMissing = false))
@@ -63,9 +63,21 @@ class DetailResponseGuardTest {
     }
 
     @Test
+    fun indexSourceWithRealIdIsUnloadable() {
+        // 2026-10-09 新增:索引型源(indexs=1,配置声明"只走搜索不进详情")即便带着**真实数字 id**
+        // 也发不得详情 —— 它的回包注定没有 list 字段 ⇒ 解析空 ⇒ 页面停 Loading 等 120 源聚合搜索。
+        // 真机实测(js_douban《魔法少女小圆》id=35316478):同一部片在 10-08/10-09 各白等 43 秒。
+        assertTrue(DetailResponseGuard.isUnloadableTarget(vodId = "35316478", sourceMissing = false, indexSource = true))
+        // 与 msearch 占位是两条独立的判定:索引型源不带 msearch 前缀,靠新参数识别
+        assertFalse(DetailResponseGuard.isUnloadableTarget(vodId = "35316478", sourceMissing = false, indexSource = false))
+    }
+
+    @Test
     fun loadableTargetIsNotTreatedAsUnavailable() {
         assertFalse(DetailResponseGuard.isUnloadableTarget(vodId = "12345", sourceMissing = false))
         // 边界:前缀相近但不是 msearch 占位
         assertFalse(DetailResponseGuard.isUnloadableTarget(vodId = "msearch123", sourceMissing = false))
+        // 普通源(非索引型)不受新参数影响:默认值必须保持旧行为,否则会误杀正常源
+        assertFalse(DetailResponseGuard.isUnloadableTarget(vodId = "12345", sourceMissing = false, indexSource = false))
     }
 }

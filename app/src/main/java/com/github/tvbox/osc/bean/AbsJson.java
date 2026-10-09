@@ -213,11 +213,18 @@ public class AbsJson implements Serializable {
         }
         movie.recordcount = total;
         List<Movie.Video> videoList = new ArrayList<>();
-        for (AbsJsonVod vod : list) {
-            try {
-                videoList.add(vod.toXmlVideo());
-            } catch (Throwable th) {
-                movie.pagesize = 0;
+        // ⚠️ 必须判空:部分源(实测 js_douban)的详情回包里**没有 list 字段**(返回的是提示/元数据),
+        // Gson 解析后该字段就是 null —— 直接 for-each 会抛
+        // "Attempt to invoke virtual method 'java.util.Iterator java.util.ArrayList.iterator()' on a null object reference",
+        // 被 SourceResultParser 的 catch 吞掉后详情变成"无解释的空",上层只能干等。
+        // 同款守卫 AbsSortJson 与 DefaultConfig 都有,这里是最后一处漏网。
+        if (list != null) {
+            for (AbsJsonVod vod : list) {
+                try {
+                    videoList.add(vod.toXmlVideo());
+                } catch (Throwable th) {
+                    movie.pagesize = 0;
+                }
             }
         }
         movie.videoList = videoList;

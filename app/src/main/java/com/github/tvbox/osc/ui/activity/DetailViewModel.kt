@@ -29,6 +29,7 @@ import com.github.tvbox.osc.util.SearchHelper
 import com.github.tvbox.osc.util.SourceFailKind
 import com.github.tvbox.osc.util.SourceHealthFilter
 import com.github.tvbox.osc.util.SourceHealthMemory
+import com.github.tvbox.osc.util.TrailerPolicy
 import com.github.tvbox.osc.util.SourceIdentityMask
 import com.github.tvbox.osc.sourcedata.SourceViewModel
 import com.github.tvbox.osc.sourcedata.observeAsFlow
@@ -205,6 +206,20 @@ class DetailViewModel : ViewModel() {
     private var detailWatchdogToken = 0
     private val detailWatchdog = Runnable { onDetailWatchdogFired() }
 
+    /**
+     * **加载体验预算**:页面停在 Loading 超过这个时长,就必须给用户一个确定画面 ——
+     * 要么起播已找到的候选,要么明说"暂无片源"。绝不允许无限转圈。
+     *
+     * <p>它**独立于网络与看门狗**:看门狗(20~45s)按"站点限时"算,比聚合搜索还短,
+     * 且 [onDetailResult] 只要收到本代回包就撤防 —— 哪怕回包是解析失败的空详情
+     * (真机实测:js_douban 缺 list 字段那次,看门狗布防 2 次从未触发)。
+     * 预算计时器则**不因回包而撤**,只在离开 Loading 时自然失效(到点后先查 pageState)。
+     *
+     * <p>取 15s 的依据:详情侧并发 12、单源 8s ⇒ 首屏一批 24 源的最坏耗时 ≈ 16s,
+     * 预算取整对齐;再短会让"慢但能用"的源来不及回话。
+     */
+    private val loadingBudget = Runnable { onLoadingBudgetExpired() }
+
     private class SwitchSnapshot(
         val vodInfo: VodInfo,
         val vodId: String,
@@ -330,6 +345,8 @@ class DetailViewModel : ViewModel() {
         toastEvent.value = null
         finishEvent.value = false
         pageState.value = PageState.Loading
+        // 每次进入 Loading 都重新起算体验预算:换片/换源是新的等待,旧的到点不该算在这次头上
+        armLoadingBudget()
         fallbackEpisode = null
         fallbackEpisodeIndex = -1
         // ⚠️ 必须随片清空:这是"当前源没内容"的判定,带着上一部的结论进下一部
@@ -536,11 +553,20 @@ class DetailViewModel : ViewModel() {
         qualityProbeJob = null
         lineQualityHeights.value = emptyMap()
         collected.value = RoomDataManger.isVodCollect(sourceKey, vodId)
-        if (DetailResponseGuard.isUnloadableTarget(vodId, ApiConfig.get().getSource(sourceKey) == null)) {
+        val sourceBean = ApiConfig.get().getSource(sourceKey)
+        if (DetailResponseGuard.isUnloadableTarget(
+                vodId,
+                sourceBean == null,
+                // 索引型源(indexs=1)声明了"只走搜索不进详情":它的详情回包注定没有正片数据,
+                // 发出去就是白等一轮再看聚合搜索兜底。直接早退走聚合搜索,省掉这 20~45 秒。
+                indexSource = sourceBean?.isIndexSource() == true,
+            )
+        ) {
             onDetailUnavailable()
             return
         }
         pageState.value = PageState.Loading
+        armLoadingBudget()
         armDetailWatchdog(key)
         sourceViewModel.getDetail(sourceKey, vodId, false, requestToken)
         // 详情照旧请求当前源;聚合搜索**并行**预热,不等它出结果。
@@ -611,6 +637,38 @@ class DetailViewModel : ViewModel() {
         )
         LOG.i("echo-detail-watchdog-arm token=$detailWatchdogToken timeout=${timeoutMs}ms key=$key")
         mainHandler.postDelayed(detailWatchdog, timeoutMs)
+    }
+
+    /** 起算(或重新起算)加载体验预算。只 arm 不需要专门 disarm:到点后先查 pageState,不在 Loading 就无害空转 */
+    private fun armLoadingBudget() {
+        mainHandler.removeCallbacks(loadingBudget)
+        mainHandler.postDelayed(loadingBudget, LOADING_BUDGET_MS)
+    }
+
+    /**
+     * 预算到点:页面还停在 Loading 就必须给确定画面,绝不允许无限转圈。
+     *
+     * <p>三种情况:
+     * <ol>
+     *   <li>已有候选(哪怕只是预告片)⇒ 交给换源链起播它 —— 有内容先给内容;</li>
+     *   <li>没有任何候选 ⇒ 强制进空态。⚠️ force 收口**不会**把这部片记成"无资源"
+     *       (见 [enterEmpty]),因为聚合搜索可能还在跑,慢源不该被判死刑;</li>
+     *   <li>已离开 Loading(Ready/Empty)⇒ 无害空转。</li>
+     * </ol>
+     */
+    private fun onLoadingBudgetExpired() {
+        if (pageState.value !is PageState.Loading) return
+        val candidates = synchronized(fallbackCandidates) { fallbackCandidates.size }
+        LOG.i(
+            "echo-detail-budget-expired candidates=$candidates searching=${sourcesSearching.value}" +
+                " fallbackActive=$fallbackActive key=$sourceKey id=$vodId"
+        )
+        if (candidates > 0) {
+            fallbackLoadingCandidate = false
+            loadNextFallbackCandidate()
+            return
+        }
+        enterEmpty(str(R.string.detail_empty_source), force = true)
     }
 
     /** 撤防(收到本代任何回包、或内容换代时调用) */
@@ -722,6 +780,14 @@ class DetailViewModel : ViewModel() {
                 return
             }
             val mVideo = videoList[0]
+            // 预告片不是正片:先剔掉再看"这个源到底有没有这部片"(产品口径,2026-10-09 拍板)。
+            // 只剩预告片 ⇒ 视同"没有这部片",走空详情路径继续换源找正片 ——
+            // 不这么做的话,预告片会被当成正片起播 2 秒然后失败,换源链又反复选中同一个源,死循环。
+            if (!TrailerPolicy.stripTrailers(mVideo)) {
+                LOG.i("echo-detail-trailer-only key=$sourceKey id=$vodId name=${mVideo.name}")
+                handleEmptyDetail(absXml)
+                return
+            }
             mVideo.id = vodId
             if (mVideo.name.isNullOrEmpty()) mVideo.name = vodName
             if (mVideo.name.isNullOrEmpty()) mVideo.name = "TVBox"
@@ -1200,11 +1266,25 @@ class DetailViewModel : ViewModel() {
      * 尾部 `sourcesSearching.value = false` → [loadNextFallbackCandidate])就会真正
      * 收口到 [finishFallbackWithoutResult],那时进空态才是诚实的。
      */
-    private fun enterEmpty(msg: String? = null) {
+    /**
+     * 进入"暂无片源"空态。
+     *
+     * @param msg   空态文案
+     * @param force **预算强制收口**专用:绕过"聚合搜索还在跑"的递延守卫。
+     *   普通路径(搜索已定论)传默认 false,守卫照旧 —— v1.0.33 的教训就是空态守卫不能拆。
+     *
+     * <p>⚠️ force=true 且搜索仍在跑时**刻意不记**"无资源":聚合搜索可能马上回话,
+     * 此刻记会把一部真实存在的片从首页/搜索里永久藏掉。"无资源"这个结论只属于
+     * **搜索已定论**的路径([settleDeferredEmpty] / [finishFallbackWithoutResult])。
+     */
+    private fun enterEmpty(msg: String? = null, force: Boolean = false) {
         if (sourcesSearching.value) {
-            // ⚠️ 这条日志是「为什么页面没进空态」的唯一可观测点,别删。
-            LOG.i("echo-detail-empty-deferred key=$sourceKey id=$vodId reason=search-in-flight msg=$msg")
-            return
+            if (!force) {
+                // ⚠️ 这条日志是「为什么页面没进空态」的唯一可观测点,别删。
+                LOG.i("echo-detail-empty-deferred key=$sourceKey id=$vodId reason=search-in-flight msg=$msg")
+                return
+            }
+            LOG.i("echo-detail-empty-budget key=$sourceKey id=$vodId searching=true msg=$msg")
         }
         sendCommand(PlaybackCommand.ClearSourceSwitchTip)
         LOG.i("echo-detail-empty-state msg=$msg key=$sourceKey id=$vodId")
@@ -1214,7 +1294,10 @@ class DetailViewModel : ViewModel() {
         //
         // ⚠️ 刻意**只在这一步**记,不在 handleEmptyDetail 入口记:入口处换源链还没跑完,
         // 站点抖动返回的空会被误判成"永久没资源",好片就此消失。真正的空只有终态才算。
-        markCurrentVodUnavailable()
+        // 预算强制收口时搜索尚未定论,同样不算"终态"(见上)。
+        if (!force || !sourcesSearching.value) {
+            markCurrentVodUnavailable()
+        }
     }
 
     /**
@@ -1822,6 +1905,12 @@ class DetailViewModel : ViewModel() {
         private const val FIRST_WATCH_PROBE_LINES = 3
         /** 单个候选站的同名搜索超时。原 30s:聚合订阅动辄数百站,单站卡住会拖垮整轮候选收集 */
         private const val SOURCE_SEARCH_TIMEOUT_MS = 8_000L
+
+        /**
+         * 加载体验预算:停在 Loading 超过它就必须给确定画面。
+         * 与"首屏一批 24 源"配套(12 并发 × 8s ⇒ 最坏 16s),见 [onLoadingBudgetExpired]。
+         */
+        private const val LOADING_BUDGET_MS = 15_000L
         /** 候选收集并发度。原 6 太保守,聚合订阅下一批批轮很慢;提到 12 让候选更快到齐 */
         private const val SOURCE_SEARCH_CONCURRENCY = 12
         /**
