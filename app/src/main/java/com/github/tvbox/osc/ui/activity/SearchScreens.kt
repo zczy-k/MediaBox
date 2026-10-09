@@ -229,7 +229,7 @@ internal fun RailResults(
         }.distinctUntilChanged().collect { if (it) onLoadMore() }
     }
     // 匿名标签:与 SearchListResults 同一口径(按 sourceKey 编号,不含真实站名)。
-    // 行内 siteName 也走这里 —— 竖排轨道名 + 行内标注是两个独立的泄露口,必须一起封。
+    // 竖排轨道名是独立的泄露口,编号必须跟着 sourceKey 走,否则筛选一换,序号会跳。
     // ⚠️ stringResource 必须先在 Composable 作用域求值,不能写进 remember 块(见 SearchListResults 同处注释)
     val anonPrefix = stringResource(R.string.common_source_anonymous_prefix)
     val anonymousLabelOf = remember(results, anonPrefix) {
@@ -244,14 +244,15 @@ internal fun RailResults(
     // 只挂 results 会命中旧缓存、拿不到新标记 —— 详见 AvailabilityMemory.marksRevision 的 KDoc。
     val marksRevision = AvailabilityMemory.marksRevision
     val unavailableMarks = remember(results, marksRevision) { AvailabilityMemory.activeMarks() }
+    // 2026-10-09 来源标签折叠:rows 不再携带行内来源标签 —— "全部"列表里同名片来自
+    // 不同源的两行原本只靠行尾"源N"标签区分,它挤占内容行还把标题下方压扁;
+    // 来源信息由左栏站点列表(点击即"展开"该源的专属视图)承担,行内容完整让给标题/角标/meta。
     val rows = remember(results, selectedSource, unavailableMarks) {
         results
             .filter { it.videos.isNotEmpty() && (selectedSource == null || it.sourceKey == selectedSource) }
             .sortedBy { it.arrivedAt }
             .flatMap { result ->
-                result.videos
-                    .filterNot { AvailabilityHeuristic.mightBeUnavailable(it, unavailableMarks) }
-                    .map { (anonymousLabelOf[result.sourceKey].orEmpty()) to it }
+                result.videos.filterNot { AvailabilityHeuristic.mightBeUnavailable(it, unavailableMarks) }
             }
     }
     // 这条是「搜索页粗筛到底执行没执行」的唯一可观测点(轨道视图),别删。
@@ -317,10 +318,9 @@ internal fun RailResults(
                     )
                 }
             }
-            itemsIndexed(rows, key = { index, (_, video) -> "rail_row_${index}_${video.sourceKey}_${video.id}" }) { _, (siteName, video) ->
+            itemsIndexed(rows, key = { index, video -> "rail_row_${index}_${video.sourceKey}_${video.id}" }) { _, video ->
                 SearchResultRow(
                     video = video,
-                    siteName = siteName.takeIf { selectedSource == null },
                     onClick = { onCardClick(video) },
                     onLongClick = { onCardLongClick(video) },
                 )
@@ -466,10 +466,22 @@ internal fun SearchLoadMoreFooter(
     }
 }
 
+/**
+ * 搜索结果行(2026-10-09 重排):海报 + 标题(两行) + 内容角标 + 元信息,**不放来源标签**。
+ *
+ * <p>来源标签默认"折叠":用户通常不关心结果来自哪个源,行内标签却把标题下方一行挤占、
+ * 长源名还会把角标/元信息压到截断。来源信息的"展开"入口由既有的来源筛选承担 ——
+ * 竖排视图是左栏站点列表(点击即展开该源专属视图),横排视图是顶部筛选 chips,
+ * 分组页"全部>"则是整源展开。行内不再重复展示。
+ *
+ * <p>内容行结构(自上而下):
+ * 1. 标题(最多两行,省略结尾)—— 番号标题普遍偏长;
+ * 2. 内容角标(中文字幕/无码影片…,主色胶囊)—— 与来源无关的内容信息,保留突出;
+ * 3. 元信息(年份/地区/类型)—— 一行完整显示,不再被来源标签挤占。
+ */
 @Composable
 internal fun SearchResultRow(
     video: Movie.Video,
-    siteName: String?,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
@@ -509,23 +521,10 @@ internal fun SearchResultRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 val note = video.note?.trim().orEmpty()
-                if (note.isNotEmpty() || siteName != null) {
+                if (note.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(6.dp))
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        // 内容角标(中文字幕/无码影片…)用主色胶囊突出,一眼能分辨。
-                        if (note.isNotEmpty()) SearchTag(text = note, emphasized = true)
-                        if (siteName != null) {
-                            // 来源名按剩余宽度自适应:原来写死 90dp,长名字必被截成 "missav_tvbo..."
-                            SearchTag(
-                                text = siteName,
-                                emphasized = false,
-                                modifier = Modifier.weight(1f, fill = false),
-                            )
-                        }
-                    }
+                    // 内容角标(中文字幕/无码影片…)用主色胶囊突出,一眼能分辨。
+                    SearchTag(text = note, emphasized = true)
                 }
                 val meta = searchMetaText(video)
                 if (meta.isNotEmpty()) {
