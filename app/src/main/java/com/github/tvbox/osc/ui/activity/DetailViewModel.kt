@@ -971,6 +971,12 @@ class DetailViewModel : ViewModel() {
         // 诊断包靠这行判断"预热到底有没有触发、候选池多大" —— 真机日志被 ROM 屏蔽时,
         // 文件日志(仅 diag 包落盘)是唯一可观测点。前缀 echo-source- 已在 LOG 白名单里。
         LOG.i("echo-source-search start title=" + title + " pool=" + sources.size + " token=$myToken")
+        // ⚠️ 必须先取消旧搜索 job(2026-10-09 真机数据修正):分批后旧 job 要跑完全部批才自然结束,
+        // 快速换片时 30 个会话里 27 个在 semaphore(12) 队列里陪跑 —— 它们的回包本就被
+        // currentTokenStr() 守卫丢弃,留在队列里纯粹白占并发、拖慢新搜索。cancel 后排队中的
+        // async 在挂起点被取消、许可即刻释放(在途网络请求不可中断,但结果会被丢弃,无害)。
+        // 批间 abort-stale 检查保留:兜"旧 job 已进批内在途"的情况。
+        searchJob?.cancel()
         sourcesSearching.value = sources.isNotEmpty()
         relatedVideos.value = emptyList()
         searchProgress.value = if (sources.isEmpty()) null else SearchProgress(0, sources.size, 0)
@@ -1002,7 +1008,10 @@ class DetailViewModel : ViewModel() {
                                     }
                                 } finally {
                                     pendingSearchDone.remove(bean.key)
-                                    publishSearchProgress(doneCount.incrementAndGet(), sources.size)
+                                    // 取消/换代的旧 job 不回写进度:免得旧计数覆盖新搜索的 N/M 显示
+                                    if (tokenStr == currentTokenStr()) {
+                                        publishSearchProgress(doneCount.incrementAndGet(), sources.size)
+                                    }
                                 }
                             }
                         }
