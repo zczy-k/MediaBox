@@ -259,6 +259,7 @@ fun DetailScreen(activity: DetailActivity, vm: DetailViewModel) {
                             emptyText = state.msg ?: stringResource(R.string.detail_empty_source),
                             errorText = "",
                             retryText = "",
+                            emptyIconRes = R.drawable.icon_error,
                             modifier = Modifier.weight(1f),
                         )
                         SourceSection(vm, revision = revision)
