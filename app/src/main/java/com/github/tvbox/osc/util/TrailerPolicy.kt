@@ -40,13 +40,22 @@ internal object TrailerPolicy {
      *
      * <p>归一化复用 [SearchSettings.normalize] 的口径(全角转半角 → 删括注 → 删空白标点 → 小写),
      * 与搜索匹配同一套,避免两处各写一套导致漂移。括注会被删掉,
-     * 所以「预告片(2026)」「【预告】」都能命中。
+     * 所以「预告片(2026)」能命中。
+     *
+     * <p>⚠️ 但归一化**删括注**有一个反向副作用:整个集名都写在括号里时(源站真会这么写,
+     * 如「【先导预告】」),归一化结果是**空串** ⇒ 只看归一化文本就会漏判。
+     * 所以归一化判定为空/未命中时,再对**原文**(小写)做一次同样的判定兜底。
      */
     fun isTrailerName(name: String?): Boolean {
+        if (name.isNullOrEmpty()) return false
         val normalized = SearchSettings.normalize(name)
-        if (normalized.isEmpty()) return false
-        if (CONTAINS_MARKS.any { normalized.contains(it) }) return true
-        return normalized.startsWith(PV_PREFIX)
+        if (normalized.isNotEmpty()) {
+            if (CONTAINS_MARKS.any { normalized.contains(it) }) return true
+            if (normalized.startsWith(PV_PREFIX)) return true
+        }
+        val raw = name.trim().lowercase(java.util.Locale.ROOT)
+        if (CONTAINS_MARKS.any { raw.contains(it) }) return true
+        return raw.startsWith(PV_PREFIX)
     }
 
     /**

@@ -51,7 +51,11 @@ class AbsJsonTest {
         val v = xml.movie.videoList[0]
         assertEquals("71989", v.id)
         assertEquals("咸鱼先生", v.name)
-        // 分集经 SourceHelper.absXml 拆分后才进 beanList;这里只锁"条目与集数"不被守卫改动
-        assertEquals(2, v.urlBean.infoList.size)
+        // ⚠️ infoList 是"每条**线路**(play_from)一项",分集在 urls 字符串里,
+        // 拆成 beanList 是后续 SourceHelper.absXml 的事(本方法不做)。
+        // 此前断言写成 infoList.size == 2,是把"线路数"和"集数"混为一谈(CI 实跑抓到)。
+        assertEquals(1, v.urlBean.infoList.size)
+        assertEquals("dbyun", v.urlBean.infoList[0].flag)
+        assertEquals("第01集\$http://v/1#第02集\$http://v/2", v.urlBean.infoList[0].urls)
     }
 }
