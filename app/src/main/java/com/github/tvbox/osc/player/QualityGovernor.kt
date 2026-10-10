@@ -23,6 +23,14 @@ object QualityGovernor {
     /** 稳定期:进集不足此时长不切(起播振荡期,采样信号不可信) */
     const val MIN_WATCH_MS = 60_000L
 
+    /**
+     * "补救切换"(未达标 → 扫描 → 一次切到最优)最早发生时间。
+     *
+     * <p>比追高的稳定期短得多:它在**修问题**,不是在优化;但仍不能刚起播就切 ——
+     * 用户刚看到画面就黑屏一次,是最刺眼的打断。
+     */
+    const val MIN_REMEDY_DELAY_MS = 20_000L
+
     /** 切换失败回滚窗口:窗口内的失败/判劣质先回出发地 */
     const val ROLLBACK_WINDOW_MS = 90_000L
 
@@ -80,7 +88,47 @@ object QualityGovernor {
     }
 
     /**
-     * 是否允许向 [target] 切换(全部条件满足才 true)。
+     * 拒绝原因:**纯函数**,`null` = 允许切换。
+     *
+     * <p>把它与 [canSwitchUp] 分开是为了**可观测**:日志能直接打出"为什么没切",
+     * 而不是只有一句 gate denied(此前"整天零升档"就是因为只有布尔值,查不出卡在哪一关)。
+     *
+     * <p>返回值是**稳定的机器可读标识**(英文短横线串),别改成中文 —— 真机日志要按它聚合统计。
+     *
+     * @param failedTargetS 曾失败并回滚过的目标 S;-1 = 无。只挡**同一档**,不封整段
+     *                      (原实现是"锁到出发地 S 为止",会把更高档也一并封死,见附录 D.3)
+     */
+    @JvmStatic
+    fun rejectReason(
+        mode: DeviceCapability.QualityMode,
+        current: VideoQualityPolicy.Variant?,
+        target: VideoQualityPolicy.Variant?,
+        deviceCapHeight: Int,
+        sinceEpisodeStartMs: Long,
+        switchesDone: Int,
+        failedTargetS: Int,
+        trafficSaver: Boolean = false,
+    ): String? {
+        // 流量节省优先于其它一切条件:开启即不追高(口径见《选线机制设计》附录 F.6)
+        if (trafficSaver) return "traffic-saver"
+        if (current == null || target == null) return "no-measurement"
+        if (!current.known || !target.known) return "no-measurement"
+        if (mode == DeviceCapability.QualityMode.SPEED_FIRST) return "speed-first"
+        if (deviceCapHeight > 0 && target.height > deviceCapHeight) return "above-device-cap"
+        // 天花板:已达 4K 级即停(附录 A:达顶即停,不得无限向上追问)
+        if (VideoQualityPolicy.isAtCeiling(current)) return "at-ceiling"
+        if (!worthSwitching(current, target, mode)) return "not-worth"
+        if (sinceEpisodeStartMs < 0) return "warmup-unknown"
+        if (sinceEpisodeStartMs < MIN_WATCH_MS) return "warmup"
+        if (switchesDone >= MAX_UPGRADES_PER_EPISODE) return "quota"
+        if (failedTargetS >= 0 && VideoQualityPolicy.sharpness(target) == failedTargetS) {
+            return "same-level-failed"
+        }
+        return null
+    }
+
+    /**
+     * 是否允许向 [target] 切换 = [rejectReason] 未给出拒绝理由。
      *
      * @param mode              生效档位(调用方传 [DeviceCapability.effectiveMode],不是用户原值)
      * @param current           当前线路**实测**画质;null / 尺寸未知 ⇒ 拒绝(没数据不猜)
@@ -88,7 +136,7 @@ object QualityGovernor {
      * @param deviceCapHeight   设备上限(像素高度);0 = 不限制
      * @param sinceEpisodeStartMs 进集时长;-1 = 未知(起播标记未到达,不切)
      * @param switchesDone      本集已切换次数
-     * @param sessionLockedS    会话锁定档:**回滚后=出发地的 S**;目标 S 高于它一律拒;-1 = 未锁
+     * @param failedTargetS     曾失败并回滚过的目标 S;-1 = 无
      * @param trafficSaver      「流量节省」开关;开启 ⇒ 一切向上动作拒绝(附录 F)
      */
     @JvmStatic
@@ -99,23 +147,36 @@ object QualityGovernor {
         deviceCapHeight: Int,
         sinceEpisodeStartMs: Long,
         switchesDone: Int,
-        sessionLockedS: Int,
+        failedTargetS: Int,
         trafficSaver: Boolean = false,
-    ): Boolean {
-        // 流量节省优先于其它一切条件:开启即不追高(口径见《选线机制设计》附录 F.6)
-        if (trafficSaver) return false
-        if (current == null || target == null) return false
-        if (!current.known || !target.known) return false
-        if (mode == DeviceCapability.QualityMode.SPEED_FIRST) return false
-        if (deviceCapHeight > 0 && target.height > deviceCapHeight) return false
-        // 天花板:已达 4K 级即停(附录 A:达顶即停,不得无限向上追问)
-        if (VideoQualityPolicy.isAtCeiling(current)) return false
-        if (!worthSwitching(current, target, mode)) return false
-        if (sinceEpisodeStartMs < 0 || sinceEpisodeStartMs < MIN_WATCH_MS) return false
-        if (switchesDone >= MAX_UPGRADES_PER_EPISODE) return false
-        val targetS = VideoQualityPolicy.sharpness(target)
-        if (sessionLockedS >= 0 && targetS > sessionLockedS) return false
-        return true
+    ): Boolean = rejectReason(
+        mode, current, target, deviceCapHeight,
+        sinceEpisodeStartMs, switchesDone, failedTargetS, trafficSaver,
+    ) == null
+
+    /**
+     * **补救切换**判据(未达标 → 源内扫描 → 一次切到最优)。
+     *
+     * <p>与 [rejectReason] 的差别:不要求 60s 稳定期与每集额度 ——
+     * 那两关是约束"追高"的(避免把画质优化变成骚扰),不该把"修复不达标"也一起锁死。
+     * 但"值得切"(θ/ΔS)、天花板、设备上限、流量节省**一律照旧**。
+     */
+    @JvmStatic
+    fun rejectReasonForRemedy(
+        mode: DeviceCapability.QualityMode,
+        current: VideoQualityPolicy.Variant?,
+        target: VideoQualityPolicy.Variant?,
+        deviceCapHeight: Int,
+        trafficSaver: Boolean = false,
+    ): String? {
+        if (trafficSaver) return "traffic-saver"
+        if (current == null || target == null) return "no-measurement"
+        if (!current.known || !target.known) return "no-measurement"
+        if (mode == DeviceCapability.QualityMode.SPEED_FIRST) return "speed-first"
+        if (deviceCapHeight > 0 && target.height > deviceCapHeight) return "above-device-cap"
+        if (VideoQualityPolicy.isAtCeiling(current)) return "at-ceiling"
+        if (!worthSwitching(current, target, mode)) return "not-worth"
+        return null
     }
 
     /** 升档失败是否仍在回滚窗口内(出发地快照为空 = 无升档在途,不在窗口) */

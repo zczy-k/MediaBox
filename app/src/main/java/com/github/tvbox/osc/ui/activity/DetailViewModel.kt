@@ -48,6 +48,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -150,6 +151,14 @@ class DetailViewModel : ViewModel() {
     /** 探测穷尽闩(按片):全是爬虫型线路(无可探直连)时,补探测对本片永远无产出,
      *  置闩后忽略后续 probe-request(换片自动复位)—— 否则 plentiful 每 30s 空转一轮 */
     private var probeExhausted = false
+
+    /**
+     * 起播后"源内有界扫描"的每片会话闩(键 = 站点|片id)。
+     *
+     * <p>同一部片每会话只扫一次:扫描会真实解析爬虫线路(一次 API 调用/条),
+     * 反复扫既浪费又会触发源站风控。换片自然失效(键不同)。
+     */
+    private var sourceSweepDoneKey = ""
 
     private var vodName = ""
     private var vodPicture = ""
@@ -585,6 +594,197 @@ class DetailViewModel : ViewModel() {
     private fun probeNegativeCooldownActive(flag: String, nowMs: Long): Boolean {
         val at = probeNegativeAt[flag] ?: return false
         return nowMs - at < LineQualityProbeBudget.negativeCooldownMs
+    }
+
+    /**
+     * 起播后"源内有界扫描"的预算(见《选线机制设计》附录 G)。
+     *
+     * <p>为什么必须有封顶:扫描**必然探不完** —— 源池 300+、爬虫解析 1~3s/条且同类 Spider
+     * 不能并发(SPIDER_POOL 只有 3 线程)、还要给播放/预载让路。所以口径是
+     * "预算内见到的最优就切",不是"探完再切"(附录 C)。
+     */
+    private object SourceSweepBudget {
+        /** 总预算:直链并行探测 + 爬虫深探合计 */
+        const val totalMs = 15_000L
+
+        /** 单轮最多看几条线路 */
+        const val maxLines = 8
+
+        /** 爬虫深探上限:每次解析都是一次真实 API 调用,必须封顶 */
+        const val deepProbeMax = 2
+
+        /** 单条深探预算(解析 1~3s + 探测 ≤0.8s,留一倍余量) */
+        const val deepProbeTimeoutMs = 6_000L
+    }
+
+    /**
+     * 起播后的**源内有界扫描**:把当前源的线路实测一遍,统一比较后**一次**切到最优。
+     *
+     * <p>为什么需要它(既有两条路径都补不上这个洞):
+     * <ul>
+     *   <li>起播前探测([applyFirstWatchProbe])只给 1~2s、只探直连型 ⇒ 冷记忆时几乎必留缺口;</li>
+     *   <li>补探测([probeMissingLineQualities])只"写记忆",**从不比较、从不切换** ——
+     *       升档要等看门狗下一个富余周期,真机上往往错过(用户已经换片了)。</li>
+     * </ul>
+     *
+     * <p>**不阻塞首帧**:只在 `TYPE_PLAYBACK_STARTED`(起播成功)之后跑,每片每会话最多一次。
+     * 切入时间也不早于 [QualityGovernor.MIN_REMEDY_DELAY_MS] —— 刚看到画面就黑屏一次最刺眼。
+     *
+     * <p>⚠️ 尚未实现"让路":播放卡顿时暂停扫描,需要把看门狗的劣质信号广播到 VM
+     * (现有两条探测路径同样没有,属同类欠账)。
+     */
+    private fun sweepSourceLinesForQuality() {
+        val info = vodInfo ?: return
+        val siteKey = sourceKey
+        val vod = vodId
+        if (siteKey.isEmpty() || vod.isEmpty()) return
+        val sweepKey = "$siteKey|$vod"
+        if (sourceSweepDoneKey == sweepKey) return
+        // 速度优先:用户明确不要这类额外请求(与起播前探测同一口径)
+        val mode = DeviceCapability.effectiveMode()
+        if (!mode.shouldProbeOnFirstWatch) return
+        // 流量节省:本函数的动作**全是向上**的(扫出更高画质就切),整段跳过
+        if (DeviceCapability.trafficSaverOn()) {
+            LOG.i("echo-quality sweep skip: traffic saver on")
+            return
+        }
+        val seriesMap = info.seriesMap ?: return
+        val siteOrder = seriesMap.keys.toList()
+        if (siteOrder.size <= 1) return
+        val app = App.getInstance() ?: return
+        val cap = DeviceCapability.capHeight(app)
+        val currentFlag = info.playFlag ?: return
+        val remembered = VideoQualityMemory.lookupAll(siteKey, vod, siteOrder)
+        val anchor = if (DeviceCapability.isTelevision(app)) {
+            VideoQualityPolicy.ANCHOR_WIDTH_TV
+        } else {
+            VideoQualityPolicy.ANCHOR_WIDTH_MOBILE
+        }
+        // 达标且非画质优先 ⇒ 不折腾(与"够好即停"同一口径);当前未知则继续扫(要填记忆)
+        val currentBefore = remembered.firstOrNull { it.flag == currentFlag }
+        if (VideoQualityPolicy.meetsAnchor(currentBefore, anchor) &&
+            mode != DeviceCapability.QualityMode.QUALITY_FIRST
+        ) {
+            LOG.i("echo-quality sweep skip: already meets anchor")
+            return
+        }
+        val nowMs = System.currentTimeMillis()
+        val missing = siteOrder
+            .filter { flag ->
+                remembered.none { it.flag == flag } && !probeNegativeCooldownActive(flag, nowMs)
+            }
+            .take(SourceSweepBudget.maxLines)
+        if (missing.isEmpty()) {
+            LOG.i("echo-quality sweep skip: nothing missing")
+            return
+        }
+        sourceSweepDoneKey = sweepKey
+        val currentList = seriesMap[currentFlag]
+        // 不能写 coerceIn(0, size - 1):size 为 0 时下界 0 > 上界 -1,coerceIn 会抛 IllegalArgumentException
+        val index = if (currentList.isNullOrEmpty()) 0 else info.playIndex.coerceIn(0, currentList.size - 1)
+        val headers = probeHeaders(siteKey)
+        val probe = VideoQualityProbe()
+        val token = detailBuildToken
+        LOG.i(
+            "echo-quality sweep start missing=" + missing.size + " lines=" + siteOrder.size +
+                " cap=" + cap + " mode=" + mode.name
+        )
+        qualityProbeJob?.cancel()
+        qualityProbeJob = viewModelScope.launch {
+            val startedAt = System.currentTimeMillis()
+            // ① 直链型:并行快探(每条只读 ≤256KB 文件头),不占 Spider 池
+            val directTargets = missing.filter { directUrlOf(seriesMap[it], index) != null }
+            val directProbed = withTimeoutOrNull(SourceSweepBudget.totalMs) {
+                LineQualitySelector.probeVariantsParallel(
+                    flags = directTargets,
+                    resolve = { flag -> directUrlOf(seriesMap[flag], index) },
+                    probe = { url -> probe.probe(url, headers) },
+                )
+            }.orEmpty()
+            // ② 爬虫型:**解析后探**(解析反正要跑,复用其结果只多一个 ≤256KB 的探测)。
+            //    串行 + 封顶 + 限时 —— 解析走 spider.playerContent,与播放/预载抢同一个 3 线程池。
+            val crawlerTargets = missing
+                .filter { flag -> directUrlOf(seriesMap[flag], index) == null }
+                .take(SourceSweepBudget.deepProbeMax)
+            val deepProbed = ArrayList<VideoQualityPolicy.Variant>()
+            for (flag in crawlerTargets) {
+                if (System.currentTimeMillis() - startedAt > SourceSweepBudget.totalMs) break
+                val measured = withTimeoutOrNull(SourceSweepBudget.deepProbeTimeoutMs) {
+                    val url = resolveUrlForProbe(flag)
+                    if (url.isNullOrEmpty()) null else probe.probe(url, headers)
+                }
+                if (measured == null || !measured.known) {
+                    probeNegativeAt[flag] = System.currentTimeMillis()
+                    continue
+                }
+                deepProbed.add(measured.copy(flag = flag))
+            }
+            val allProbed = directProbed + deepProbed
+            // 落记忆:负结果进冷却、不落记忆(与补探测同一口径,避免 0×0 污染)
+            allProbed.forEach { v ->
+                if (v.flag.isEmpty()) return@forEach
+                if (!v.known) {
+                    probeNegativeAt[v.flag] = System.currentTimeMillis()
+                    return@forEach
+                }
+                probeNegativeAt.remove(v.flag)
+                VideoQualityMemory.record(siteKey, vod, v)
+            }
+            (directTargets + crawlerTargets)
+                .filter { f -> allProbed.none { it.flag == f } }
+                .forEach { probeNegativeAt[it] = System.currentTimeMillis() }
+            // 会话可能已经换片/换源:那时这次扫描的对象已失效
+            if (siteKey != sourceKey || vod != vodId || token != detailBuildToken) return@launch
+            if (allProbed.isNotEmpty()) publishLineQualityHeights()
+            // 起播后不久不切:等够 MIN_REMEDY_DELAY_MS 再动手
+            val waitMs = QualityGovernor.MIN_REMEDY_DELAY_MS - (System.currentTimeMillis() - startedAt)
+            if (waitMs > 0) delay(waitMs)
+            if (siteKey != sourceKey || vod != vodId || token != detailBuildToken) return@launch
+            // ③ 统一比较:候选 = 记忆(含等待期间内核补写的当前线) + 本次实测;**一次**比较选定
+            val freshRemembered = VideoQualityMemory.lookupAll(siteKey, vod, siteOrder)
+            val pool = freshRemembered.filter { it.known } + allProbed
+            val best = VideoQualityPolicy.pickBest(pool, cap)
+            val currentNow = freshRemembered.firstOrNull { it.flag == currentFlag }
+            val reject = QualityGovernor.rejectReasonForRemedy(mode, currentNow, best, cap, false)
+            LOG.i(
+                "echo-quality sweep lines=" + missing.size +
+                    " direct=" + directTargets.size + " deep=" + crawlerTargets.size +
+                    " probed=" + allProbed.size +
+                    " curS=" + (currentNow?.let { VideoQualityPolicy.sharpness(it) } ?: -1) +
+                    " bestS=" + (best?.let { VideoQualityPolicy.sharpness(it) } ?: -1) +
+                    " target=" + (best?.flag ?: "none") +
+                    " verdict=" + (reject ?: "switch")
+            )
+            if (best == null || reject != null) return@launch
+            if (best.flag.isEmpty() || best.flag == currentFlag) return@launch
+            switchLineForQuality(best.flag)
+        }
+    }
+
+    /**
+     * 扫描选出的目标线:切过去(换线不换集),与 [onFlagClick] 同一套"集名匹配"逻辑。
+     *
+     * <p>与 [onFlagClick] 的差别只有来源:这条不是用户点的。但仍**沿用** `manualLineSwitchPending`,
+     * 因为那个标记实际承担两件我们都需要的语义:
+     * ①让 `PlayContainer` 走 `rememberProgressForSwitch()`(否则换线后从 0 开始,用户丢进度);
+     * ②取流成功前不被自动换线覆盖(取流成功后 `PlaybackFetch` 会自行清除,自动兜底能力随即恢复)。
+     */
+    private fun switchLineForQuality(flagName: String) {
+        val info = vodInfo ?: return
+        if (info.playFlag == flagName) return
+        val oldList = info.seriesMap?.get(info.playFlag)
+        val currentIndex = info.playIndex.coerceAtLeast(0)
+        val currentSeries = oldList?.getOrNull(currentIndex)
+        info.playFlag = flagName
+        val newList = info.seriesMap?.get(flagName)
+        if (newList != null && newList.isNotEmpty()) {
+            info.playIndex = findSameEpisodeIndex(currentSeries, newList, currentIndex)
+            newList.forEachIndexed { index, series -> series.selected = index == info.playIndex }
+        }
+        info.seriesFlags.forEach { it.selected = it.name == flagName }
+        manualLineSwitchPending = true
+        bumpRevision()
+        requestPlay()
     }
 
     fun requestPlay() {
@@ -2086,6 +2286,10 @@ class DetailViewModel : ViewModel() {
         // 它由 PlaybackProgress 每集发一次的 TYPE_PLAYBACK_STARTED 触发,节流在 30 秒级,
         // 所以绝不能当成主路径:1.0.43 实测正是"分辨率 2 秒测到、标签 32 秒才更新"。
         publishLineQualityHeights()
+        // 起播成功后启动"源内有界扫描"(见《选线机制设计》附录 G)。**放在这里而非起播前**,
+        // 是为了不占用首帧:起播前只做 ≤1~2s 的直链轻探,重活(全源扫描 + 爬虫深探)全部后置。
+        // 每片每会话只跑一次(内部有闩),幂等且自带取消域。
+        sweepSourceLinesForQuality()
     }
 
     private fun syncPlayingVodInfo(playing: VodInfo) {

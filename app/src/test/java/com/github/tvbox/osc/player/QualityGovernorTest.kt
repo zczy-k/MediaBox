@@ -36,9 +36,21 @@ class QualityGovernorTest {
         cap: Int = 0,
         since: Long = 120_000L,
         done: Int = 0,
-        lockedS: Int = -1,
+        failedS: Int = -1,
         saver: Boolean = false,
-    ) = QualityGovernor.canSwitchUp(mode, current, target, cap, since, done, lockedS, saver)
+    ) = QualityGovernor.canSwitchUp(mode, current, target, cap, since, done, failedS, saver)
+
+    /** 与 [gate] 同参,但取"拒绝原因"(埋点口径,null = 允许) */
+    private fun reason(
+        mode: DeviceCapability.QualityMode = DeviceCapability.QualityMode.QUALITY_FIRST,
+        current: VideoQualityPolicy.Variant? = sd,
+        target: VideoQualityPolicy.Variant? = fhd,
+        cap: Int = 0,
+        since: Long = 120_000L,
+        done: Int = 0,
+        failedS: Int = -1,
+        saver: Boolean = false,
+    ) = QualityGovernor.rejectReason(mode, current, target, cap, since, done, failedS, saver)
 
     // ==================== 无条件拒绝(短路在最前) ====================
 
@@ -147,11 +159,52 @@ class QualityGovernorTest {
     }
 
     @Test
-    fun `会话锁按 S 判_高于出发地S的目标一律拒`() {
-        // 出发地 S=960(hd),目标 1440(fhd)>960 ⇒ 拒
-        assertFalse(gate(current = hd, target = fhd, lockedS = 960))
-        // 锁放宽到 1500 ⇒ 1440 ≤ 1500,放行
-        assertTrue(gate(current = hd, target = fhd, lockedS = 1500))
+    fun `会话锁只挡曾失败的那一档_不封更高档`() {
+        // 曾在 fhd(1440)档失败并回滚 ⇒ 只挡"同一档";旧实现会连更高的档一起封死,
+        // 结果是一次失败后用户永久停在低档(附录 D.3"回滚后锁低画质")
+        assertFalse(gate(current = hd, target = fhd, failedS = 1440))
+        assertNull(reason(current = hd, target = fhd))
+        assertTrue(gate(current = hd, target = qhd, failedS = 1440))
+        // failedS = -1:从未回滚过,不挡任何档
+        assertTrue(gate(current = hd, target = fhd, failedS = -1))
+    }
+
+    // ==================== 拒绝原因(埋点口径) ====================
+
+    @Test
+    fun `拒绝原因是稳定的机器可读标识`() {
+        assertEquals("traffic-saver", reason(saver = true))
+        assertEquals("no-measurement", reason(current = null))
+        assertEquals("no-measurement", reason(target = VideoQualityPolicy.Variant()))
+        assertEquals("speed-first", reason(mode = DeviceCapability.QualityMode.SPEED_FIRST))
+        assertEquals("above-device-cap", reason(cap = 1080, target = qhd))
+        assertEquals("at-ceiling", reason(current = uhd, target = v(3840, 2160)))
+        assertEquals("not-worth", reason(current = fhd, target = v(1920, 1080)))
+        assertEquals("warmup", reason(since = 1_000L))
+        assertEquals("warmup-unknown", reason(since = -1L))
+        assertEquals("quota", reason(done = QualityGovernor.MAX_UPGRADES_PER_EPISODE))
+        assertEquals("same-level-failed", reason(current = hd, target = fhd, failedS = 1440))
+        // 全部通过 ⇒ null(日志里打成 "switch")
+        assertNull(reason(current = hd, target = fhd))
+    }
+
+    @Test
+    fun `补救判据不受稳定期与每集额度约束_但照样看θ与天花板`() {
+        val qf = DeviceCapability.QualityMode.QUALITY_FIRST
+        // 未达标补救:起播后就能判,不看 60s 稳定期、不看每集额度
+        assertNull(QualityGovernor.rejectReasonForRemedy(qf, sd, fhd, 0, false))
+        // θ 照样管:同尺寸不算"升"
+        assertEquals("not-worth", QualityGovernor.rejectReasonForRemedy(qf, fhd, v(1920, 1080), 0, false))
+        // 天花板照样管
+        assertEquals("at-ceiling", QualityGovernor.rejectReasonForRemedy(qf, uhd, v(3840, 2160), 0, false))
+        // 设备上限照样管
+        assertEquals("above-device-cap", QualityGovernor.rejectReasonForRemedy(qf, sd, qhd, 1080, false))
+        // 流量节省与速度优先照样管
+        assertEquals("traffic-saver", QualityGovernor.rejectReasonForRemedy(qf, sd, fhd, 0, true))
+        assertEquals(
+            "speed-first",
+            QualityGovernor.rejectReasonForRemedy(DeviceCapability.QualityMode.SPEED_FIRST, sd, fhd, 0, false),
+        )
     }
 
     // ==================== 选择器:一次到位 / 降档镜像 ====================

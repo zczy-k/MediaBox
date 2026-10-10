@@ -79,13 +79,17 @@ final class PlaybackRetryDelegate {
 
     private int upgradeOriginIndex = -1;
 
+    /** 本次升档的**目标** S;回滚时用它锁定"同一档" */
+    private int upgradeTargetS = 0;
+
     /**
-     * 出发地的等效清晰度 S(不是档位序号)。
+     * 曾失败并回滚过的目标 S;-1 = 无。
      *
-     * <p>会话锁改按 **S** 判:回滚后在"目标 S 高于出发地 S"时一律拒绝,不再依赖写死的档位表
-     * (见《选线机制设计》附录 A.4)。
+     * <p>⚠️ 旧实现是"会话锁到出发地 S 为止",会把**比出发地更高的档也一并封死** ——
+     * 一次失败后用户就永久停在出发地那档(《选线机制设计》附录 D.3 记为"回滚后锁低画质")。
+     * 现改为**只挡同一档**:其他目标仍可在每集额度内再试一次。
      */
-    private int upgradeOriginS = 0;
+    private int upgradeFailedTargetS = -1;
 
     /** 升档时刻(uptimeMillis);0 = 无升档在途 */
     private long upgradedAtElapsed = 0L;
@@ -518,7 +522,8 @@ final class PlaybackRetryDelegate {
         upgradeRecheckScheduled = false;
         upgradeOriginFlag = "";
         upgradeOriginIndex = -1;
-        upgradeOriginS = 0;
+        upgradeTargetS = 0;
+        upgradeFailedTargetS = -1;
         upgradedAtElapsed = 0L;
         episodeStartElapsed = 0L;
         upgradesDone = 0;
@@ -608,15 +613,21 @@ final class PlaybackRetryDelegate {
         long sinceStart = episodeStartElapsed == 0L ? -1L : SystemClock.elapsedRealtime() - episodeStartElapsed;
         App app = App.getInstance();
         int capHeight = app == null ? 0 : DeviceCapability.capHeight(app);
-        // 会话锁按 **S** 判(回滚后 = 出发地 S):目标 S 高于出发地一律拒,不再依赖写死的档位表
-        if (!QualityGovernor.canSwitchUp(DeviceCapability.effectiveMode(), current, targetVariant, capHeight,
-                sinceStart, upgradesDone, upgradeLockedThisSession ? upgradeOriginS : -1,
-                DeviceCapability.trafficSaverOn())) {
-            LOG.i("echo-quality upgrade skip: gate denied curS=" + VideoQualityPolicy.sharpness(current)
-                    + " targetS=" + (targetVariant == null ? -1 : VideoQualityPolicy.sharpness(targetVariant))
-                    + " done=" + upgradesDone);
-            return;
-        }
+        // 会话锁只挡"曾失败的那一档"(失败目标 S),不再锁死出发地以上所有档
+        String reject = QualityGovernor.rejectReason(DeviceCapability.effectiveMode(), current, targetVariant,
+                capHeight, sinceStart, upgradesDone,
+                upgradeLockedThisSession ? upgradeFailedTargetS : -1,
+                DeviceCapability.trafficSaverOn());
+        // P3 埋点(《选线机制设计》附录 G):打出"为什么没切"的机器可读标识。
+        // 此前只有一句 gate denied,真机"整天零升档"根本查不出卡在哪一关。
+        LOG.i("echo-quality decide curS=" + VideoQualityPolicy.sharpness(current)
+                + " targetS=" + (targetVariant == null ? -1 : VideoQualityPolicy.sharpness(targetVariant))
+                + " candidates=" + measured.size()
+                + " done=" + upgradesDone
+                + " ceiling=" + (VideoQualityPolicy.isAtCeiling(current) ? "hit" : "ok")
+                + " mode=" + DeviceCapability.effectiveMode().name()
+                + " verdict=" + (reject == null ? "switch" : reject));
+        if (reject != null) return;
         List<VodInfo.VodSeries> targetList = vod.seriesMap.get(target);
         if (targetList == null || targetList.isEmpty()) return;
         VodInfo.VodSeries currentSeries = host.currentSeries(vod.playFlag, Math.max(vod.playIndex, 0));
@@ -624,7 +635,8 @@ final class PlaybackRetryDelegate {
         // 拍照出发地:回滚窗口内的失败先回到这里(已验证可播)
         upgradeOriginFlag = vod.playFlag;
         upgradeOriginIndex = vod.playIndex;
-        upgradeOriginS = VideoQualityPolicy.sharpness(current);
+        // 记录本次**目标** S:回滚时只锁这一档(不再锁死出发地以上的所有档)
+        upgradeTargetS = VideoQualityPolicy.sharpness(targetVariant);
         upgradedAtElapsed = SystemClock.elapsedRealtime();
         upgradesDone++;
         upgradeHandler.removeCallbacks(upgradeRecheck);
@@ -652,8 +664,10 @@ final class PlaybackRetryDelegate {
         upgradedAtElapsed = 0L;
         if (TextUtils.isEmpty(flag)) return false;
         upgradeLockedThisSession = true;
+        // 只锁"刚失败的那一档"(不是锁死出发地以上所有档):其他目标仍可在额度内再试一次
+        upgradeFailedTargetS = upgradeTargetS;
         LOG.i("echo-quality upgrade-rollback(" + why + "): back to " + flag
-                + ", upgrades locked this session");
+                + ", levelS=" + upgradeFailedTargetS + " locked this session");
         // 出发地在升档时被 switchLineTo 记为"已试",回滚要先摘掉这个标记
         st.triedLineFlags.remove(flag);
         switchLineTo(flag, index, "echo-quality upgrade-rollback",
