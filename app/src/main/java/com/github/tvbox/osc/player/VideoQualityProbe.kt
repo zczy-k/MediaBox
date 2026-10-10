@@ -4,6 +4,7 @@ import com.github.tvbox.osc.util.LOG
 import com.github.tvbox.osc.util.OkGoHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.InputStream
 
@@ -28,6 +29,14 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
 
         /** 单次探测的硬超时:超时按"探测不到"降级,绝不能拖住起播 */
         const val PROBE_TIMEOUT_MS = 800L
+
+        /**
+         * **分片内探**的读取预算(2026-10-10)。media playlist 里没有分辨率,得去首个分片里解
+         * H.264 的 SPS —— 真机实测 SPS 位于视频 payload 第 29 字节,**读 96KB 已足够**;
+         * fMP4 的 init 段(moov/stsd)同样在头部几十 KB 内。取 128KB 留余量,
+         * 仍比"整片下载"便宜三个数量级。
+         */
+        private const val SEGMENT_BUDGET_BYTES = 128 * 1024
     }
 
     /**
@@ -54,7 +63,7 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
                         LOG.i("echo-quality probe-failed reason=null-body")
                         return@use null
                     }
-                    val buffer = readCapped(stream)
+                    val buffer = readCapped(stream, budgetBytes)
                     if (buffer == null) {
                         LOG.i("echo-quality probe-failed reason=empty-body")
                         return@use null
@@ -74,6 +83,16 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
                     // 2) m3u8 master:站点声明的清晰度,比 flag 名可信但不是文件真值
                     val text = String(buffer, 0, buffer.size, Charsets.UTF_8)
                     val hls = VideoQualityPolicy.parseHlsMaster(text)
+                    // 2.5) **分片内探**(2026-10-10):media playlist 里根本没有分辨率字段
+                    //      (HLS 规范:RESOLUTION 只写在 master 的 EXT-X-STREAM-INF 里),
+                    //      所以上面那条路**必然**返回 null。改去首个分片里解视频流:
+                    //      H.264 的 SPS 携带真实宽高,MPEG-TS 打包时它就在第一个视频包里。
+                    //      这是"整源都是 HLS 子列表"的片源唯一能拿到画质的非播放途径 ——
+                    //      真机实测对这类片源 9 条线路探出 0 条,自动升档完全失效。
+                    if (hls == null) {
+                        val seg = probeSegmentForSize(client, text, response.request.url.toString(), headers)
+                        if (seg != null) return@use seg
+                    }
                     // ⚠️ 这条是"解析器跑了但没认出来"的唯一可观测点,别删。
                     //
                     // v1.0.44 扩充:真机实测发现 probe-no-size 有 16 次,而同时用 curl 拉同一个
@@ -116,6 +135,81 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
         }
     }
 
+    /**
+     * **分片内探**:media playlist → 首个分片 → 解真实分辨率(2026-10-10)。
+     *
+     * <p>为什么非做不可:分辨率只写在 master playlist 的 `#EXT-X-STREAM-INF:RESOLUTION=` 里,
+     * 而大量片源的线路直接指向子列表 ⇒ 老路径 100% 失败 ⇒ 自动升档对这类源整体失效。
+     *
+     * <p>顺序:①加密的**直接放弃**(AES-128 把整个分片包住,SPS 解不出,别白下一次)
+     * ②有 `#EXT-X-MAP` 就取 init 段(fMP4,含 moov/stsd) ③否则取首个分片(多为 MPEG-TS)。
+     */
+    private fun probeSegmentForSize(
+        client: OkHttpClient,
+        playlist: String,
+        playlistUrl: String,
+        headers: Map<String, String>,
+    ): VideoQualityPolicy.Variant? {
+        if (!HlsSegmentProbe.isMediaPlaylist(playlist)) return null
+        if (HlsSegmentProbe.isEncrypted(playlist)) {
+            LOG.i("echo-quality probe-seg skip: encrypted")
+            return null
+        }
+        val segUrl = HlsSegmentProbe.mapInitUri(playlist, playlistUrl)
+            ?: HlsSegmentProbe.firstSegmentUri(playlist, playlistUrl)
+            ?: return null
+        val size = readSegmentHeader(client, segUrl, headers)
+        if (size == null) {
+            LOG.i("echo-quality probe-seg miss tail=" + segUrl.substringBefore('?').takeLast(60))
+            return null
+        }
+        LOG.i(
+            "echo-quality probe-ok src=segment size=" + size[0] + "x" + size[1] +
+                " tail=" + segUrl.substringBefore('?').takeLast(46)
+        )
+        return VideoQualityPolicy.Variant(
+            width = size[0],
+            height = size[1],
+            bitrate = 0,
+            confidence = VideoQualityPolicy.Confidence.MEASURED,
+        )
+    }
+
+    /** 读首个分片的头部 → `[width, height]`;任何异常/解不出都返回 null(调用方静默降级) */
+    private fun readSegmentHeader(
+        client: OkHttpClient,
+        url: String,
+        headers: Map<String, String>,
+    ): IntArray? {
+        val request = try {
+            Request.Builder().url(url)
+                // 只读头部:SPS/moov 都在最前面,没必要拖整个分片(分片可达数 MB)
+                .header("Range", "bytes=0-${SEGMENT_BUDGET_BYTES - 1}")
+                .apply {
+                    headers.forEach { (k, v) -> if (k.isNotBlank() && v.isNotBlank()) header(k, v) }
+                }
+                .get()
+                .build()
+        } catch (t: Throwable) {
+            return null
+        }
+        return try {
+            client.newCall(request).execute().use { response ->
+                // 支持 Range 的站回 206;不支持的站直接 200 给全量,同样能用
+                if (!response.isSuccessful && response.code != 206) return@use null
+                val stream = response.body?.byteStream() ?: return@use null
+                val buffer = readCapped(stream, SEGMENT_BUDGET_BYTES) ?: return@use null
+                // fMP4 的 init 段(或分片本身是 mp4):moov/stsd 就是尺寸真值,与 MP4 探测同一条路
+                val mp4 = Mp4BoxReader.readVideoSize(buffer, buffer.size)
+                if (mp4 != null) return@use intArrayOf(mp4.first, mp4.second)
+                // MPEG-TS:解 PAT→PMT→视频 PID→SPS
+                HlsSegmentProbe.parseTsH264Size(buffer, buffer.size)
+            }
+        } catch (t: Throwable) {
+            null
+        }
+    }
+
     private fun buildRequest(url: String, headers: Map<String, String>): Request? = try {
         Request.Builder().url(url)
             .apply {
@@ -131,12 +225,12 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
         null
     }
 
-    /** 只读前 [budgetBytes] 个字节就停 —— 这是"不支持 Range 的站不会下整个文件"的唯一保证 */
-    private fun readCapped(stream: InputStream): ByteArray? {
-        val buffer = ByteArray(budgetBytes)
+    /** 只读前 [cap] 个字节就停 —— 这是"不支持 Range 的站不会下整个文件"的唯一保证 */
+    private fun readCapped(stream: InputStream, cap: Int): ByteArray? {
+        val buffer = ByteArray(cap)
         var filled = 0
-        while (filled < budgetBytes) {
-            val n = stream.read(buffer, filled, budgetBytes - filled)
+        while (filled < cap) {
+            val n = stream.read(buffer, filled, cap - filled)
             if (n <= 0) break
             filled += n
         }
@@ -148,6 +242,6 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
         //   · MP4 路径尤其致命 —— 它会顺着 0 字节继续往后当 box 读,尺寸基本解析不出来;
         //   · m3u8 路径同样会往文本尾部灌进 NUL,行解析可能被带偏。
         // 而 m3u8 master 通常只有几 KB,所以这个坑几乎每次探测都会命中。
-        return if (filled == budgetBytes) buffer else buffer.copyOf(filled)
+        return if (filled == cap) buffer else buffer.copyOf(filled)
     }
 }
