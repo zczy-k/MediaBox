@@ -158,13 +158,13 @@
     <string name="search_hot_empty">暂无热搜数据</string>
     <string name="search_no_exact_result">未找到与「%1$s」完全一致的结果</string>
     <string name="search_no_result">「%1$s」暂无搜索结果</string>
-    <string name="search_load_more">搜索更多来源</string>
-    <string name="search_progress">已搜索 %1$d/%2$d 个来源</string>
-    <string name="search_all_sources_done">已搜索全部 %1$d 个来源</string>
+    <string name="search_load_more">更多来源</string>
+    <string name="search_progress">已搜 %1$d/%2$d 源</string>
+    <string name="search_all_sources_done">已搜完全部 %1$d 源</string>
     <!-- 2026-10-08:进度区分"已发起"与"已完成"。
          原先只有一个"已搜索 x/y",数字在批次启动时就 +N,用户会以为"搜完了这么多",
          实际其中几十个还转着圈 —— 与站点栏里几十个源一起闪的观感一致,像卡死。 -->
-    <string name="search_progress_settled">已完成 %1$d/%2$d 个来源</string>
+    <string name="search_progress_settled">已搜 %1$d/%2$d 源</string>
     <string name="search_source_failed">该来源请求失败</string>
     <string name="search_source_timeout">该来源超时未响应</string>
     <string name="search_card_unopenable">该来源无法直接打开,请换个来源试试</string>
@@ -324,8 +324,8 @@
     <string name="search_match_smart">智能(含关键词)</string>
     <string name="search_match_exact">精准(完全一致)</string>
     <string name="search_sites">搜索站点</string>
-    <string name="search_scope_narrow_hint">当前仅勾选 %1$d/%2$d 个可搜源，可在首页「搜索设置」调整范围</string>
-    <string name="search_load_all">搜索全部来源</string>
+    <string name="search_scope_narrow_hint">仅勾选 %1$d/%2$d 源 · 点此调整</string>
+    <string name="search_load_all">全部来源</string>
     <string name="search_result_source_count">%1$d 源</string>
     <string name="detail_line_missing_list">缺%1$s集</string>
     <string name="search_sites_none_hint">未选择站点，将搜不到结果</string>

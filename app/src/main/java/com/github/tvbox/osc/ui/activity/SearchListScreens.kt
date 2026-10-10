@@ -114,9 +114,11 @@ internal fun SearchListResults(
                 " rev=" + marksRevision
         )
     }
+    // 来源栏常驻底栏(2026-10-10):列表占 weight(1f),来源栏固定在屏幕底部不随滚动
+    Column(modifier = Modifier.fillMaxSize()) {
     LazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.weight(1f),
         contentPadding = PaddingValues(top = topPad - 4.dp, bottom = 12.dp),
     ) {
         if (running || done.size > 1) {
@@ -225,18 +227,17 @@ internal fun SearchListResults(
                 }
             }
         }
-        item(key = "search_more_footer") {
-            SearchLoadMoreFooter(
-                hasMore = hasMore,
-                running = running,
-                searchedCount = searchedCount,
-                settledCount = settledCount,
-                totalCount = totalCount,
-                searchableSources = searchableSources,
-                onLoadMore = onLoadMore,
-                onSearchAll = onSearchAll,
-                onOpenSourceSettings = onOpenSourceSettings,
-            )
-        }
+    }
+    SearchLoadMoreFooter(
+        hasMore = hasMore,
+        running = running,
+        searchedCount = searchedCount,
+        settledCount = settledCount,
+        totalCount = totalCount,
+        searchableSources = searchableSources,
+        onLoadMore = onLoadMore,
+        onSearchAll = onSearchAll,
+        onOpenSourceSettings = onOpenSourceSettings,
+    )
     }
 }

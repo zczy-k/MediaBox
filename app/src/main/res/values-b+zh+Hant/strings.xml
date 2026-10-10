@@ -158,10 +158,10 @@
     <string name="search_hot_empty">暫無熱搜資料</string>
     <string name="search_no_exact_result">未找到與「%1$s」完全一致的結果</string>
     <string name="search_no_result">「%1$s」暫無搜尋結果</string>
-    <string name="search_load_more">搜尋更多來源</string>
-    <string name="search_progress">已搜尋 %1$d/%2$d 個來源</string>
-    <string name="search_all_sources_done">已搜尋全部 %1$d 個來源</string>
-    <string name="search_progress_settled">已完成 %1$d/%2$d 個來源</string>
+    <string name="search_load_more">更多來源</string>
+    <string name="search_progress">已搜 %1$d/%2$d 源</string>
+    <string name="search_all_sources_done">已搜完全部 %1$d 源</string>
+    <string name="search_progress_settled">已搜 %1$d/%2$d 源</string>
     <string name="search_source_failed">該來源請求失敗</string>
     <string name="search_source_timeout">該來源逾時未回應</string>
     <string name="search_card_unopenable">該來源無法直接開啟，請換個來源試試</string>
@@ -319,8 +319,8 @@
     <string name="search_match_smart">智能(含關鍵詞)</string>
     <string name="search_match_exact">精準(完全一致)</string>
     <string name="search_sites">搜尋站點</string>
-    <string name="search_scope_narrow_hint">目前僅勾選 %1$d/%2$d 個可搜源，可在首頁「搜尋設定」調整範圍</string>
-    <string name="search_load_all">搜尋全部來源</string>
+    <string name="search_scope_narrow_hint">僅勾選 %1$d/%2$d 源 · 點此調整</string>
+    <string name="search_load_all">全部來源</string>
     <string name="search_result_source_count">%1$d 個來源</string>
     <string name="detail_line_missing_list">缺%1$s集</string>
     <string name="search_sites_none_hint">未選擇站點，將搜尋不到結果</string>

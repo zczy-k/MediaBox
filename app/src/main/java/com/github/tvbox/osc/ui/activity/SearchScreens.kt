@@ -355,13 +355,6 @@ internal fun RailResults(
                 groups = dedupGroups,
                 running = running,
                 hasMore = hasMore,
-                searchedCount = searchedCount,
-                settledCount = settledCount,
-                totalCount = totalCount,
-                searchableSources = searchableSources,
-                onLoadMore = onLoadMore,
-                onSearchAll = onSearchAll,
-                onOpenSourceSettings = onOpenSourceSettings,
                 onCardClick = onCardClick,
                 onLongClick = onCardLongClick,
                 modifier = Modifier.weight(1f),
@@ -371,9 +364,22 @@ internal fun RailResults(
                     bottom = 12.dp,
                 ),
             )
+            // 来源栏常驻底栏(2026-10-10):不随列表滚动,结果多时无需反复下滑即可续搜/调范围
+            SearchLoadMoreFooter(
+                hasMore = hasMore,
+                running = running,
+                searchedCount = searchedCount,
+                settledCount = settledCount,
+                totalCount = totalCount,
+                searchableSources = searchableSources,
+                onLoadMore = onLoadMore,
+                onSearchAll = onSearchAll,
+                onOpenSourceSettings = onOpenSourceSettings,
+            )
         }
     } else {
-        Row(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+        Row(modifier = Modifier.weight(1f)) {
             LazyColumn(
                 state = railState,
                 modifier = Modifier
@@ -411,24 +417,30 @@ internal fun RailResults(
                 groups = dedupGroups,
                 running = running,
                 hasMore = hasMore,
-                searchedCount = searchedCount,
-                settledCount = settledCount,
-                totalCount = totalCount,
-                searchableSources = searchableSources,
-                onLoadMore = onLoadMore,
-                onSearchAll = onSearchAll,
-                onOpenSourceSettings = onOpenSourceSettings,
                 onCardClick = onCardClick,
                 onLongClick = onCardLongClick,
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(start = 10.dp, end = 12.dp, top = topPad + 8.dp, bottom = 12.dp),
             )
         }
+        SearchLoadMoreFooter(
+            hasMore = hasMore,
+            running = running,
+            searchedCount = searchedCount,
+            settledCount = settledCount,
+            totalCount = totalCount,
+            searchableSources = searchableSources,
+            onLoadMore = onLoadMore,
+            onSearchAll = onSearchAll,
+            onOpenSourceSettings = onOpenSourceSettings,
+        )
+        }
     }
 }
 
 /**
- * 竖排视图的结果列表(紧凑/侧栏两形态共用):进度条 + 结果行 + 空态 + 续搜尾部。
+ * 竖排视图的结果列表(紧凑/侧栏两形态共用):进度条 + 结果行 + 空态。
+ * 来源栏(进度/勾选提示/续搜按钮)已改为常驻底栏,由 [RailResults] 放在列表之下。
  */
 @Composable
 private fun RailResultList(
@@ -436,13 +448,6 @@ private fun RailResultList(
     groups: List<SearchDedupGroup>,
     running: Boolean,
     hasMore: Boolean,
-    searchedCount: Int,
-    settledCount: Int,
-    totalCount: Int,
-    searchableSources: Int,
-    onLoadMore: () -> Unit,
-    onSearchAll: () -> Unit,
-    onOpenSourceSettings: () -> Unit,
     onCardClick: (Movie.Video) -> Unit,
     onLongClick: (Movie.Video) -> Unit,
     modifier: Modifier = Modifier,
@@ -485,19 +490,6 @@ private fun RailResultList(
                         .padding(vertical = 32.dp),
                 )
             }
-        }
-        item(key = "rail_more") {
-            SearchLoadMoreFooter(
-                hasMore = hasMore,
-                running = running,
-                searchedCount = searchedCount,
-                settledCount = settledCount,
-                totalCount = totalCount,
-                searchableSources = searchableSources,
-                onLoadMore = onLoadMore,
-                onSearchAll = onSearchAll,
-                onOpenSourceSettings = onOpenSourceSettings,
-            )
         }
     }
 }
@@ -610,7 +602,8 @@ internal fun SearchRailItem(
 }
 
 /**
- * 分批搜索的尾部控件:还有来源没搜就给出入口与进度,全搜完则明确收口。
+ * 来源栏常驻底栏(2026-10-10):进度 + 勾选范围提示 + 续搜入口固定在屏幕底部,
+ * 不随列表内容滚动 —— 结果多时用户无需反复下滑即可随时续搜/调整范围。
  *
  * <p>这个入口是"按需续搜"的必要条件 —— 只靠滚动触发,用户不会知道下面还有没搜的来源,
  * 空结果时更会误以为全库都没有。
@@ -635,39 +628,42 @@ internal fun SearchLoadMoreFooter(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(
-            text = when {
-                !hasMore -> stringResource(R.string.search_all_sources_done, totalCount)
-                // 搜索中:报"已完成",数字与站点栏里不再转圈的源数一致
-                running -> stringResource(R.string.search_progress_settled, settledCount, totalCount)
-                // 空闲且还有剩余:此时 settled 基本等于 searched,"已搜索"更贴近用户视角
-                else -> stringResource(R.string.search_progress, searchedCount, totalCount)
-            },
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-        )
-        // 2026-10-09 防静默收窄:勾选表只存了 10 个源时,footer 恒显示"已搜索全部 10 个来源",
-        // 用户无从知道订阅里还有 300+ 个源根本没参与(真机踩过:影视源全被旧勾选排除)。
-        // 勾选数 < 可搜总数时明示比例与调整入口;有回调时整行可点击直达搜索设置。
-        if (searchableSources > totalCount && totalCount > 0) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             Text(
-                text = stringResource(R.string.search_scope_narrow_hint, totalCount, searchableSources),
+                text = when {
+                    !hasMore -> stringResource(R.string.search_all_sources_done, totalCount)
+                    // 搜索中:数字与站点栏里不再转圈的源数一致
+                    running -> stringResource(R.string.search_progress_settled, settledCount, totalCount)
+                    else -> stringResource(R.string.search_progress, searchedCount, totalCount)
+                },
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
-                textAlign = TextAlign.Center,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .let { m -> if (onOpenSourceSettings != null) m.clickable { onOpenSourceSettings() } else m },
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
             )
+            // 防静默收窄(2026-10-09):勾选数 < 可搜总数时明示比例,点此直达搜索设置
+            if (searchableSources > totalCount && totalCount > 0) {
+                Text(
+                    text = stringResource(R.string.search_scope_narrow_hint, totalCount, searchableSources),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f),
+                    maxLines = 1,
+                    modifier = Modifier
+                        .let { m -> if (onOpenSourceSettings != null) m.clickable { onOpenSourceSettings() } else m },
+                )
+            }
         }
         if (hasMore) {
-            // 两个续搜入口并排同权:左边按批续(默认节流),右边一次性搜完全部剩余源。
-            // 样式同为 OutlinedButton、搜索中同时禁用,交互与"搜索更多来源"完全一致。
+            // 两个续搜入口并排同权:左边按批续(默认节流),右边一次性搜完全部剩余源
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
