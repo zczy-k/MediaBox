@@ -36,6 +36,8 @@ fun LoadStateBox(
     modifier: Modifier = Modifier,
     onRetry: (() -> Unit)? = null,
     emptyIconRes: Int? = null,
+    /** 空态的补充说明行(如搜索空态的终态统计与网络提示,2026-10-10);null/空白不渲染 */
+    emptySubText: String? = null,
     loadingContent: @Composable () -> Unit = { ContainedLoadingIndicator(Modifier.size(64.dp)) },
 ) {
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
@@ -58,6 +60,15 @@ fun LoadStateBox(
                     )
                 }
                 StateText(emptyText)
+                if (!emptySubText.isNullOrBlank()) {
+                    Text(
+                        text = emptySubText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().widthIn(max = 320.dp),
+                    )
+                }
             }
 
             is LoadState.Error -> Column(

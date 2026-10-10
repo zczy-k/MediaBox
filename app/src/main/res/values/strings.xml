@@ -158,6 +158,13 @@
     <string name="search_hot_empty">暂无热搜数据</string>
     <string name="search_no_exact_result">未找到与「%1$s」完全一致的结果</string>
     <string name="search_no_result">「%1$s」暂无搜索结果</string>
+    <!-- 2026-10-10:空态终态构成(无此片/超时/失败)。Empty=源站正常回话但无此片,
+         Timeout/Failed=源没答话 —— 分开表述;超时占比高时补一句网络提示,让"搜不到"可自助定性 -->
+    <string name="search_stats_line">已搜索 %1$d 个来源：%2$s</string>
+    <string name="search_stats_empty">无此片 %1$d</string>
+    <string name="search_stats_timeout">超时 %1$d</string>
+    <string name="search_stats_failed">失败 %1$d</string>
+    <string name="search_stats_network_hint">多数来源没有响应，可能与当前网络有关</string>
     <string name="search_load_more">更多来源</string>
     <string name="search_progress">已搜 %1$d/%2$d 源</string>
     <string name="search_all_sources_done">已搜完全部 %1$d 源</string>

@@ -239,12 +239,15 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
 }
 
 @Composable
-private fun SearchEmptyBox(topPad: Dp, text: String) {
+private fun SearchEmptyBox(topPad: Dp, text: String, statsText: String? = null) {
     LoadStateBox(
         state = LoadState.Empty,
         emptyText = text,
+        emptySubText = statsText,
         errorText = "",
         retryText = "",
+        // 与历史/收藏等空态统一图标口径(2026-10-10);此前搜索空态是裸文字
+        emptyIconRes = R.drawable.ic_empty_record,
         modifier = Modifier
             .fillMaxSize()
             .padding(top = topPad),
@@ -276,6 +279,26 @@ private fun SearchResultsContent(
     val done = results.filter { it.videos.isNotEmpty() }
     // 还有来源没搜时不能说"无结果":否则用户会以为全库都没有,而其实只是还没轮到
     if (done.isEmpty() && !running && !hasMore) {
+        // 2026-10-10:空态给出"终态构成"。Empty(无此片)与 Timeout/Failed(源没答话)含义不同,
+        // 分开计数;超时占比高时补一句网络提示 —— 让"搜不到"可自助定性,不新增任何探测请求。
+        val emptyCount = results.count { it.state == SearchViewModel.ResultState.Empty }
+        val timeoutCount = results.count { it.state == SearchViewModel.ResultState.Timeout }
+        val failedCount = results.count { it.state == SearchViewModel.ResultState.Failed }
+        val settled = emptyCount + timeoutCount + failedCount
+        val emptyLabel = if (emptyCount > 0) stringResource(R.string.search_stats_empty, emptyCount) else null
+        val timeoutLabel = if (timeoutCount > 0) stringResource(R.string.search_stats_timeout, timeoutCount) else null
+        val failedLabel = if (failedCount > 0) stringResource(R.string.search_stats_failed, failedCount) else null
+        val buckets = listOfNotNull(emptyLabel, timeoutLabel, failedLabel).joinToString(" · ")
+        val statsText = if (settled <= 0 || buckets.isEmpty()) {
+            null
+        } else {
+            val line = stringResource(R.string.search_stats_line, settled, buckets)
+            if (timeoutCount >= 5 && timeoutCount * 5 >= settled * 4) {
+                line + "\n" + stringResource(R.string.search_stats_network_hint)
+            } else {
+                line
+            }
+        }
         SearchEmptyBox(
             topPad = topPad,
             text = if (matchMode == SearchSettings.MatchMode.Exact) {
@@ -283,6 +306,7 @@ private fun SearchResultsContent(
             } else {
                 stringResource(R.string.search_no_result, searchedTitle)
             },
+            statsText = statsText,
         )
         return
     }

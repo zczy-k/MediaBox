@@ -158,6 +158,11 @@
     <string name="search_hot_empty">暫無熱搜資料</string>
     <string name="search_no_exact_result">未找到與「%1$s」完全一致的結果</string>
     <string name="search_no_result">「%1$s」暫無搜尋結果</string>
+    <string name="search_stats_line">已搜尋 %1$d 個來源：%2$s</string>
+    <string name="search_stats_empty">無此片 %1$d</string>
+    <string name="search_stats_timeout">逾時 %1$d</string>
+    <string name="search_stats_failed">失敗 %1$d</string>
+    <string name="search_stats_network_hint">多數來源沒有回應，可能與目前的網路有關</string>
     <string name="search_load_more">更多來源</string>
     <string name="search_progress">已搜 %1$d/%2$d 源</string>
     <string name="search_all_sources_done">已搜完全部 %1$d 源</string>
