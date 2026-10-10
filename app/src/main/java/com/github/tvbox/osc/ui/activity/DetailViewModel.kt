@@ -2250,35 +2250,44 @@ class DetailViewModel : ViewModel() {
      *         真机排障无法区分"爬虫没加载"与"爬虫确实给不出"(2026-10-10 加,勿删)。
      */
     private suspend fun resolveTargetForProbe(flagName: String): Pair<ProbeTarget?, String> {
+        // ⚠️ **整个函数必须在 IO 线程**(2026-10-10 深夜真机坐实,这是"探测全军覆没"的真正元凶):
+        // `playerContent` 内部做网络 I/O,在主线程调用会抛 `NetworkOnMainThreadException`;
+        // 旧代码在 catch(Throwable) 里把它吞成 null ⇒ 日志一直记成 "no-url",
+        // 看起来像"爬虫给不出地址",其实是"我们根本没让它跑起来"。
+        // 播放之所以正常,是因为 PlayLoader 把同一个调用丢进了 SPIDER_POOL 后台线程。
+        // `getCSP` 首次加载爬虫 jar 同样可能触网,所以一起搬进来,而不是只包 playerContent。
         return try {
-            val list = vodInfo?.seriesMap?.get(flagName) ?: return (null to "vod-gone")
-            val series = list.getOrNull(probeIndexOf(vodInfo ?: return (null to "vod-gone")))
-                ?: return (null to "index-oob")
-            val raw = series.url?.trim().orEmpty()
-            if (raw.isEmpty()) return (null to "series-empty")
-            // 爬虫给不出时的兜底:与播放的 shouldDirectPlay 同口径(只有 http 地址才回退直连)
-            val fallback = if (isHttpProbeTarget(raw)) ProbeTarget(raw, emptyMap(), "direct") else null
-            // ① 爬虫:与播放同一条路(播放对每条线路都先跑 playerContent)
-            val bean = ApiConfig.get().getSource(sourceKey)
-            val spider = bean?.let { ApiConfig.get().getCSP(it) }
-            if (spider == null) {
-                return (fallback to if (fallback != null) "" else "spider-missing")
+            withContext(Dispatchers.IO) {
+                val list = vodInfo?.seriesMap?.get(flagName)
+                    ?: return@withContext (null to "vod-gone")
+                val series = list.getOrNull(probeIndexOf(vodInfo ?: return@withContext (null to "vod-gone")))
+                    ?: return@withContext (null to "index-oob")
+                val raw = series.url?.trim().orEmpty()
+                if (raw.isEmpty()) return@withContext (null to "series-empty")
+                // 爬虫给不出时的兜底:与播放的 shouldDirectPlay 同口径(只有 http 地址才回退直连)
+                val fallback = if (isHttpProbeTarget(raw)) ProbeTarget(raw, emptyMap(), "direct") else null
+                // ① 爬虫:与播放同一条路(播放对每条线路都先跑 playerContent)
+                val bean = ApiConfig.get().getSource(sourceKey)
+                val spider = bean?.let { ApiConfig.get().getCSP(it) }
+                if (spider == null) {
+                    return@withContext (fallback to if (fallback != null) "" else "spider-missing")
+                }
+                val json = spider.playerContent(flagName, raw, ApiConfig.get().getVipParseFlags())
+                if (json.isNullOrEmpty()) {
+                    return@withContext (fallback to if (fallback != null) "" else "spider-empty")
+                }
+                val obj = runCatching { org.json.JSONObject(json) }.getOrNull()
+                val url = obj?.optString("url", "").orEmpty()
+                if (url.isEmpty()) {
+                    return@withContext (fallback to if (fallback != null) "" else "spider-no-url")
+                }
+                // header 用与播放**同一个解析器**,避免两套口径:
+                // PlayerHelper.extractPlayHeaders 兼容 header/headers 两种形态与嵌套 JSON 文本
+                val playHeaders = runCatching {
+                    com.github.tvbox.osc.util.PlayerHelper.extractPlayHeaders(obj)
+                }.getOrNull()
+                (ProbeTarget(url, playHeaders ?: emptyMap(), "spider") to "")
             }
-            val json = spider.playerContent(flagName, raw, ApiConfig.get().getVipParseFlags())
-            if (json.isNullOrEmpty()) {
-                return (fallback to if (fallback != null) "" else "spider-empty")
-            }
-            val obj = runCatching { org.json.JSONObject(json) }.getOrNull()
-            val url = obj?.optString("url", "").orEmpty()
-            if (url.isEmpty()) {
-                return (fallback to if (fallback != null) "" else "spider-no-url")
-            }
-            // header 用与播放**同一个解析器**,避免两套口径:
-            // PlayerHelper.extractPlayHeaders 兼容 header/headers 两种形态与嵌套 JSON 文本
-            val playHeaders = runCatching {
-                com.github.tvbox.osc.util.PlayerHelper.extractPlayHeaders(obj)
-            }.getOrNull()
-            (ProbeTarget(url, playHeaders ?: emptyMap(), "spider") to "")
         } catch (t: Throwable) {
             (null to ("exception:" + t.javaClass.simpleName))
         }
