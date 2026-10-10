@@ -703,20 +703,51 @@ class DetailViewModel : ViewModel() {
             }.orEmpty()
             // ② 爬虫型:**解析后探**(解析反正要跑,复用其结果只多一个 ≤256KB 的探测)。
             //    串行 + 封顶 + 限时 —— 解析走 spider.playerContent,与播放/预载抢同一个 3 线程池。
-            val crawlerTargets = missing
-                .filter { flag -> directUrlOf(seriesMap[flag], index) == null }
-                .take(SourceSweepBudget.deepProbeMax)
+            val crawlerAll = missing.filter { flag -> directUrlOf(seriesMap[flag], index) == null }
+            val crawlerTargets = crawlerAll.take(SourceSweepBudget.deepProbeMax)
+            // 配额截断必须留痕:否则"7 条待探只出 2 条结果"在日志里完全看不出来
+            if (crawlerAll.size > crawlerTargets.size) {
+                LOG.i(
+                    "echo-quality deep-probe quota=" + crawlerTargets.size +
+                        " of=" + crawlerAll.size + " (rest skipped this sweep)"
+                )
+            }
             val deepProbed = ArrayList<VideoQualityPolicy.Variant>()
-            for (flag in crawlerTargets) {
-                if (System.currentTimeMillis() - startedAt > SourceSweepBudget.totalMs) break
+            for (i in crawlerTargets.indices) {
+                val flag = crawlerTargets[i]
+                if (System.currentTimeMillis() - startedAt > SourceSweepBudget.totalMs) {
+                    LOG.i("echo-quality deep-probe budget-out skipped=" + (crawlerTargets.size - i))
+                    break
+                }
+                // ⚠️ "解析失败" 与 "探测失败" 必须分开记。
+                //
+                // 旧代码把两者合成一个 null,于是"这条线路为什么没被测到"**完全不可观测** ——
+                // 真机排障就卡在这里:7 条全是 crawler-type、probed=0,
+                // 却分不清是爬虫没解析出地址、解析/探测超时、还是拿到了地址读不出分辨率。
+                var noUrl = false
                 val measured = withTimeoutOrNull(SourceSweepBudget.deepProbeTimeoutMs) {
                     val url = resolveUrlForProbe(flag)
-                    if (url.isNullOrEmpty()) null else probe.probe(url, headers)
+                    if (url.isNullOrEmpty()) {
+                        noUrl = true
+                        null
+                    } else {
+                        probe.probe(url, headers)
+                    }
                 }
                 if (measured == null || !measured.known) {
+                    val why = when {
+                        noUrl -> "no-url"          // 爬虫没解析出地址
+                        measured == null -> "timeout" // 解析 + 探测整体超时
+                        else -> "no-size"           // 拿到地址但读不出分辨率
+                    }
+                    LOG.i("echo-quality deep-probe " + why + " flag=" + flag)
                     probeNegativeAt[flag] = System.currentTimeMillis()
                     continue
                 }
+                LOG.i(
+                    "echo-quality deep-probe ok flag=" + flag +
+                        " size=" + measured.width + "x" + measured.height
+                )
                 deepProbed.add(measured.copy(flag = flag))
             }
             val allProbed = directProbed + deepProbed
