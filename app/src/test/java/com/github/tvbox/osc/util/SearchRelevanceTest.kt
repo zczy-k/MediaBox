@@ -90,6 +90,26 @@ class SearchRelevanceTest {
     }
 
     @Test
+    fun `日文平片假名折叠_全角半角与半角浊音归一`() {
+        // 片假名查询 vs 平假名标题(同侧折叠后相等)
+        assertEquals(5, SearchSettings.relevanceScore("ゲーティア", null, "げーてぃあ"))
+        // 半角片假名+浊点 NFKC → 全角 → 折叠
+        assertEquals(5, SearchSettings.relevanceScore("ｶﾞﾝﾀﾞﾑ", null, "ガンダム"))
+        // 全角连字符 NFKC → 半角 → 噪声剥离
+        assertEquals(5, SearchSettings.relevanceScore("ＡＢＣ－１２３", null, "ABC-123"))
+    }
+
+    @Test
+    fun `长音符辅助匹配降档_不越主形式`() {
+        // 主形式未命中(标题多一个ー),剥长音辅助命中 → 2 分(低于主形式命中,高于别名 1)
+        assertEquals(2, SearchSettings.relevanceScore("ゲーセン", null, "ゲセン"))
+        assertEquals(2, SearchSettings.relevanceScore("レイアウト", null, "レイアウトー"))
+        assertTrue(SearchSettings.matches("ゲーセン", null, "ゲセン", SearchSettings.MatchMode.Smart))
+        // 主形式命中的不受影响
+        assertEquals(5, SearchSettings.relevanceScore("ゲーセン", null, "げーせん"))
+    }
+
+    @Test
     fun `非正片只降权不过滤_仍可被搜索命中`() {
         assertTrue(SearchSettings.matches("花开锦绣 预告", null, "花开锦绣", SearchSettings.MatchMode.Smart))
         assertEquals(2, SearchSettings.relevanceScore("花开锦绣 预告", null, "花开锦绣"))

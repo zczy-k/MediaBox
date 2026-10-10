@@ -133,7 +133,7 @@ object SearchSettings {
         MatchMode.All -> true
         MatchMode.Smart -> {
             val k = normalizeCached(keyword)
-            k.isNotEmpty() && (normalizeCached(name).contains(k) || aliasesContain(alias, k))
+            k.isNotEmpty() && (normalizeCached(name).contains(k) || aliasesContain(alias, k) || auxContains(name, k))
         }
         // 精准文本仍要求全标题相等；但番号查询的“精准”应命中标题开头完整的番号 token，
         // 例如搜 MIAA-195 要能命中“ MIAA-195 + 标题”，不能要求整条影片标题只剩番号。
@@ -206,7 +206,7 @@ object SearchSettings {
         val n = normalizeCached(name)
         val k = normalizeCached(keyword)
         if (k.isEmpty()) return 0
-        val base = if (n.isEmpty()) {
+        var base = if (n.isEmpty()) {
             aliasScore(alias, k)
         } else when {
             n == k -> 5
@@ -218,6 +218,12 @@ object SearchSettings {
                     .filter { it.isNotEmpty() }
                 if (tokens.size > 1 && tokens.all { n.contains(it) }) 2 else aliasScore(alias, k)
             }
+        }
+        // 长音符辅助匹配(2026-10-10,《日文支持》§二.5):主形式完全未命中时剥长音符再比,
+        // 给 2 分 —— 低于任何主形式标题命中,高于纯别名(1);不直接认定剥长音后相等=同一作品
+        if (base == 0 && n.isNotEmpty()) {
+            val auxK = k.replace("ー", "")
+            if (auxK.isNotEmpty() && n.replace("ー", "").contains(auxK)) base = 2
         }
         if (base <= 0) return base
         return if (isNonMainContent(name, note, keyword)) minOf(base, 2) else base
@@ -259,6 +265,123 @@ object SearchSettings {
     /** 仅别名命中的分数:完全相等给 1(低于任何标题命中);只"包含"关系不给正分(当作不匹配) */
     private fun aliasScore(alias: String?, normalizedKeyword: String): Int =
         if (aliasEquals(alias, normalizedKeyword)) 1 else 0
+
+    /** 长音符辅助包含(2026-10-10):主形式未命中时剥片假名长音符再比 —— 「ゲセン」能命中「ゲーセン」 */
+    private fun auxContains(name: String?, k: String): Boolean {
+        val auxK = k.replace("ー", "")
+        if (auxK.isEmpty()) return false
+        return normalizeCached(name).replace("ー", "").contains(auxK)
+    }
+
+    // ==================== 查询意图与冲突保护(2026-10-10,《排序引擎》§6/§7.5/§10.3) ====================
+
+    /**
+     * 查询意图:从用户输入中**可靠识别**出的结构化约束。识别不了的字段一律保持空值 ——
+     * 宁可退化成普通关键词参与文本匹配,也不强制生成错误的结构化条件。
+     */
+    data class QueryIntent(
+        val year: Int = 0,      // 独立 token 的 1900-2100
+        val season: Int = 0,    // 第二季/第2季/S02
+        val code: String = "",  // 番号归一化串(如 miaa195);空=无可靠番号
+    )
+
+    private val INTENT_YEAR_PATTERN = Regex("(?<!\\d)(19\\d{2}|20\\d{2})(?!\\d)")
+    private val INTENT_SEASON_CN = Regex("第\\s*([0-9]{1,2}|[一二两三四五六七八九十]{1,3})\\s*季")
+    private val INTENT_SEASON_S = Regex("(?<![A-Za-z0-9])S([0-9]{1,2})(?!\\d)", RegexOption.IGNORE_CASE)
+    private val INTENT_CODE_TOKEN = Regex("(?i)[a-z]{2,6}-?\\d{2,5}")
+
+    private val intentCache = HashMap<String, QueryIntent>()
+
+    /** 解析查询意图(带缓存;纯字符串分析,无副作用) */
+    fun parseIntent(keyword: String?): QueryIntent {
+        val raw = keyword?.trim().orEmpty()
+        if (raw.isEmpty()) return QueryIntent()
+        intentCache[raw]?.let { return it }
+        var year = 0
+        var season = 0
+        var code = ""
+        // 番号:字母(2-6)+数字(2-5)组合;字母+年份数字("HD2024")不算番号 —— 年份由年份规则表达
+        INTENT_CODE_TOKEN.find(raw)?.let { m ->
+            val digits = m.value.takeLastWhile { ch -> ch.isDigit() }
+            val asYear = digits.toIntOrNull() ?: 0
+            if (!(digits.length == 4 && asYear in 1900..2100)) {
+                code = Regex("[^0-9a-z]").replace(m.value.lowercase(java.util.Locale.ROOT), "")
+            }
+        }
+        INTENT_YEAR_PATTERN.find(raw)?.let { year = it.value.toInt() }
+        INTENT_SEASON_CN.find(raw)?.let { season = cnSeasonNumber(it.groupValues[1]) }
+        if (season == 0) INTENT_SEASON_S.find(raw)?.let { season = it.groupValues[1].toInt() }
+        val intent = QueryIntent(year, season, code)
+        if (intentCache.size >= 64) intentCache.clear()
+        intentCache[raw] = intent
+        return intent
+    }
+
+    /**
+     * 意图修饰分(加在 [relevanceScore] 之后的档内修饰,文档 §7.5/§10.3/§6.3):
+     * - 年份/季数:一致 +1;**明确冲突 -2**(下沉);候选缺失 0 —— 降置信不判死
+     * - 番号:候选标题包含查询番号 +2(强证据,§6.2);包含**另一个**可识别番号且不含查询番号 -2(§6.3 编号冲突);
+     *   候选无可识别番号 0 —— 不视为冲突
+     */
+    fun intentModifier(intent: QueryIntent?, name: String?, candidateYear: Int): Int {
+        if (intent == null) return 0
+        val n = normalizeCached(name)
+        if (n.isEmpty()) return 0
+        var mod = 0
+        if (intent.year > 0) {
+            // 标题里的年份优先于源字段(标题自证更可靠);两者都没有视为缺失
+            val titleYear = INTENT_YEAR_PATTERN.find(n)?.value?.toInt() ?: 0
+            val y = if (titleYear > 0) titleYear else candidateYear
+            when {
+                y == 0 -> {}
+                y == intent.year -> mod += 1
+                else -> mod -= 2
+            }
+        }
+        if (intent.season > 0) {
+            val s = seasonOfName(n)
+            when {
+                s == 0 -> {}
+                s == intent.season -> mod += 1
+                else -> mod -= 2
+            }
+        }
+        if (intent.code.isNotEmpty()) {
+            if (n.contains(intent.code)) {
+                mod += 2
+            } else {
+                val other = INTENT_CODE_TOKEN.findAll(n)
+                    .map { m -> Regex("[^0-9a-z]").replace(m.value.lowercase(java.util.Locale.ROOT), "") }
+                    .filter { it != intent.code }
+                    .toList()
+                if (other.isNotEmpty()) mod -= 2
+            }
+        }
+        return mod
+    }
+
+    private fun seasonOfName(n: String): Int {
+        INTENT_SEASON_CN.find(n)?.let { return cnSeasonNumber(it.groupValues[1]) }
+        INTENT_SEASON_S.find(n)?.let { return it.groupValues[1].toInt() }
+        return 0
+    }
+
+    /** 中文数字季数:一二两三…十/十一/二十三,全角与阿拉伯数字直转;解析不了返回 0 */
+    private fun cnSeasonNumber(token: String): Int {
+        val ascii = buildString {
+            for (ch in token) append(if (ch in '０'..'９') ('0' + (ch - '０')) else ch)
+        }
+        ascii.toIntOrNull()?.let { return it }
+        val digit = mapOf('一' to 1, '二' to 2, '两' to 2, '三' to 3, '四' to 4, '五' to 5, '六' to 6, '七' to 7, '八' to 8, '九' to 9)
+        if (token == "十") return 10
+        val shi = token.indexOf('十')
+        if (shi >= 0) {
+            val tens = if (shi == 0) 1 else digit[token[shi - 1]] ?: return 0
+            val ones = if (shi == token.length - 1) 0 else digit[token.last()] ?: return 0
+            return tens * 10 + ones
+        }
+        return if (token.length == 1) digit[token[0]] ?: 0 else 0
+    }
 
     /**
      * 番号类关键词的查询变体(2026-10-05 引入,2026-10-08 改口径)。
@@ -352,13 +475,16 @@ object SearchSettings {
     /** 归一化 = 全角转半角 → 删括注及其内容 → 删空白与标点 → 忽略大小写;主体文字之外的差异(如「第二季」)仍然区分 */
     internal fun normalize(text: String?): String {
         if (text == null) return ""
-        // 全角 ASCII(U+FF01..U+FF5E)与全角空格(U+3000)先转半角:用户常打出全角数字/字母导致匹配不上
-        val sb = StringBuilder(text.length)
-        for (ch in text) {
+        // NFKC 兼容性规范化(2026-10-10 替代手写全角映射表):全角 ASCII/全角标点/圆圈数字/
+        // 半角片假名+浊点(ｶﾞ→ガ)等兼容字符一步到位 —— 日文半角浊音不再匹配不上
+        val nfkc = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFKC)
+        val sb = StringBuilder(nfkc.length)
+        for (ch in nfkc) {
+            // 片假名→平假名折叠(U+30A1..30F6 固定偏移 0x60,含ヴ):查询与标题同侧折叠,
+            // 「ゲーム」与「げーむ」类平片假名差异不再阻断匹配;长音符ー(U+30FC)保留,辅助形式另行剥离
             sb.append(
                 when (ch.code) {
-                    in 0xFF01..0xFF5E -> (ch.code - 0xFEE0).toChar()
-                    0x3000 -> ' '
+                    in 0x30A1..0x30F6 -> (ch.code - 0x60).toChar()
                     else -> ch
                 },
             )

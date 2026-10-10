@@ -310,10 +310,11 @@ internal fun RailResults(
         }
         // 相关度排序(2026-10-10):组按代表条目相关度降序 —— 贴词正片浮前,
         // 花絮/预告类(relevanceScore 已压到 ≤2)沉后;sortedByDescending 稳定,同分保持到达序
+        val intent = SearchSettings.parseIntent(searchedTitle)
         groups.sortedByDescending {
             SearchSettings.relevanceScore(
                 it.representative.name, it.representative.alias, searchedTitle, it.representative.note,
-            )
+            ) + SearchSettings.intentModifier(intent, it.representative.name, it.representative.year)
         }
     }
     // 这条是「搜索页粗筛到底执行没执行」的唯一可观测点(轨道视图),别删。
