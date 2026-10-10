@@ -603,25 +603,22 @@ class DetailViewModel : ViewModel() {
      * 不能并发(SPIDER_POOL 只有 3 线程)、还要给播放/预载让路。所以口径是
      * "预算内见到的最优就切",不是"探完再切"(附录 C)。
      */
+    /**
+     * 源内扫描的预算。
+     *
+     * <p>⚠️ **刻意只有"时间"这一个预算，没有"最多探 N 条"的条数上限。**
+     *
+     * <p>条数上限无论填 2 还是 8，都是拍脑袋的魔法数字 —— 线路数一旦超过它就会被**静默漏掉**。
+     * 真机 23:24 就是这么炸的：该片 9 条线路里 7 条是 crawler-type，旧 `deepProbeMax = 2`
+     * 直接砍掉 5 条，用户当场质问"为什么剩下的都不探"。
+     *
+     * <p>改成时间预算后：**预算内尽可能多探，探不完的留到下次**（负冷却不写、记忆照留，
+     * 下一轮继续）。条数由预算自然决定，不再写死。实测深探失败是**毫秒级立即返回**，
+     * 只有真正慢的解析才吃时间，所以放开条数并不会真把预算烧满。
+     */
     private object SourceSweepBudget {
-        /** 总预算:直链并行探测 + 爬虫深探合计(后台串行,不占前台) */
+        /** 唯一预算：本轮扫描的总时长（后台串行，不占前台） */
         const val totalMs = 45_000L
-
-        /** 单轮最多看几条线路 */
-        const val maxLines = 8
-
-        /**
-         * 爬虫深探上限。
-         *
-         * <p>⚠️ 原值是 **2**,而且**没有任何实测依据** —— 真机 23:24 证明它直接有害：
-         * 该片 9 条线路里 7 条是 crawler-type、`direct=0`，于是 `take(2)` 一刀砍掉 5 条，
-         * 用户看到的现象就是「7 条只探 2 条，剩下连试都没试」。
-         *
-         * <p>现与 [maxLines] 对齐：**不再单独截断**，统一由 [totalMs] 兜底。
-         * （实测深探失败是**毫秒级立即返回**，只有真正慢的解析才吃时间，所以放开配额
-         * 并不会真的把预算烧满。）
-         */
-        const val deepProbeMax = 8
 
         /** 单条深探预算(解析 1~3s + 探测 ≤0.8s,留一倍余量) */
         const val deepProbeTimeoutMs = 6_000L
@@ -678,11 +675,19 @@ class DetailViewModel : ViewModel() {
             return
         }
         val nowMs = System.currentTimeMillis()
+        // 候选 = 无实测记忆 且 不在负冷却中。
+        //
+        // **不再有任何条数上限**（旧代码这里 `.take(maxLines)`、深探处 `.take(deepProbeMax)`
+        // —— 两个魔法数字合起来把 7 条砍成 2 条）。唯一约束是 SourceSweepBudget.totalMs。
+        //
+        // 顺序改为**按标签先验降序**（4K/蓝光 这类先探）：预算有限时先花在最可能有收益的线路上，
+        // 而不是按站点原序从头取 —— 那样很可能先把预算烧在一堆标清上。
+        // ⚠️ 标签先验在这里**只决定"先探谁"**，绝不参与"是否切换"的判定（判定只用实测 S）。
         val missing = siteOrder
             .filter { flag ->
                 remembered.none { it.flag == flag } && !probeNegativeCooldownActive(flag, nowMs)
             }
-            .take(SourceSweepBudget.maxLines)
+            .sortedByDescending { QualityLabelPolicy.priorityFromLabel(it) }
         if (missing.isEmpty()) {
             LOG.i("echo-quality sweep skip: nothing missing")
             return
@@ -712,14 +717,13 @@ class DetailViewModel : ViewModel() {
             }.orEmpty()
             // ② 爬虫型:**解析后探**(解析反正要跑,复用其结果只多一个 ≤256KB 的探测)。
             //    串行 + 封顶 + 限时 —— 解析走 spider.playerContent,与播放/预载抢同一个 3 线程池。
+            // **不再按条数截断**（原 `take(deepProbeMax)` = 2 会把 7 条砍成 2 条）。
+            // 由 SourceSweepBudget.totalMs 统一兜底：预算耗尽才停，并记下还剩几条没跑。
             val crawlerAll = missing.filter { flag -> directUrlOf(seriesMap[flag], index) == null }
-            val crawlerTargets = crawlerAll.take(SourceSweepBudget.deepProbeMax)
-            // 配额截断必须留痕:否则"7 条待探只出 2 条结果"在日志里完全看不出来
-            if (crawlerAll.size > crawlerTargets.size) {
-                LOG.i(
-                    "echo-quality deep-probe quota=" + crawlerTargets.size +
-                        " of=" + crawlerAll.size + " (rest skipped this sweep)"
-                )
+            val crawlerTargets = crawlerAll
+            // 只报"本轮计划探几条"。不再有 quota/截断 —— 条数已不设上限,由时间预算兜底
+            if (crawlerAll.isNotEmpty()) {
+                LOG.i("echo-quality deep-probe plan=" + crawlerAll.size + " (budget-bound, no quota)")
             }
             val deepProbed = ArrayList<VideoQualityPolicy.Variant>()
             for (i in crawlerTargets.indices) {
