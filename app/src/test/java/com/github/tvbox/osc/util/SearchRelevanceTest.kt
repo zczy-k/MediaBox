@@ -15,7 +15,7 @@ class SearchRelevanceTest {
     fun `正片贴词高分不受影响`() {
         assertEquals(5, SearchSettings.relevanceScore("花开锦绣", null, "花开锦绣"))
         assertEquals(4, SearchSettings.relevanceScore("花开锦绣2026", null, "花开锦绣"))
-        assertEquals(3, SearchSettings.relevanceScore("花开锦绣 电视版", null, "花开锦绣"))
+        assertEquals(4, SearchSettings.relevanceScore("花开锦绣 电视版", null, "花开锦绣"))
     }
 
     @Test
@@ -33,7 +33,7 @@ class SearchRelevanceTest {
 
     @Test
     fun `note命中预告同样降权`() {
-        assertEquals(2, SearchSettings.relevanceScore("花开锦绣", "官方预告片", "花开锦绣"))
+        assertEquals(2, SearchSettings.relevanceScore("花开锦绣", null, "花开锦绣", "官方预告片"))
         assertEquals(5, SearchSettings.relevanceScore("花开锦绣", "共36集", "花开锦绣"))
         assertEquals(5, SearchSettings.relevanceScore("花开锦绣", "国语中字", "花开锦绣"))
     }
@@ -49,8 +49,44 @@ class SearchRelevanceTest {
     @Test
     fun `关键词本身含预告词时不降权_搜索意图豁免`() {
         assertEquals(5, SearchSettings.relevanceScore("花开锦绣 预告", null, "花开锦绣 预告"))
-        assertEquals(3, SearchSettings.relevanceScore("花开锦绣 先导预告", null, "花开锦绣 预告"))
+        assertEquals(2, SearchSettings.relevanceScore("花开锦绣 先导预告", null, "花开锦绣 预告"))
         assertFalse(SearchSettings.isNonMainContent("某片预告合集", null, "预告"))
+    }
+
+    @Test
+    fun `路透与开机等资讯类识别词命中降权_真机截图案例`() {
+        val k = "花开锦绣"
+        // 真机截图(2026-10-10 08:42)的 4 条资讯条目
+        assertEquals(2, SearchSettings.relevanceScore("开机大吉！丁禹兮邓恩熙《花开锦绣》养眼同框", null, k))
+        assertEquals(2, SearchSettings.relevanceScore("邓恩熙《花开锦绣》夜戏路透 清雅造型温婉灵动", null, k))
+        assertEquals(2, SearchSettings.relevanceScore("丁禹兮《花开锦绣》骑马路透 新造型亮眼吸睛", null, k))
+        assertEquals(2, SearchSettings.relevanceScore("丁禹兮《花开锦绣》杀青专访 风度翩翩", null, k))
+        // 正片仍是 4-5 分,排最前
+        assertTrue(
+            SearchSettings.relevanceScore("花开锦绣2026", null, k) >
+                SearchSettings.relevanceScore("邓恩熙《花开锦绣》夜戏路透 清雅造型温婉灵动", null, k),
+        )
+    }
+
+    @Test
+    fun `标题长度启发式_无识别词的超长资讯标题也降权`() {
+        val k = "花开锦绣"
+        // 无任何识别词,但"关键词+长描述"的典型资讯标题(归一化后富余 17 字)
+        assertEquals(2, SearchSettings.relevanceScore("丁禹兮邓恩熙《花开锦绣》养眼同框高清剧照大图", null, k))
+        // 长度富余在阈值内的正片不受影响(宁漏杀不误杀)
+        assertEquals(4, SearchSettings.relevanceScore("花开锦绣之花好月圆", null, k))
+        assertEquals(4, SearchSettings.relevanceScore("花开锦绣2026", null, k))
+        assertEquals(
+            4,
+            SearchSettings.relevanceScore("上错花轿嫁对郎之花好月圆", null, "上错花轿嫁对郎"),
+        )
+    }
+
+    @Test
+    fun `番号与拉丁字母关键词豁免长度启发式_长副题正片不误伤`() {
+        // 番号正片 = 编号 + 长日文标题,长度差天然大 —— 不能按"超长=资讯"误判
+        assertEquals(4, SearchSettings.relevanceScore("MIAA-195 深田えいみ 10000回の絶頂", null, "MIAA-195"))
+        assertEquals(4, SearchSettings.relevanceScore("FC2 PPV 完整版原片", null, "FC2"))
     }
 
     @Test

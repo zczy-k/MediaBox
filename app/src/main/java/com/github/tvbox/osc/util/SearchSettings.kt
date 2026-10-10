@@ -223,17 +223,37 @@ object SearchSettings {
         return if (isNonMainContent(name, note, keyword)) minOf(base, 2) else base
     }
 
-    /** 非正片内容标记:命中即视为花絮/预告类,只用于排序降权,绝不隐藏/过滤(条目仍可点开播放) */
-    private val NON_MAIN_CONTENT_PATTERN = Regex("预告|花絮|幕后|特辑|片花")
+    /**
+     * 非正片内容标记:命中即视为花絮/预告/资讯类,只用于排序降权,绝不隐藏/过滤
+     * (条目仍可命中、可点开播放)。词表口径"语义明确才收",与可用性粗筛同一哲学。
+     */
+    private val NON_MAIN_CONTENT_PATTERN = Regex("预告|花絮|幕后|特辑|片花|路透|探班|开机|杀青|发布会|专访|采访|混剪|解说")
 
     /**
-     * 结果是否为非正片内容(预告/花絮/幕后/特辑/片花)。
-     * 标题与 note 都参与;关键词本身含这些词时一律返回 false —— 搜索意图就是非正片时不降权。
+     * 标题长度启发式的富余阈值:正片标题 = 关键词 + 少量富余(年份/季数/短副题,
+     * 如"花开锦绣2026"=+3、"西游记之大圣归来"=+6),资讯/路透/二创类 = 关键词 + 长描述
+     * ("开机大吉!丁禹兮邓恩熙《花开锦绣》养眼同框"=+17)。+8 是两者之间保守的分界,
+     * 宁漏杀不误杀 —— 长名副标题的正片(≤+8)不受影响。
+     */
+    private const val MAIN_TITLE_MAX_EXTRA = 8
+
+    /**
+     * 结果是否为非正片内容。三重特征(2026-10-10):
+     * ① 标题/note 命中识别词(预告/花絮/路透/开机…);
+     * ② 标题长度启发式:包含关键词且超长富余(关键词+8 以上)——非正片标题普遍是
+     *    "关键词+长描述",字数显著多于正片标题;
+     * 关键词本身含识别词时一律返回 false —— 搜索意图就是非正片时不降权。
      */
     fun isNonMainContent(name: String?, note: String?, keyword: String?): Boolean {
-        if (NON_MAIN_CONTENT_PATTERN.containsMatchIn(normalizeCached(keyword))) return false
-        return NON_MAIN_CONTENT_PATTERN.containsMatchIn(normalizeCached(name)) ||
-            NON_MAIN_CONTENT_PATTERN.containsMatchIn(note.orEmpty())
+        val k = normalizeCached(keyword)
+        if (k.isEmpty() || NON_MAIN_CONTENT_PATTERN.containsMatchIn(k)) return false
+        val n = normalizeCached(name)
+        if (NON_MAIN_CONTENT_PATTERN.containsMatchIn(n)) return true
+        if (NON_MAIN_CONTENT_PATTERN.containsMatchIn(note.orEmpty())) return true
+        // 长度启发式只对"包含关键词"的条目生效(全等/别名命中不涉及长度差);
+        // 番号/拉丁字母关键词豁免 —— 番号正片标题普遍是"编号+长日文副题",长度差天然大,会误伤
+        if (ASCII_LETTER_PATTERN.containsMatchIn(k)) return false
+        return n.contains(k) && n.length - k.length > MAIN_TITLE_MAX_EXTRA
     }
 
     /** 仅别名命中的分数:完全相等给 1(低于任何标题命中);只"包含"关系不给正分(当作不匹配) */
