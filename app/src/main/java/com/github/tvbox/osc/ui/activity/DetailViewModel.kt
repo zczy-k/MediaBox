@@ -758,6 +758,7 @@ class DetailViewModel : ViewModel() {
                 // 却分不清是爬虫没解析出地址、解析/探测超时、还是拿到了地址读不出分辨率。
                 var why = ""
                 var via = ""
+                var completed = false
                 val measured = withTimeoutOrNull(SourceSweepBudget.deepProbeTimeoutMs) {
                     val (target, reason) = resolveTargetForProbe(flag)
                     if (target == null) {
@@ -766,6 +767,7 @@ class DetailViewModel : ViewModel() {
                     } else {
                         via = target.via
                         probe.probe(target.url, mergeProbeHeaders(headers, target.headers))
+                            .also { completed = true }
                     }
                 }
                 if (measured == null || !measured.known) {
@@ -774,8 +776,12 @@ class DetailViewModel : ViewModel() {
                         // series-empty / index-oob / exception:*)—— 旧实现一律记 no-url,
                         // 真机无法区分"爬虫没加载"与"爬虫确实给不出",排障只能猜。
                         why.isNotEmpty() -> "no-url(" + why + ")"
-                        measured == null -> "timeout"      // 解析 + 探测整体超时
-                        else -> "no-size"                  // 拿到地址但读不出分辨率
+                        // ⚠️ 必须用 completed 区分,不能只看 measured == null:
+                        // probe()「跑完了但读不出尺寸」**也**返回 null,旧写法把它误记成 timeout ——
+                        // 真机实测(v1.0.55):MG超清/QY超清 明明 3ms 就返回了 probe-no-size,却记成 timeout,
+                        // 与前面的 probe-no-size 行自相矛盾,读日志的人会被带偏。
+                        !completed -> "timeout"            // 解析 + 探测整体超时(没跑完)
+                        else -> "no-size"                  // 跑完了但读不出分辨率
                     }
                     LOG.i("echo-quality deep-probe " + kind + " flag=" + flag)
                     probeNegativeAt[flag] = System.currentTimeMillis()
