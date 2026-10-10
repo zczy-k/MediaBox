@@ -148,6 +148,20 @@ class DetailViewModel : ViewModel() {
      *  若不冷却会被 plentiful→probe-request 每 30s 反复空探(2026-10-10 真机观察,单次虽小但纯浪费) */
     private val probeNegativeAt = HashMap<String, Long>()
     private var probeNegativeScope = ""
+    /**
+     * **起播前/面板**那条探测路径的负结果冷却,**与 [probeNegativeAt] 分表**(2026-10-10 真机教训)。
+     *
+     * <p>两条路径的**探测口径不同**:
+     * <ul>
+     *   <li>本表所属路径(预算 2s/15s)探的是 `series.url` —— 而真机坐实它常常**不是播放地址**;
+     *       探测失败因此**不构成"这条线路不可用"的证据**。</li>
+     *   <li>[probeNegativeAt] 所属的起播后 sweep 走 [resolveTargetForProbe],与播放同源(先问爬虫),
+     *       它的失败才是可信证据。</li>
+     * </ul>
+     * 两者曾共用一张表,真机后果直接可见:起播前对镜像地址的一次 404 把那条线路拉黑 10 分钟,
+     * **导致 sweep 里唯一"本可同源探到"的线路被静默跳过**(本轮 missing 由 6 掉到 5)。
+     */
+    private val probeDirectNegativeAt = HashMap<String, Long>()
     /** 探测穷尽闩(按片):全是爬虫型线路(无可探直连)时,补探测对本片永远无产出,
      *  置闩后忽略后续 probe-request(换片自动复位)—— 否则 plentiful 每 30s 空转一轮 */
     private var probeExhausted = false
@@ -511,6 +525,7 @@ class DetailViewModel : ViewModel() {
         if (probeNegativeScope != scopeKey) {
             probeNegativeScope = scopeKey
             probeNegativeAt.clear()
+            probeDirectNegativeAt.clear()
             probeExhausted = false
         }
         if (probeExhausted) {
@@ -519,7 +534,7 @@ class DetailViewModel : ViewModel() {
         }
         val nowMs = System.currentTimeMillis()
         val missing = siteOrder.filter { flag ->
-            remembered.none { it.flag == flag } && !probeNegativeCooldownActive(flag, nowMs)
+            remembered.none { it.flag == flag } && !probeDirectCooldownActive(flag, nowMs)
         }
         if (missing.isEmpty()) return
         // 只探**直连型**线路(与 PlayLoader.shouldDirectPlay 同口径):爬虫型线路要先跑 getPlay
@@ -567,19 +582,21 @@ class DetailViewModel : ViewModel() {
             probed.forEach { v ->
                 if (v.flag.isEmpty()) return@forEach
                 if (!v.known) {
-                    // 探测请求跑通但拿不到尺寸(坏地址/错误 JSON):进负冷却,不落记忆污染
-                    probeNegativeAt[v.flag] = System.currentTimeMillis()
+                    // 探测请求跑通但拿不到尺寸(坏地址/错误 JSON):进**本路径专属**的冷却,不落记忆污染。
+                    // ⚠️ 刻意**不**写 probeNegativeAt(同源 sweep 的表):本路径探的是 series.url,
+                    // 失败不构成"线路不可用"的证据 —— 共表会连带把 sweep 的同源探测一起拉黑。
+                    probeDirectNegativeAt[v.flag] = System.currentTimeMillis()
                     return@forEach
                 }
-                probeNegativeAt.remove(v.flag)
+                probeDirectNegativeAt.remove(v.flag)
                 VideoQualityMemory.record(siteKey, vod, v)
                 knownNew++
             }
-            // 压根没拿到结果(resolve 失败)的目标同样进负冷却
+            // 压根没拿到结果(resolve 失败)的目标同样进**本路径专属**的冷却
             targets.forEach { flag ->
-                if (probed.none { it.flag == flag }) probeNegativeAt[flag] = System.currentTimeMillis()
+                if (probed.none { it.flag == flag }) probeDirectNegativeAt[flag] = System.currentTimeMillis()
             }
-            if (knownNew > 0) LOG.i("echo-line-probe new-known=$knownNew (negative=${probeNegativeAt.size})")
+            if (knownNew > 0) LOG.i("echo-line-probe new-known=" + knownNew + " (negative=${probeDirectNegativeAt.size})")
             // 会话可能已经换片/换源:那时刷新会把新内容的画质写进来
             if (siteKey != sourceKey || vod != vodId) return@launch
             publishLineQualityHeights()
@@ -596,6 +613,12 @@ class DetailViewModel : ViewModel() {
 
     private fun probeNegativeCooldownActive(flag: String, nowMs: Long): Boolean {
         val at = probeNegativeAt[flag] ?: return false
+        return nowMs - at < LineQualityProbeBudget.negativeCooldownMs
+    }
+
+    /** [probeNegativeAt] 的对应版本,但查的是"起播前/面板"那条 **series.url 口径**的冷却表。 */
+    private fun probeDirectCooldownActive(flag: String, nowMs: Long): Boolean {
+        val at = probeDirectNegativeAt[flag] ?: return false
         return nowMs - at < LineQualityProbeBudget.negativeCooldownMs
     }
 
@@ -733,12 +756,12 @@ class DetailViewModel : ViewModel() {
                 // 旧代码把两者合成一个 null,于是"这条线路为什么没被测到"**完全不可观测** ——
                 // 真机排障就卡在这里:7 条全是 crawler-type、probed=0,
                 // 却分不清是爬虫没解析出地址、解析/探测超时、还是拿到了地址读不出分辨率。
-                var noUrl = false
+                var why = ""
                 var via = ""
                 val measured = withTimeoutOrNull(SourceSweepBudget.deepProbeTimeoutMs) {
-                    val target = resolveTargetForProbe(flag)
+                    val (target, reason) = resolveTargetForProbe(flag)
                     if (target == null) {
-                        noUrl = true
+                        why = reason
                         null
                     } else {
                         via = target.via
@@ -746,12 +769,15 @@ class DetailViewModel : ViewModel() {
                     }
                 }
                 if (measured == null || !measured.known) {
-                    val why = when {
-                        noUrl -> "no-url"             // 爬虫与直链都给不出地址(播放同样播不了)
-                        measured == null -> "timeout" // 解析 + 探测整体超时
-                        else -> "no-size"             // 拿到地址但读不出分辨率
+                    val kind = when {
+                        // 拿不到地址:**带具体原因**(spider-missing / spider-empty / spider-no-url /
+                        // series-empty / index-oob / exception:*)—— 旧实现一律记 no-url,
+                        // 真机无法区分"爬虫没加载"与"爬虫确实给不出",排障只能猜。
+                        why.isNotEmpty() -> "no-url(" + why + ")"
+                        measured == null -> "timeout"      // 解析 + 探测整体超时
+                        else -> "no-size"                  // 拿到地址但读不出分辨率
                     }
-                    LOG.i("echo-quality deep-probe " + why + " flag=" + flag)
+                    LOG.i("echo-quality deep-probe " + kind + " flag=" + flag)
                     probeNegativeAt[flag] = System.currentTimeMillis()
                     continue
                 }
@@ -2173,7 +2199,8 @@ class DetailViewModel : ViewModel() {
         if (existing.isNotEmpty()) return
         qualityProbeJob?.cancel()
         qualityProbeJob = viewModelScope.launch {
-            val target = resolveTargetForProbe(flagName) ?: return@launch
+            val (target, _) = resolveTargetForProbe(flagName)
+            if (target == null) return@launch
             val probe = VideoQualityProbe()
             val measured = try {
                 probe.probe(target.url, mergeProbeHeaders(probeHeaders(site), target.headers))
@@ -2218,41 +2245,47 @@ class DetailViewModel : ViewModel() {
      * ⚠️ 这条兜底**必须保留**:`ffzy/lf/yzzyvip` 这类源的 `series.url` 本身就是真实 m3u8,
      * 真机上 100 次探测成功**全部**来自它们 —— 不能因为"直链不可信"就一刀砍掉。
      *
-     * @return null 表示这条线路拿不到地址(站点未收录/解析失败)—— 调用方静默跳过,不阻塞播放
+     * @return `目标(成功)` 或 `null(失败)`;第二个元素是失败原因,仅用于日志 ——
+     *         旧实现把"爬虫实例没拿到 / 爬虫返回空 / 爬虫没给 url / 地址非 http"全记成 `no-url`,
+     *         真机排障无法区分"爬虫没加载"与"爬虫确实给不出"(2026-10-10 加,勿删)。
      */
-    private suspend fun resolveTargetForProbe(flagName: String): ProbeTarget? {
+    private suspend fun resolveTargetForProbe(flagName: String): Pair<ProbeTarget?, String> {
         return try {
-            val list = vodInfo?.seriesMap?.get(flagName) ?: return null
-            val series = list.getOrNull(probeIndexOf(vodInfo ?: return null)) ?: return null
+            val list = vodInfo?.seriesMap?.get(flagName) ?: return (null to "vod-gone")
+            val series = list.getOrNull(probeIndexOf(vodInfo ?: return (null to "vod-gone")))
+                ?: return (null to "index-oob")
             val raw = series.url?.trim().orEmpty()
-            if (raw.isEmpty()) return null
+            if (raw.isEmpty()) return (null to "series-empty")
+            // 爬虫给不出时的兜底:与播放的 shouldDirectPlay 同口径(只有 http 地址才回退直连)
+            val fallback = if (isHttpProbeTarget(raw)) ProbeTarget(raw, emptyMap(), "direct") else null
             // ① 爬虫:与播放同一条路(播放对每条线路都先跑 playerContent)
             val bean = ApiConfig.get().getSource(sourceKey)
             val spider = bean?.let { ApiConfig.get().getCSP(it) }
-            if (spider != null) {
-                val json = spider.playerContent(flagName, raw, ApiConfig.get().getVipParseFlags())
-                if (!json.isNullOrEmpty()) {
-                    val obj = runCatching { org.json.JSONObject(json) }.getOrNull()
-                    val url = obj?.optString("url", "").orEmpty()
-                    if (url.isNotEmpty()) {
-                        // header 用与播放**同一个解析器**,避免两套口径:
-                        // PlayerHelper.extractPlayHeaders 兼容 header/headers 两种形态与嵌套 JSON 文本
-                        val playHeaders = runCatching {
-                            com.github.tvbox.osc.util.PlayerHelper.extractPlayHeaders(obj)
-                        }.getOrNull()
-                        return ProbeTarget(url, playHeaders ?: emptyMap(), "spider")
-                    }
-                }
+            if (spider == null) {
+                return (fallback to if (fallback != null) "" else "spider-missing")
             }
-            // ② 爬虫给不出 ⇒ 退回站点原始地址(与播放的直连兜底一致)
-            if (raw.startsWith("http://") || raw.startsWith("https://")) {
-                return ProbeTarget(raw, emptyMap(), "direct")
+            val json = spider.playerContent(flagName, raw, ApiConfig.get().getVipParseFlags())
+            if (json.isNullOrEmpty()) {
+                return (fallback to if (fallback != null) "" else "spider-empty")
             }
-            null
+            val obj = runCatching { org.json.JSONObject(json) }.getOrNull()
+            val url = obj?.optString("url", "").orEmpty()
+            if (url.isEmpty()) {
+                return (fallback to if (fallback != null) "" else "spider-no-url")
+            }
+            // header 用与播放**同一个解析器**,避免两套口径:
+            // PlayerHelper.extractPlayHeaders 兼容 header/headers 两种形态与嵌套 JSON 文本
+            val playHeaders = runCatching {
+                com.github.tvbox.osc.util.PlayerHelper.extractPlayHeaders(obj)
+            }.getOrNull()
+            (ProbeTarget(url, playHeaders ?: emptyMap(), "spider") to "")
         } catch (t: Throwable) {
-            null
+            (null to ("exception:" + t.javaClass.simpleName))
         }
     }
+
+    private fun isHttpProbeTarget(url: String): Boolean =
+        url.startsWith("http://") || url.startsWith("https://")
 
     /**
      * 探测请求的 header = **爬虫头 ∪ 源配置头**(爬虫优先,键名大小写不敏感)。
