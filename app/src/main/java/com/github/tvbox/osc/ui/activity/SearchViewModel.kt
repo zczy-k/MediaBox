@@ -923,7 +923,7 @@ class SearchViewModel : ViewModel() {
             .filter { SearchSettings.matches(it.name, it.alias, keyword, mode) }
             // 相关度从高到低,让最贴合的条目浮到最前;同分再按"原名是否等于关键词"稳定排序
             .sortedWith(
-                compareByDescending<Movie.Video> { SearchSettings.relevanceScore(it.name, it.alias, keyword) }
+                compareByDescending<Movie.Video> { SearchSettings.relevanceScore(it.name, it.alias, keyword, it.note) }
                     .thenByDescending { it.name?.trim() == keyword },
             )
         mergeResult(sourceKey, videos)
@@ -953,7 +953,7 @@ class SearchViewModel : ViewModel() {
             existing.videos.forEach { v -> merged[v.id ?: v.name ?: ""] = v }
             incoming.forEach { v -> merged[v.id ?: v.name ?: ""] = v }
             val sorted = merged.values.sortedWith(
-                compareByDescending<Movie.Video> { SearchSettings.relevanceScore(it.name, it.alias, keyword) }
+                compareByDescending<Movie.Video> { SearchSettings.relevanceScore(it.name, it.alias, keyword, it.note) }
                     .thenByDescending { it.name?.trim() == keyword },
             )
             // 首次到包才分配到达序号,后续变体并入不改动,保证竖排站点栏顺序稳定。

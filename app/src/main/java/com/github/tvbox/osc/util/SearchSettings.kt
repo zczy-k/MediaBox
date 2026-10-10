@@ -191,19 +191,49 @@ object SearchSettings {
     fun relevanceScore(name: String?, keyword: String?): Int = relevanceScore(name, null, keyword)
 
     /** 同 [relevanceScore],额外考虑别名(见 [matches] 的 KDoc) */
-    fun relevanceScore(name: String?, alias: String?, keyword: String?): Int {
+    fun relevanceScore(name: String?, alias: String?, keyword: String?): Int =
+        relevanceScore(name, alias, keyword, null)
+
+    /**
+     * 同 [relevanceScore],额外考虑别名与 note(见 [matches] 的 KDoc)。
+     *
+     * <p>2026-10-10 正片优先:标题/note 命中"预告/花絮/幕后/特辑/片花"的非正片内容,
+     * 分值压到 ≤2 —— 低于任何"标题包含关键词"的正片(3),高于纯别名命中(1)。
+     * "花开锦绣 预告"再贴词也不能排在正片前面;关键词本身含这些词时不降权
+     * (用户就是在搜预告,全员降权等于全不排)。
+     */
+    fun relevanceScore(name: String?, alias: String?, keyword: String?, note: String?): Int {
         val n = normalizeCached(name)
         val k = normalizeCached(keyword)
         if (k.isEmpty()) return 0
-        if (n.isEmpty()) return aliasScore(alias, k)
-        if (n == k) return 5
-        if (n.startsWith(k)) return 4
-        if (n.contains(k)) return 3
-        val tokens = keyword.orEmpty().trim().split(WHITESPACE_PATTERN)
-            .map { normalizeCached(it) }
-            .filter { it.isNotEmpty() }
-        if (tokens.size > 1 && tokens.all { n.contains(it) }) return 2
-        return aliasScore(alias, k)
+        val base = if (n.isEmpty()) {
+            aliasScore(alias, k)
+        } else when {
+            n == k -> 5
+            n.startsWith(k) -> 4
+            n.contains(k) -> 3
+            else -> {
+                val tokens = keyword.orEmpty().trim().split(WHITESPACE_PATTERN)
+                    .map { normalizeCached(it) }
+                    .filter { it.isNotEmpty() }
+                if (tokens.size > 1 && tokens.all { n.contains(it) }) 2 else aliasScore(alias, k)
+            }
+        }
+        if (base <= 0) return base
+        return if (isNonMainContent(name, note, keyword)) minOf(base, 2) else base
+    }
+
+    /** 非正片内容标记:命中即视为花絮/预告类,只用于排序降权,绝不隐藏/过滤(条目仍可点开播放) */
+    private val NON_MAIN_CONTENT_PATTERN = Regex("预告|花絮|幕后|特辑|片花")
+
+    /**
+     * 结果是否为非正片内容(预告/花絮/幕后/特辑/片花)。
+     * 标题与 note 都参与;关键词本身含这些词时一律返回 false —— 搜索意图就是非正片时不降权。
+     */
+    fun isNonMainContent(name: String?, note: String?, keyword: String?): Boolean {
+        if (NON_MAIN_CONTENT_PATTERN.containsMatchIn(normalizeCached(keyword))) return false
+        return NON_MAIN_CONTENT_PATTERN.containsMatchIn(normalizeCached(name)) ||
+            NON_MAIN_CONTENT_PATTERN.containsMatchIn(note.orEmpty())
     }
 
     /** 仅别名命中的分数:完全相等给 1(低于任何标题命中);只"包含"关系不给正分(当作不匹配) */

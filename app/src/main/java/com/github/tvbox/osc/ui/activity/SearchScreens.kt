@@ -280,7 +280,7 @@ internal fun RailResults(
     // LazyColumn 原地更新、滚动位置与动画稳定;无有效标题的条目退回 sourceKey+id 行键。
     // 单源视图(选中某源)不聚合 —— 该视图本身就是"展开后的来源",聚合反而多余。
     val dedupGroups: List<SearchDedupGroup> = remember(rows, selectedSource, searchedTitle) {
-        if (selectedSource != null) {
+        val groups = if (selectedSource != null) {
             rows.map { v -> SearchDedupGroup("row_${v.sourceKey}_${v.id}", listOf(v), v) }
         } else {
             SearchDedupPolicy
@@ -307,6 +307,13 @@ internal fun RailResults(
                     else "grp_${tk}#${g.subIndex}"
                     SearchDedupGroup(key, g.members, rep)
                 }
+        }
+        // 相关度排序(2026-10-10):组按代表条目相关度降序 —— 贴词正片浮前,
+        // 花絮/预告类(relevanceScore 已压到 ≤2)沉后;sortedByDescending 稳定,同分保持到达序
+        groups.sortedByDescending {
+            SearchSettings.relevanceScore(
+                it.representative.name, it.representative.alias, searchedTitle, it.representative.note,
+            )
         }
     }
     // 这条是「搜索页粗筛到底执行没执行」的唯一可观测点(轨道视图),别删。
