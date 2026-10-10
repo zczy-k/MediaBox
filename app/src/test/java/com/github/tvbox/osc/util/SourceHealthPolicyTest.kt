@@ -120,10 +120,13 @@ class SourceHealthPolicyTest {
 
     @Test
     fun eachKindCountsOnce_noWeighting() {
+        // 2026-10-10:PLAY_FAILED 退出判据(误封健康源实证),参与计数的只剩两种搜索类 kind。
+        // 口径:1×超时 + 2×HTTP失败,凑满 3 次 2 部影片 ⇒ 规则 1 封 6h;
+        // 超时只有一次 ⇒ streak=1,不会先被规则 2 抢先封掉。
         var s = SourceHealthState()
         s = SourceHealthPolicy.recordFail(s, SourceFailKind.SEARCH_TIMEOUT, SourceHealthPolicy.contentKey("电影A"), t0)
         s = SourceHealthPolicy.recordFail(s, SourceFailKind.SEARCH_FAILED, SourceHealthPolicy.contentKey("电影B"), t0)
-        s = SourceHealthPolicy.recordFail(s, SourceFailKind.PLAY_FAILED, SourceHealthPolicy.contentKey("电影A"), t0)
+        s = SourceHealthPolicy.recordFail(s, SourceFailKind.SEARCH_FAILED, SourceHealthPolicy.contentKey("电影A"), t0)
         assertEquals(1, s.banCount)
     }
 
@@ -147,7 +150,9 @@ class SourceHealthPolicyTest {
         assertEquals(0, s.fails.size)
         assertEquals(1, s.banCount)
         // 再攒够三次 ⇒ 第二档 24 小时
-        s = state(base = s, kind = SourceFailKind.PLAY_FAILED, fails = 3, titles = listOf("电影C", "电影D", "电影E"), at = t1)
+        // (2026-10-10:PLAY_FAILED 已退出判据,这里用 SEARCH_FAILED —— 3 次 3 部不同影片,
+        //  且不加 streak,避免混入规则 2 的 1h 临时封把断言弄混)
+        s = state(base = s, kind = SourceFailKind.SEARCH_FAILED, fails = 3, titles = listOf("电影C", "电影D", "电影E"), at = t1)
         assertEquals(2, s.banCount)
         assertTrue(SourceHealthPolicy.isBlocked(s, t1 + 24 * hour - 1))
         assertFalse(SourceHealthPolicy.isBlocked(s, t1 + 24 * hour))
@@ -164,7 +169,8 @@ class SourceHealthPolicyTest {
         assertFalse(SourceHealthPolicy.isBlocked(freed, t0))
         // 手动解除保留升级次数:再犯仍是永久档(不能被当成后门绕过升级)
         assertEquals(3, freed.banCount)
-        val again = state(base = freed, kind = SourceFailKind.PLAY_FAILED, fails = 3, at = t0 + 1000)
+        // 2026-10-10:PLAY_FAILED 退出判据,改用 SEARCH_FAILED 凑满规则 1
+        val again = state(base = freed, kind = SourceFailKind.SEARCH_FAILED, fails = 3, at = t0 + 1000)
         assertTrue(again.manualLocked)
     }
 
