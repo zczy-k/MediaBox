@@ -183,6 +183,7 @@ object LineQualitySelector {
      *
      * <p>候选只来自实测记忆,不探测(探测属第二批后台择优);没记忆不猜,与降档同一口径。
      */
+    @JvmStatic
     fun pickUpgrade(
         measured: List<VideoQualityPolicy.Variant>,
         currentFlag: String,

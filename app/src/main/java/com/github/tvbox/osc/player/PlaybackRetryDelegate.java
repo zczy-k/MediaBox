@@ -515,8 +515,8 @@ final class PlaybackRetryDelegate {
         }
         int targetHeight = 0;
         for (VideoQualityPolicy.Variant v : measured) {
-            if (target.equals(v.flag)) {
-                targetHeight = v.height;
+            if (target.equals(v.getFlag())) {
+                targetHeight = v.getHeight();
                 break;
             }
         }
