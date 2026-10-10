@@ -16,6 +16,7 @@ package com.github.tvbox.osc.player
 object QualityGovernor {
 
     /** 档位阶梯:480/720/1080/1440/2160+,与 [DeviceCapability.LADDER] 同构 */
+    @JvmStatic
     fun tierOf(height: Int): Int = when {
         height <= 0 -> -1
         height <= 480 -> 0
@@ -44,6 +45,7 @@ object QualityGovernor {
      * @param upgradesDone      本集已升档次数
      * @param sessionLockedTier 会话锁定档(回滚后=出发地档;高于它的目标一律拒绝;-1 = 未锁)
      */
+    @JvmStatic
     fun canUpgrade(
         mode: DeviceCapability.QualityMode,
         currentHeight: Int,
@@ -66,6 +68,7 @@ object QualityGovernor {
     }
 
     /** 升档失败是否仍在回滚窗口内(出发地快照为空 = 无升档在途,不在窗口) */
+    @JvmStatic
     fun inRollbackWindow(nowElapsed: Long, upgradedAtElapsed: Long): Boolean =
         upgradedAtElapsed > 0L && nowElapsed - upgradedAtElapsed <= ROLLBACK_WINDOW_MS
 }
