@@ -17,6 +17,15 @@ class LineQualitySelectorTest {
     private fun v(flag: String, h: Int, c: VideoQualityPolicy.Confidence = VideoQualityPolicy.Confidence.MEASURED) =
         VideoQualityPolicy.Variant(1920, h, 0, c, flag)
 
+    /**
+     * 降档用例的"当前线"样本:3840×2160(4K 级)。
+     *
+     * <p>⚠️ 判据已从"高度"换成等效清晰度 S=√(W×H),选择器入参也从 `Int` 高度改成 `Variant`
+     * (见《选线机制设计》附录 A),所以这里显式给一条带**宽高**的当前线路。
+     */
+    private val curUhd2160 =
+        VideoQualityPolicy.Variant(3840, 2160, 0, VideoQualityPolicy.Confidence.MEASURED, "current")
+
     @Test
     fun preflightRequiresMultipleSourcesAndLines() {
         assertTrue(LineQualitySelector.shouldPreflightQuality(sourceCount = 2, lineCount = 2))
@@ -172,14 +181,14 @@ class LineQualitySelectorTest {
     // ---------------- 降档(卡顿时优先选更低的档) ----------------
 
     @Test
-    fun pickDowngrade_takesClosestLowerHeight() {
+    fun pickDowngrade_takesClosestLowerQuality() {
         val measured = listOf(
             VideoQualityPolicy.Variant(1920, 480, 0, VideoQualityPolicy.Confidence.MEASURED, "480"),
             VideoQualityPolicy.Variant(1920, 1080, 0, VideoQualityPolicy.Confidence.MEASURED, "1080"),
             VideoQualityPolicy.Variant(3840, 2160, 0, VideoQualityPolicy.Confidence.MEASURED, "2160"),
         )
         // 从 2160 降到 1080(降得最少),不是降到 480
-        assertEquals("1080", LineQualitySelector.pickDowngrade(measured, "2160", 2160, emptySet()))
+        assertEquals("1080", LineQualitySelector.pickDowngrade(measured, "2160", curUhd2160, emptySet()))
     }
 
     @Test
@@ -190,17 +199,17 @@ class LineQualitySelectorTest {
         )
         assertEquals(
             "720",
-            LineQualitySelector.pickDowngrade(measured, "2160", 2160, setOf("1080")),
+            LineQualitySelector.pickDowngrade(measured, "2160", curUhd2160, setOf("1080")),
         )
     }
 
     @Test
-    fun pickDowngrade_unknownCurrentHeightReturnsNull() {
+    fun pickDowngrade_unknownCurrentSizeReturnsNull() {
         val measured = listOf(
             VideoQualityPolicy.Variant(1920, 1080, 0, VideoQualityPolicy.Confidence.MEASURED, "1080"),
         )
-        // 不知道当前多高 ⇒ 没资格判断"更低",不猜
-        assertNull(LineQualitySelector.pickDowngrade(measured, "2160", 0, emptySet()))
+        // 不知道当前多清晰(尺寸未上报)⇒ 没资格判断"更低",不猜
+        assertNull(LineQualitySelector.pickDowngrade(measured, "2160", null, emptySet()))
     }
 
     @Test
@@ -210,7 +219,7 @@ class LineQualitySelectorTest {
             VideoQualityPolicy.Variant(1920, 1080, 0, VideoQualityPolicy.Confidence.MEASURED, "1080"),
         )
         // "unknown" 不能被当成"更低"
-        assertEquals("1080", LineQualitySelector.pickDowngrade(measured, "2160", 2160, emptySet()))
+        assertEquals("1080", LineQualitySelector.pickDowngrade(measured, "2160", curUhd2160, emptySet()))
     }
 
     @Test
@@ -218,12 +227,12 @@ class LineQualitySelectorTest {
         val measured = listOf(
             VideoQualityPolicy.Variant(3840, 2160, 0, VideoQualityPolicy.Confidence.MEASURED, "2160"),
         )
-        assertNull(LineQualitySelector.pickDowngrade(measured, "2160", 2160, emptySet()))
+        assertNull(LineQualitySelector.pickDowngrade(measured, "2160", curUhd2160, emptySet()))
     }
 
     @Test
     fun pickDowngrade_emptyMeasuredReturnsNull() {
-        assertNull(LineQualitySelector.pickDowngrade(emptyList(), "2160", 2160, emptySet()))
+        assertNull(LineQualitySelector.pickDowngrade(emptyList(), "2160", curUhd2160, emptySet()))
     }
 
     // ---------------- 并发探测(直连型线路,无爬虫共享状态) ----------------
