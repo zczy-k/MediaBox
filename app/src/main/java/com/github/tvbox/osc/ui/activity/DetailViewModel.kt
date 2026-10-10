@@ -28,7 +28,6 @@ import com.github.tvbox.osc.player.QualityGovernor
 import com.github.tvbox.osc.player.VideoQualityMemory
 import com.github.tvbox.osc.player.VideoQualityPolicy
 import com.github.tvbox.osc.player.VideoQualityProbe
-import com.github.tvbox.osc.util.UA
 import com.github.tvbox.osc.util.EpisodeTotals
 import com.github.tvbox.osc.util.HistoryHelper
 import com.github.tvbox.osc.util.HistoryWriter
@@ -605,14 +604,24 @@ class DetailViewModel : ViewModel() {
      * "预算内见到的最优就切",不是"探完再切"(附录 C)。
      */
     private object SourceSweepBudget {
-        /** 总预算:直链并行探测 + 爬虫深探合计 */
-        const val totalMs = 15_000L
+        /** 总预算:直链并行探测 + 爬虫深探合计(后台串行,不占前台) */
+        const val totalMs = 45_000L
 
         /** 单轮最多看几条线路 */
         const val maxLines = 8
 
-        /** 爬虫深探上限:每次解析都是一次真实 API 调用,必须封顶 */
-        const val deepProbeMax = 2
+        /**
+         * 爬虫深探上限。
+         *
+         * <p>⚠️ 原值是 **2**,而且**没有任何实测依据** —— 真机 23:24 证明它直接有害：
+         * 该片 9 条线路里 7 条是 crawler-type、`direct=0`，于是 `take(2)` 一刀砍掉 5 条，
+         * 用户看到的现象就是「7 条只探 2 条，剩下连试都没试」。
+         *
+         * <p>现与 [maxLines] 对齐：**不再单独截断**，统一由 [totalMs] 兜底。
+         * （实测深探失败是**毫秒级立即返回**，只有真正慢的解析才吃时间，所以放开配额
+         * 并不会真的把预算烧满。）
+         */
+        const val deepProbeMax = 8
 
         /** 单条深探预算(解析 1~3s + 探测 ≤0.8s,留一倍余量) */
         const val deepProbeTimeoutMs = 6_000L
@@ -1627,25 +1636,20 @@ class DetailViewModel : ViewModel() {
 
     /** 探测要带的请求头:站点级 header 优先,再补一个 UA(部分 CDN 缺 UA 直接 403) */
     /**
-     * 探测请求的 header。
+     * 探测请求的 header —— **与播放侧同口径**。
      *
-     * <p>⚠️ **绝不覆盖源配置里的 User-Agent**（2026-10-10 真机教训）。
+     * <p>播放侧（`PlayLoader.mergeSiteHeaders`）的 header = 爬虫解析结果里的头 +
+     * 源配置的头（**只补缺、不覆盖**），**从不注入 UA**。
      *
-     * <p>原实现无条件 `headers["User-Agent"] = UA.random()`，把源站自己配的 UA 顶掉了。
-     * 而播放路径的 header 来自**爬虫解析结果**（[com.github.tvbox.osc.player.PlayUrlResolver]
-     * 取 json 里的 `user-agent`，还带一个前导空格），两条路径的 UA 因此不一致。
+     * <p>⚠️ 旧实现无条件 `headers["User-Agent"] = UA.random()` —— 这是**探测独有的**，
+     * 播放侧没这一步。真机后果（2026-10-10）：同一个 m3u8 地址「播放顺畅、探测 404」，
+     * 且抽到 `UA.random()` 的兜底值（`Mozilla/5.0 (Macintosh…)`）时**稳定复现 404**。
      *
-     * <p>真机现象：同一个 m3u8 地址，22:46 探测拿到 200（55127 字节）、23:11 探测 404，
-     * 而播放全程正常 —— 中间唯一的变量就是 `UA.random()` 每次抽到不同的值。
-     * **源站按 UA 放行时，"随机覆盖"等于让探测成功率变成抽奖、行为不可复现。**
+     * <p>探测要与播放同命运，header 就必须同源 —— 所以这里**一个字段都不多加**。
      */
     private fun probeHeaders(siteKey: String): Map<String, String> {
         val headers = HashMap<String, String>()
         ApiConfig.get().getSource(siteKey)?.header?.let { headers.putAll(it) }
-        // 只在源**没有**配 UA 时兜底；键名大小写不敏感（源配置里 "user-agent" / "User-Agent" 两种都有）
-        if (headers.keys.none { it.equals("User-Agent", ignoreCase = true) }) {
-            headers["User-Agent"] = UA.random()
-        }
         return headers
     }
 
