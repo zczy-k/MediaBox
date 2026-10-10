@@ -276,6 +276,63 @@ class SourceHealthPolicyTest {
         assertEquals(1, s.timeoutStreak)
     }
 
+    // ---------- 2026-10-10:PLAY_FAILED 退出源级封禁判据 ----------
+
+    @Test
+    fun playFailedEvidenceIsIgnoredByShouldBan() {
+        // 真机实证的误伤链:健康源「天堂」上一条 Ksvideo 伪地址线路的 PLAY_FAILED,
+        // 连同另外两部片的播放失败凑满"3 次 2 部影片"被整源封 6h —— 而源本身正常出片。
+        // 因此 PLAY_FAILED 证据**不参与** shouldBan:2×PLAY_FAILED(2 片)+1×SEARCH_FAILED
+        // 在旧口径下正好触顶,新口径下两条规则都不该触发。
+        val a = SourceHealthPolicy.contentKey("电影A")
+        val b = SourceHealthPolicy.contentKey("电影B")
+        var s = SourceHealthPolicy.recordFail(
+            SourceHealthState(), SourceFailKind.PLAY_FAILED, a, t0,
+        )
+        s = SourceHealthPolicy.recordFail(s, SourceFailKind.PLAY_FAILED, b, t0)
+        s = SourceHealthPolicy.recordFail(s, SourceFailKind.SEARCH_FAILED, a, t0)
+        assertEquals(0, s.banCount)
+        assertFalse(SourceHealthPolicy.isBlocked(s, t0))
+    }
+
+    // ---------- 2026-10-10:雪崩抑制(suppressTimeoutBan) ----------
+
+    @Test
+    fun suppressedTimeouts_recordForDeferOnly_neverBan() {
+        // 弱网期:超时只追加 fails(供 30 分钟降权),不加 streak、不封 ——
+        // 否则一轮全网超时会成批封掉上百个源,网络恢复后反而无源可搜
+        val a = SourceHealthPolicy.contentKey("电影A")
+        var s = SourceHealthPolicy.recordFail(
+            SourceHealthState(), SourceFailKind.SEARCH_TIMEOUT, a, t0, suppressTimeoutBan = true,
+        )
+        s = SourceHealthPolicy.recordFail(
+            s, SourceFailKind.SEARCH_TIMEOUT, a, t0 + 1, suppressTimeoutBan = true,
+        )
+        s = SourceHealthPolicy.recordFail(
+            s, SourceFailKind.SEARCH_TIMEOUT, a, t0 + 2, suppressTimeoutBan = true,
+        )
+        // 3 条证据都在(降权依据),但没有 streak、没有封禁
+        assertEquals(3, s.fails.size)
+        assertEquals(0, s.timeoutStreak)
+        assertFalse(SourceHealthPolicy.isBlocked(s, t0 + 2))
+    }
+
+    @Test
+    fun suppressionEnds_streakRebuildsFromZero() {
+        // 抑制结束(网络恢复)后,连续超时从 0 重新数 —— 两次正常超时才封,
+        // 抑制期积攒的 fails 不该让恢复后的**单次**超时直接触发封禁
+        val a = SourceHealthPolicy.contentKey("电影A")
+        var s = SourceHealthPolicy.recordFail(
+            SourceHealthState(), SourceFailKind.SEARCH_TIMEOUT, a, t0, suppressTimeoutBan = true,
+        )
+        assertEquals(0, s.timeoutStreak)
+        s = SourceHealthPolicy.recordFail(s, SourceFailKind.SEARCH_TIMEOUT, a, t0 + 1)
+        assertEquals(1, s.timeoutStreak)
+        assertFalse(SourceHealthPolicy.isBlocked(s, t0 + 1))
+        s = SourceHealthPolicy.recordFail(s, SourceFailKind.SEARCH_TIMEOUT, a, t0 + 2)
+        assertTrue(SourceHealthPolicy.isBlocked(s, t0 + 2))
+    }
+
     @Test
     fun normalizeDropsStreakOnceEvidenceAgesOut() {
         var s = state(fails = 1, titles = listOf("电影A"))

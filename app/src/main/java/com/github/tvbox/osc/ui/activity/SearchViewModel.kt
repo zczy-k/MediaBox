@@ -123,6 +123,17 @@ class SearchViewModel : ViewModel() {
 
     private var token = 0
     private var arriveSeq = 0
+
+    /**
+     * 本轮搜索(token)内**已向源健康台账记过失败**的源(2026-10-10)。
+     *
+     * <p>为什么要这个集合:超时源会先走 4s 限时重试一轮(P4-A),"首批超时 + 重试再超时"
+     * 会被台账当成**连续两次**超时,凑满规则 2 的门槛直接封 1 小时 —— 同一次搜索就把源封掉,
+     * 显然不是"连续超时"的本意。口径改为:**同一 token 内每个源最多记一次**失败证据,
+     * 连续 2 次必须是**跨两次独立搜索**(或两个不同 token 的批次)。每源每关键词仅重试一次
+     * 是既有约束,所以集合无上限膨胀风险,随 [search] 开新轮清空。
+     */
+    private val failRecordedForToken: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     private var semaphorePermits = KV.get(HawkConfig.SEARCH_THREADS, HawkConfig.SEARCH_THREADS_DEFAULT)
     private var semaphore = Semaphore(semaphorePermits)
     private val pendingSources = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.CompletableDeferred<Unit>>()
@@ -372,6 +383,7 @@ class SearchViewModel : ViewModel() {
             semaphore = Semaphore(configured)
         }
         token = SEARCH_SEQ.incrementAndGet()
+        failRecordedForToken.clear()
         searchedTitle.value = t
         matchMode.value = SearchSettings.matchMode()
         HistoryHelper.setSearchHistory(t)
@@ -763,11 +775,17 @@ class SearchViewModel : ViewModel() {
      */
     private fun recordSourceOutcome(sourceKey: String, state: ResultState, settled: SourceResult?) {
         when (state) {
+            // 同一 token 内每源只记一次(2026-10-10):重试轮的超时/失败是**同一次搜索的延续**,
+            // 再记一次就凑成"连续 2 次"把源误封 1 小时(见 failRecordedForToken 的说明)
             ResultState.Timeout ->
-                notifyIfBanned(SourceHealthMemory.recordFail(SourceFailKind.SEARCH_TIMEOUT, sourceKey, searchedTitle.value))
+                if (failRecordedForToken.add(sourceKey)) {
+                    notifyIfBanned(SourceHealthMemory.recordFail(SourceFailKind.SEARCH_TIMEOUT, sourceKey, searchedTitle.value))
+                }
 
             ResultState.Failed ->
-                notifyIfBanned(SourceHealthMemory.recordFail(SourceFailKind.SEARCH_FAILED, sourceKey, searchedTitle.value))
+                if (failRecordedForToken.add(sourceKey)) {
+                    notifyIfBanned(SourceHealthMemory.recordFail(SourceFailKind.SEARCH_FAILED, sourceKey, searchedTitle.value))
+                }
 
             ResultState.Done -> {
                 settled?.videos?.takeIf { it.isNotEmpty() }?.let { videos ->

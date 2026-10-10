@@ -16,7 +16,13 @@ enum class SourceFailKind {
     /** 搜索请求失败(HTTP 异常/解析异常)。与超时同类:源没给出有效应答 */
     SEARCH_FAILED,
 
-    /** 选中该源起播失败(所有线路试完仍放不出来,且**不是**纯网络原因) */
+    /**
+     * 选中该源起播失败(所有线路试完仍放不出来,且**不是**纯网络原因)。
+     *
+     * <p>⚠️ 2026-10-10 起**停止记录**(记录侧已摘除调用)且**不参与** [SourceHealthPolicy.shouldBan]:
+     * 真机实证它会因单条线路的坏地址(如 Ksvideo 伪协议)误封整个健康源 6 小时。
+     * 枚举保留仅为兼容旧台账 JSON 的反序列化。
+     */
     PLAY_FAILED,
 }
 
@@ -130,10 +136,18 @@ object SourceHealthPolicy {
     fun distinctContents(fails: List<SourceFailEvent>): Int =
         fails.asSequence().map { it.contentKey }.filter { it.isNotEmpty() }.toSet().size
 
-    /** 是否满足封禁门槛 */
+    /**
+     * 是否满足封禁门槛。
+     *
+     * <p>⚠️ 2026-10-10:**[SourceFailKind.PLAY_FAILED] 不再参与判据**。真机实测它误伤面太大:
+     * "利未记"在健康源「天堂」上撞到一条 Ksvideo 伪地址线路被记 PLAY_FAILED,凑上另外两部片的
+     * 播放失败就把**整个源**封了 6 小时 —— 而源本身完全正常(同日还在正常出片)。单条线路的
+     * 坏地址是线路级问题,由线路优选/负冷却处置;源级封禁只认"源在搜索环节就没法用"的证据
+     * (SEARCH_TIMEOUT / SEARCH_FAILED)。旧台账里残留的 PLAY_FAILED 证据因此一并失效 ——
+     * 这正是目的:它们被证明是误伤。 */
     fun shouldBan(fails: List<SourceFailEvent>, now: Long): Boolean {
-        val window = prune(fails, now)
-        return window.size >= MIN_FAILS && distinctContents(window) >= MIN_DISTINCT_CONTENTS
+        val counted = prune(fails, now).filter { it.kind != SourceFailKind.PLAY_FAILED }
+        return counted.size >= MIN_FAILS && distinctContents(counted) >= MIN_DISTINCT_CONTENTS
     }
 
     /** 当前是否处于封禁态 */
@@ -177,6 +191,12 @@ object SourceHealthPolicy {
      *   <li>**源给出答案**(Done / Empty)⇒ 计数归零,走 [recordAnswered]。这是唯一的重置入口。</li>
      * </ul>
      *
+     * <p>## [suppressTimeoutBan](2026-10-10 雪崩保险丝)
+     * 置真时(判定为网络抖动期,见 [SourceHealthMemory]):超时事件**只追加进 [SourceHealthState.fails]**
+     * (供 30 分钟降权排序用),**不加** [SourceHealthState.timeoutStreak]、**不触发**规则 2 封禁 ——
+     * 一次弱网能让上百个源同时"连续超时 2 次",不抑制就会成批封掉 1 小时,弱网恢复后反而无源可搜。
+     * 规则 1 语义不受影响(其判据已不含 PLAY_FAILED,而 SEARCH_FAILED 本就不加 streak)。
+     *
      * @param contentKey 归一化片名,见 [contentKey];为空表示"这次失败取不到片名",
      *                   它仍计入次数,但不计入"不同影片数"
      */
@@ -185,6 +205,7 @@ object SourceHealthPolicy {
         kind: SourceFailKind,
         contentKey: String,
         now: Long,
+        suppressTimeoutBan: Boolean = false,
     ): SourceHealthState {
         if (state.manualLocked) return state
         val base = normalize(state, now)
@@ -192,7 +213,11 @@ object SourceHealthPolicy {
         // 规则 1 先判:它的封禁时长(≥6h)严格长于规则 2(1h),先判后判最终态一样;
         // 但只有先判,才不会被"规则 2 已封"短路掉升级档位。
         if (shouldBan(window, now)) return ban(base, now)
-        val streak = if (kind == SourceFailKind.SEARCH_TIMEOUT) base.timeoutStreak + 1 else base.timeoutStreak
+        val streak = if (kind == SourceFailKind.SEARCH_TIMEOUT && !suppressTimeoutBan) {
+            base.timeoutStreak + 1
+        } else {
+            base.timeoutStreak
+        }
         if (streak >= TIMEOUT_STREAK_BAN) {
             // 规则 2:固定 1 小时,**不动 banCount**(见类注释:最弱的证据不给最重的惩罚)。
             // fails 保留 —— 那是规则 1 的证据,不归这条规则处置。

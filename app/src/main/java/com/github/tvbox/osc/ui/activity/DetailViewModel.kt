@@ -34,9 +34,7 @@ import com.github.tvbox.osc.util.HistoryWriter
 import com.github.tvbox.osc.util.LOG
 import com.github.tvbox.osc.util.OkGoHelper
 import com.github.tvbox.osc.util.SearchHelper
-import com.github.tvbox.osc.util.SourceFailKind
 import com.github.tvbox.osc.util.SourceHealthFilter
-import com.github.tvbox.osc.util.SourceHealthMemory
 import com.github.tvbox.osc.util.TrailerPolicy
 import com.github.tvbox.osc.util.SourceIdentityMask
 import com.github.tvbox.osc.util.TitleMatcher
@@ -1543,19 +1541,18 @@ class DetailViewModel : ViewModel() {
     }
 
     /**
-     * 该源放不出来 ⇒ 记一次源级失败(防滥用封禁机制,P1 记录侧)。
+     * 该源放不出来 ⇒ 2026-10-10 起**只观测、不再写源级健康台账**。
      *
-     * <p>调用方必须已经排除"纯网络原因"([sourceLevelFailure] 的来历见 DetailActivity):
-     * 断网/被墙是所有源一起失败,算到某一个源头上会把好好的源全拉黑。
-     *
-     * <p>归到"影片"维度用当前片名(而不是"源|片id"):同一部片在不同源的 id 不同,
-     * 按 id 计会把"同一部片在两个源都放不出来"当成 2 部,把"≥2 部不同影片"的门槛稀释掉。
+     * <p>为什么摘掉(真机实证的误伤):播放失败绝大多数是**单条线路**的问题 ——
+     * "利未记"在健康源「天堂」上撞到一条 Ksvideo 伪地址线路,这条 PLAY_FAILED 连同另外两部片的
+     * 播放失败就把整个源封了 6 小时,用户再搜这部片直接搜不到(源被封不参与搜索)。
+     * 线路级问题已有线路优选/画质记忆/重试收口处置;源级封禁只认"搜索环节就无应答"的证据
+     * (SEARCH_TIMEOUT / SEARCH_FAILED,见 [SourceHealthPolicy.shouldBan])。
+     * 保留观测日志,便于统计"源级失败"真实发生频率,再决定是否需要更温和的源级证据。
      */
     private fun recordSourcePlayFailure() {
         val title = vodInfo?.name ?: vodName
-        val banned = SourceHealthMemory.recordFail(SourceFailKind.PLAY_FAILED, sourceKey, title)
-        // 触发封禁 ⇒ 广播一次,让首页立刻重算源清单/卡片可见性(见 HomeViewModel.refreshSourceBlock)
-        if (banned) EventBus.getDefault().post(RefreshEvent(RefreshEvent.TYPE_SOURCE_BLOCK_CHANGE))
+        LOG.i("echo-srcban play-failed observed source=" + sourceKey + " content=" + title + " (not recorded)")
     }
 
     private fun startFallbackIfNeeded(auto: Boolean, fromLinesExhausted: Boolean = false): Boolean {

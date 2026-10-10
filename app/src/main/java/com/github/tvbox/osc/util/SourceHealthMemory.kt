@@ -51,6 +51,36 @@ object SourceHealthMemory {
     private const val KEY_HEALTH = "health"
     private const val KEY_COVERAGE = "coverage"
 
+    // ==================== 雪崩保险丝(2026-10-10) ====================
+    //
+    // 弱网(或换网瞬间)一轮搜索能让上百个源同时"连续超时 2 次",规则 2 会把它们成批封 1 小时
+    // (真机实测:12:31-12:34 源池 671 → 485,一秒内封掉 186 个)。网络恢复后这些源依然被挡在外面
+    // —— 最需要源的时候反而无源可搜。所以:
+    //  • 30 秒窗口内规则 2 封禁达到 [AVALANCHE_THRESHOLD] 个 ⇒ 判定为网络抖动:
+    //    把本窗口内已封的源**回滚**(1h 封禁解除,降权由 fails 里的超时事件自然保留),
+    //    并在窗口剩余时间内抑制后续规则 2 封禁(超时只记 fails 供降权,不加 streak 不封)。
+    //  • 只作用于规则 2:规则 1(升级档位)的内容相关证据强、频次低,不参与。
+    //  • 窗口过期后一切复位;若网络仍差,每 30 秒最多再封 [AVALANCHE_THRESHOLD] 个并立即回滚
+    //    —— 自限节奏,坏不到哪去。
+
+    /** 保险丝的观测窗口 */
+    private const val AVALANCHE_WINDOW_MS = 30_000L
+
+    /** 窗口内规则 2 封禁达到该数量即判定为网络抖动 */
+    private const val AVALANCHE_THRESHOLD = 20
+
+    /** 当前滚动窗口起点(0 = 未开窗) */
+    private var avWinStart = 0L
+
+    /** 窗口内规则 2 封禁计数 */
+    private var avCount = 0
+
+    /** 窗口内被规则 2 封禁的源 key(回滚清单) */
+    private val avKeys = ArrayList<String>()
+
+    /** 保险丝激活截止时刻(此前的规则 2 封禁一律跳过);0 = 未激活 */
+    private var avSuppressedUntil = 0L
+
     private val lock = Any()
     private val main = Handler(Looper.getMainLooper())
 
@@ -106,11 +136,14 @@ object SourceHealthMemory {
         val t = now()
         var newlyBanned = false
         var escalated = false
+        var avalancheRolledBack = 0
         synchronized(lock) {
             val bucket = load()
+            // 雪崩抑制期:超时只记 fails(供降权),不加 streak、不触发规则 2 封禁(见顶部说明)
+            val suppressTimeoutBan = kind == SourceFailKind.SEARCH_TIMEOUT && t < avSuppressedUntil
             val before = bucket.health[key] ?: SourceHealthState()
             val wasBlocked = SourceHealthPolicy.isBlocked(before, t)
-            val after = SourceHealthPolicy.recordFail(before, kind, contentKey, t)
+            val after = SourceHealthPolicy.recordFail(before, kind, contentKey, t, suppressTimeoutBan)
             bucket.health[key] = after
             trimHealth(bucket)
             val banned = after.manualLocked || after.bannedUntil > t
@@ -124,6 +157,38 @@ object SourceHealthMemory {
                     " streak=" + after.timeoutStreak +
                     " banned=" + banned + " locked=" + after.manualLocked
             )
+            // 规则 2 的成批封禁计数:30 秒窗口内达到阈值 ⇒ 判定网络抖动,回滚本窗口内已封源
+            // 并抑制窗口剩余时间内的后续封禁。只认规则 2 的产物(未升级档位、由超时触发)。
+            if (newlyBanned && !escalated && kind == SourceFailKind.SEARCH_TIMEOUT) {
+                if (avWinStart == 0L || t - avWinStart > AVALANCHE_WINDOW_MS) {
+                    avWinStart = t
+                    avCount = 0
+                    avKeys.clear()
+                }
+                avCount++
+                avKeys.add(key)
+                if (avCount >= AVALANCHE_THRESHOLD) {
+                    avSuppressedUntil = avWinStart + AVALANCHE_WINDOW_MS
+                    for (k in avKeys) {
+                        val st = bucket.health[k] ?: continue
+                        // 只回滚"当前仍生效的临时封禁":规则 1 的升级档位(6h/24h/永久)不在本清单里
+                        // (avKeys 只收 !escalated 的规则 2 产物),这里再挡一层 manualLocked 兜底。
+                        if (!st.manualLocked && st.bannedUntil > t) {
+                            bucket.health[k] = st.copy(bannedUntil = 0L, timeoutStreak = 0)
+                            avalancheRolledBack++
+                        }
+                    }
+                    LOG.i(
+                        "echo-srcban avalanche rollback n=" + avalancheRolledBack +
+                            " windowMs=" + AVALANCHE_WINDOW_MS + " suppressedUntil=" + avSuppressedUntil
+                    )
+                    // 回滚也是成批转折点,但同属弱网风暴期:走合并落盘,revision 要 bump
+                    // (首页"已屏蔽 N 个"计数立刻回落)。
+                    bumpRevision()
+                    avCount = 0
+                    avKeys.clear()
+                }
+            }
         }
         if (escalated) {
             // 升级档位是低频、且"升到永久"不可逆的转折点:当场落盘,别赌 2 秒窗口

@@ -163,8 +163,32 @@ class HomeViewModel : ViewModel() {
         // 被屏蔽的源集合变了(自动封禁 / 设置页解除 / 开关切换):本地重算源清单与卡片可见性。
         // ⚠️ 刻意**不**重新取数:封禁是本地状态变化,没必要为它重跑一遍首页请求
         if (event.type == RefreshEvent.TYPE_SOURCE_BLOCK_CHANGE) {
+            scheduleSourceBlockRefresh()
+        }
+    }
+
+    /**
+     * 源屏蔽重算的**防抖**入口(2026-10-10)。
+     *
+     * <p>为什么要防抖:规则 2(连续超时)的封禁在弱网下**成批**发生 —— 真机实测 0.1 秒内
+     * 连封 186 个,每条封禁都 post 一次 [RefreshEvent.TYPE_SOURCE_BLOCK_CHANGE],于是
+     * "源清单过滤 + 全部分区卡片可见性重算"在风暴期被连跑 186 遍,全是无效功(中间态立刻被下一条覆盖)。
+     * 合并到 [SOURCE_BLOCK_DEBOUNCE_MS] 内一次重算,结果完全等价(重算是纯本地、幂等的)。
+     */
+    private fun scheduleSourceBlockRefresh() {
+        if (sourceBlockRefreshScheduled) return
+        sourceBlockRefreshScheduled = true
+        viewModelScope.launch {
+            delay(SOURCE_BLOCK_DEBOUNCE_MS)
+            sourceBlockRefreshScheduled = false
             refreshSourceBlock()
         }
+    }
+
+    private var sourceBlockRefreshScheduled = false
+
+    private companion object {
+        const val SOURCE_BLOCK_DEBOUNCE_MS = 2000L
     }
 
     /**
