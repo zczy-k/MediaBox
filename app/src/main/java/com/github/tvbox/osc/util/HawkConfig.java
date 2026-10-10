@@ -58,7 +58,7 @@ public class HawkConfig {
     /**
      * 「流量节省」开关(boolean,默认 true)。
      *
-     * <p>开启时禁止一切**向上**的画质动作(升档追踪 / 跨源搜寻 / 爬虫深探)，并把生效档位
+     * <p>开启时禁止一切**向上**的画质动作(升档追踪 / 爬虫深探 / 有界扫描切换)，并把生效档位
      * 归一化为「自动画质」；只保留向下兜底(故障降档)。口径见 DeviceCapability.trafficSaverOn / effectiveMode。
      *
      * <p>为什么单独一把开关而不是加第四档 QualityMode：QualityMode 是"起播探测策略"语义，
