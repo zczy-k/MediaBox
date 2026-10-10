@@ -1595,10 +1595,26 @@ class DetailViewModel : ViewModel() {
     }
 
     /** 探测要带的请求头:站点级 header 优先,再补一个 UA(部分 CDN 缺 UA 直接 403) */
+    /**
+     * 探测请求的 header。
+     *
+     * <p>⚠️ **绝不覆盖源配置里的 User-Agent**（2026-10-10 真机教训）。
+     *
+     * <p>原实现无条件 `headers["User-Agent"] = UA.random()`，把源站自己配的 UA 顶掉了。
+     * 而播放路径的 header 来自**爬虫解析结果**（[com.github.tvbox.osc.player.PlayUrlResolver]
+     * 取 json 里的 `user-agent`，还带一个前导空格），两条路径的 UA 因此不一致。
+     *
+     * <p>真机现象：同一个 m3u8 地址，22:46 探测拿到 200（55127 字节）、23:11 探测 404，
+     * 而播放全程正常 —— 中间唯一的变量就是 `UA.random()` 每次抽到不同的值。
+     * **源站按 UA 放行时，"随机覆盖"等于让探测成功率变成抽奖、行为不可复现。**
+     */
     private fun probeHeaders(siteKey: String): Map<String, String> {
         val headers = HashMap<String, String>()
         ApiConfig.get().getSource(siteKey)?.header?.let { headers.putAll(it) }
-        headers["User-Agent"] = UA.random()
+        // 只在源**没有**配 UA 时兜底；键名大小写不敏感（源配置里 "user-agent" / "User-Agent" 两种都有）
+        if (headers.keys.none { it.equals("User-Agent", ignoreCase = true) }) {
+            headers["User-Agent"] = UA.random()
+        }
         return headers
     }
 

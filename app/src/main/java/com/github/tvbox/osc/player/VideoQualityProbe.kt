@@ -50,10 +50,12 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
             try {
                 client.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
-                        // 带上最终地址:404 往往是地址过期/被重定向到了别处,不看地址无法判断
+                        // ua= 是必须的:源站常按 UA 放行,404 时必须知道"我们用的是哪个 UA"才判得下去。
+                        // 真机踩过:同一地址一次 200、一次 404,而唯一的变量就是 UA(详见 DetailViewModel.probeHeaders)
                         val fu = response.request.url
                         LOG.i(
                             "echo-quality probe-failed http=" + response.code +
+                                " ua=" + uaTag(headers) +
                                 " final=" + fu.host + fu.encodedPath
                         )
                         return@use null
@@ -208,6 +210,15 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
         } catch (t: Throwable) {
             null
         }
+    }
+
+    /**
+     * UA 摘要:只取头 24 字符 —— 够区分"源站配的 UA"与"随机池抽的",又不至于刷屏。
+     * 键名大小写不敏感(`UA.random()` 写 "User-Agent",部分源配置写 "user-agent")。
+     */
+    private fun uaTag(headers: Map<String, String>): String {
+        val ua = headers.entries.firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }?.value
+        return if (ua.isNullOrBlank()) "none" else ua.take(24).replace(' ', '_')
     }
 
     private fun buildRequest(url: String, headers: Map<String, String>): Request? = try {
