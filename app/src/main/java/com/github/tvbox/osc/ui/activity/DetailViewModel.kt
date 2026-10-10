@@ -24,6 +24,7 @@ import com.github.tvbox.osc.event.RefreshEvent
 import com.github.tvbox.osc.player.DeviceCapability
 import com.github.tvbox.osc.player.LineQualitySelector
 import com.github.tvbox.osc.player.PlaybackSession
+import com.github.tvbox.osc.player.QualityGovernor
 import com.github.tvbox.osc.player.VideoQualityMemory
 import com.github.tvbox.osc.player.VideoQualityPolicy
 import com.github.tvbox.osc.player.VideoQualityProbe
