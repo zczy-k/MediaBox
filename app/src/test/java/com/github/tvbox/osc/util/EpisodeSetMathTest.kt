@@ -32,27 +32,35 @@ class EpisodeSetMathTest {
     fun `场景A_源A比源B覆盖率高`() {
         val a = set(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
         val b = set(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
-        val confirmed = EpisodeSetMath.confirmed(listOf(a, b))
-        // 两源都有 1-10 → 可信参考集 1-10
-        assertEquals(set(1, 2, 3, 4, 5, 6, 7, 8, 9, 10), confirmed)
-        val covA = SourceCompletenessPolicy.coverage(a, confirmed)
-        val covB = SourceCompletenessPolicy.coverage(b, confirmed)
+        // 覆盖率以**并集**为参照(衡量"已发现内容谁更全"):A 12/12=100%,B 10/12≈83%
+        val unionRef = EpisodeSetMath.union(listOf(a, b))
+        assertEquals(set(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12), unionRef)
+        val covA = SourceCompletenessPolicy.coverage(a, unionRef)
+        val covB = SourceCompletenessPolicy.coverage(b, unionRef)
         assertTrue(covA > covB)
-        // A 独有的 11-12 只有单源观测 → 不进入可信参考集(宁保守)
+        // 缺集断言以**可信集**(≥2 源印证)为参照:11-12 仅单源观测 → 不断言 B 缺 11-12
+        // (花开锦绣案例:单源自报的"第37项"不产生"缺第37集"误标)
+        val confirmed = EpisodeSetMath.confirmed(listOf(a, b))
+        assertEquals(set(1, 2, 3, 4, 5, 6, 7, 8, 9, 10), confirmed)
         assertEquals(emptyList<Int>(), EpisodeSetMath.missing(a, confirmed))
-        assertEquals(listOf(11, 12), EpisodeSetMath.missing(b, confirmed))
+        assertEquals(emptyList<Int>(), EpisodeSetMath.missing(b, confirmed))
     }
 
     // ==================== 场景 B:中间缺集 ====================
 
     @Test
-    fun `场景B_缺第9集被识别_max模型盲区被消除`() {
+    fun `场景B_并集口径可识别缺第9集_标注口径不误断言`() {
         val a = set(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
         val b = set(1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12)
+        // 数据层面(并集参照):B 缺第 9 集 —— max 模型的盲区在此消除,作为参考信息保留
+        val unionRef = EpisodeSetMath.union(listOf(a, b))
+        assertEquals(listOf(9), EpisodeSetMath.missing(b, unionRef))
+        // 标注层面:可信集(≥2 源)不含 9(仅 A 单源观测)⇒ 不做"缺第9集"断言
+        // —— 文档 6.3"参考集合尚未稳定时不产生缺集断言"与花开锦绣防污染一致
         val confirmed = EpisodeSetMath.confirmed(listOf(a, b))
-        assertEquals(listOf(9), EpisodeSetMath.missing(b, confirmed))
-        assertEquals(emptyList<Int>(), EpisodeSetMath.missing(a, confirmed))
-        // 连续性:B 的前缀只有 8
+        assertEquals(set(1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12), confirmed)
+        assertEquals(emptyList<Int>(), EpisodeSetMath.missing(b, confirmed))
+        // 连续性:B 的前缀只有 8,A 全连续 —— 作为标注与排序的参考
         assertEquals(8, EpisodeSetMath.continuity(b))
         assertEquals(12, EpisodeSetMath.continuity(a))
     }
