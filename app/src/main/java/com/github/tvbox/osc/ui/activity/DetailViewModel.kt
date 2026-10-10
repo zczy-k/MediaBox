@@ -1992,6 +1992,12 @@ class DetailViewModel : ViewModel() {
             publishLineQualityHeights()
             return
         }
+        // 自适应画质(2026-10-10):播放中网络富余但记忆里没有更高实测档 → 补探测未测线路。
+        // probeMissingLineQualities 幂等(已测的跳过)且有预算上限,频繁触发也只会白查一次记忆。
+        if (event.type == RefreshEvent.TYPE_PROBE_MISSING_LINES) {
+            probeMissingLineQualities()
+            return
+        }
         if (event.type != RefreshEvent.TYPE_REFRESH) return
         val info = vodInfo ?: return
         when (val obj = event.obj) {

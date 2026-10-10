@@ -56,6 +56,14 @@ public class RefreshEvent {
      * 与 {@link #TYPE_VOD_UNAVAILABLE} 同款(标记在 AvailabilityMemory,广播在使用的 ViewModel)。
      */
     public static final int TYPE_SOURCE_BLOCK_CHANGE = 26;
+    /**
+     * 自适应画质(2026-10-10):升档检查发现"记忆里没有更高实测档",请详情页补探测
+     * 未测线路(见 DetailViewModel.probeMissingLineQualities,只探直连型、预算受限、幂等)。
+     * 探测≠切换 —— 填上记忆后,下一次网络富余检查才有资格做升档决策。
+     * 谁发:PlaybackRetryDelegate.handleNetworkPlentiful(网络富余但 pickUpgrade 无候选时,
+     * 且用户画质档位允许探测)。爬虫型线路因同类 Spider 不能并发,不在此列(见探测函数 KDoc)。
+     */
+    public static final int TYPE_PROBE_MISSING_LINES = 27;
     public int type;
     public Object obj;
 

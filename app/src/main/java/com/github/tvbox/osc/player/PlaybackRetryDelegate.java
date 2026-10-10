@@ -5,11 +5,13 @@ import android.text.TextUtils;
 
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.bean.VodInfo;
+import com.github.tvbox.osc.event.RefreshEvent;
 import com.github.tvbox.osc.util.EpisodeMatcher;
 import com.github.tvbox.osc.util.HawkConfig;
 import com.github.tvbox.osc.util.KV;
 import com.github.tvbox.osc.util.LOG;
 
+import org.greenrobot.eventbus.EventBus;
 import org.json.JSONObject;
 
 import java.util.HashMap;
@@ -510,7 +512,21 @@ final class PlaybackRetryDelegate {
                 VideoQualityMemory.lookupAll(vod.sourceKey, vod.id, lineFlags);
         String target = LineQualitySelector.pickUpgrade(measured, vod.playFlag, currentHeight, st.triedLineFlags);
         if (target == null) {
-            LOG.i("echo-quality upgrade skip: no higher measured tier in memory");
+            // 区分"记忆里就没有更高档"与"有但都试过了"(2026-10-10):前者值得补探测,
+            // 后者补探测也无济于事 —— 候选都被 tried 排除,说明这集的更高档已经试过并失败过
+            long untriedHigher = measured.stream()
+                    .filter(v -> v.getFlag() != null && !v.getFlag().isEmpty() && !v.getFlag().equals(vod.playFlag)
+                            && v.getHeight() > currentHeight && !st.triedLineFlags.contains(v.getFlag()))
+                    .count();
+            LOG.i("echo-quality upgrade skip: no higher measured tier in memory"
+                    + " (untriedHigher=" + untriedHigher + ")");
+            // 第二批:网络富余但无候选 → 请详情页补探测未测线路(幂等,只探直连型未测者),
+            // 填上记忆后下一次富余检查(≥30s 后)才有资格做升档决策
+            if (untriedHigher == 0 && DeviceCapability.QualityMode.current().shouldProbeOnFirstWatch
+                    && vod.seriesMap != null && vod.seriesMap.size() > 1) {
+                EventBus.getDefault().post(new RefreshEvent(RefreshEvent.TYPE_PROBE_MISSING_LINES));
+                LOG.i("echo-quality probe-request posted");
+            }
             return;
         }
         int targetHeight = 0;
