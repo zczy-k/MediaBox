@@ -546,6 +546,7 @@
     <string name="player_get_info_error">Failed to get playback info</string>
     <string name="player_getting_info">Getting playback info</string>
     <string name="player_trying_other_line">Trying another line</string>
+    <string name="player_quality_upgrading">Switching to higher quality…</string>
     <string name="player_trying_other_source">Trying another source</string>
     <string name="player_play_url_empty">Playback URL is empty</string>
     <string name="player_play_error_retry">Playback error. Retrying automatically</string>

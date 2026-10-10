@@ -1,5 +1,6 @@
 package com.github.tvbox.osc.player;
 
+import android.os.SystemClock;
 import android.text.TextUtils;
 
 import com.github.tvbox.osc.R;
@@ -65,6 +66,26 @@ final class PlaybackRetryDelegate {
     }
 
     private final Host host;
+
+    // -------------------- 自适应画质:升档状态(2026-10-10 第一批) --------------------
+
+    /** 升档出发地快照:回滚目标(已验证可播的线路/集/实测档) */
+    private String upgradeOriginFlag = "";
+
+    private int upgradeOriginIndex = -1;
+
+    private int upgradeOriginHeight = 0;
+
+    /** 升档时刻(uptimeMillis);0 = 无升档在途 */
+    private long upgradedAtElapsed = 0L;
+
+    /** 起播成功时刻(稳定期计时起点);0 = 未标记 */
+    private long episodeStartElapsed = 0L;
+
+    private int upgradesDone = 0;
+
+    /** 回滚后锁定:本集会话不再升档(防"升→卡→降→再升"振荡) */
+    private boolean upgradeLockedThisSession = false;
 
     PlaybackRetryDelegate(Host host) {
         this.host = host;
@@ -380,13 +401,14 @@ final class PlaybackRetryDelegate {
         if (targetList == null || targetList.isEmpty()) return false;
         VodInfo.VodSeries currentSeries = host.currentSeries(vod.playFlag, Math.max(vod.playIndex, 0));
         int nextIndex = EpisodeMatcher.sameEpisodeIndex(currentSeries, targetList, vod.playIndex);
-        return switchLineTo(target, nextIndex, "echo-downgrade " + currentHeight + "p");
+        return switchLineTo(target, nextIndex, "echo-downgrade " + currentHeight + "p",
+                R.string.player_trying_other_line);
     }
 
     /**
      * 切到指定 flag:进度继承、集名匹配、标记已试,三件事降档与换线共用,避免两条路径行为漂移。
      */
-    private boolean switchLineTo(String targetFlag, int nextIndex, String logPrefix) {
+    private boolean switchLineTo(String targetFlag, int nextIndex, String logPrefix, int tipResId) {
         PlaybackAttemptState st = host.attemptState();
         VodInfo vod = host.vod();
         if (vod == null || TextUtils.isEmpty(vod.playFlag)) return false;
@@ -394,7 +416,7 @@ final class PlaybackRetryDelegate {
         LOG.i(logPrefix + ": switch line " + vod.playFlag + " -> " + targetFlag);
         // 给一句"在动"的阶段反馈,但**不带线路名/序号**:名字会泄露用的是哪条线路,
         // 而序号在换源后会重置回 1,反而让人以为"怎么又从头开始"。
-        showStageTip(R.string.player_trying_other_line);
+        showStageTip(tipResId);
         // 换线不换集:记下当前位置,新线路的进度键不同,靠它接着看。
         // ⚠️ 必须在改 playFlag/playIndex **之前** —— 记下的那条要带走的是旧线路的集名。
         host.rememberProgressForSwitch();
@@ -438,7 +460,113 @@ final class PlaybackRetryDelegate {
             st.linesExhausted();
             return handOverToSourceFallback();
         }
-        return switchLineTo(nextFlag, nextIndex, "echo-autoRetry switch line");
+        return switchLineTo(nextFlag, nextIndex, "echo-autoRetry switch line",
+                R.string.player_trying_other_line);
+    }
+
+    // -------------------- 自适应画质:线内升档 + 回滚(2026-10-10 第一批) --------------------
+
+    /** 新内容边界(beginNewPlay):升档计数/会话锁/出发地快照全部作废 */
+    void resetUpgradeState() {
+        upgradeOriginFlag = "";
+        upgradeOriginIndex = -1;
+        upgradeOriginHeight = 0;
+        upgradedAtElapsed = 0L;
+        episodeStartElapsed = 0L;
+        upgradesDone = 0;
+        upgradeLockedThisSession = false;
+    }
+
+    /** 起播成功(markPlaybackStarted):稳定期计时起点 */
+    void noteEpisodeStart() {
+        if (episodeStartElapsed == 0L) episodeStartElapsed = SystemClock.elapsedRealtime();
+    }
+
+    /**
+     * 看门狗报"网络持续富余" → 线内升档(换更高实测档线路,换线不换集)。
+     *
+     * <p>门控全部在 [QualityGovernor.canUpgrade]:画质档位(SPEED_FIRST 永不升/AUTO ≥2 档/
+     * QUALITY_FIRST ≥1 档)、稳定期(≥60s)、每集额度(≤2 次)、会话锁。
+     * 候选只来自实测记忆( pickUpgrade,升得最少单步走),不探测不猜。
+     */
+    void handleNetworkPlentiful() {
+        PlaybackAttemptState st = host.attemptState();
+        if (upgradeLockedThisSession) {
+            LOG.i("echo-quality upgrade skip: session locked");
+            return;
+        }
+        if (upgradedAtElapsed != 0L
+                && QualityGovernor.inRollbackWindow(SystemClock.elapsedRealtime(), upgradedAtElapsed)) {
+            LOG.i("echo-quality upgrade skip: in rollback-observe window");
+            return;
+        }
+        VodInfo vod = host.vod();
+        if (vod == null || TextUtils.isEmpty(vod.playFlag) || TextUtils.isEmpty(vod.sourceKey)) return;
+        if (vod.seriesMap == null || vod.seriesMap.isEmpty()) return;
+        int currentHeight = currentMeasuredHeight();
+        if (currentHeight <= 0) return;
+        List<String> lineFlags = EpisodeMatcher.lineFlagsInDisplayOrder(vod);
+        List<VideoQualityPolicy.Variant> measured =
+                VideoQualityMemory.lookupAll(vod.sourceKey, vod.id, lineFlags);
+        String target = LineQualitySelector.pickUpgrade(measured, vod.playFlag, currentHeight, st.triedLineFlags);
+        if (target == null) {
+            LOG.i("echo-quality upgrade skip: no higher measured tier in memory");
+            return;
+        }
+        int targetHeight = 0;
+        for (VideoQualityPolicy.Variant v : measured) {
+            if (target.equals(v.flag)) {
+                targetHeight = v.height;
+                break;
+            }
+        }
+        long sinceStart = episodeStartElapsed == 0L ? -1L : SystemClock.elapsedRealtime() - episodeStartElapsed;
+        if (!QualityGovernor.canUpgrade(DeviceCapability.QualityMode.current(), currentHeight, targetHeight,
+                sinceStart, upgradesDone, upgradeLockedThisSession ? QualityGovernor.tierOf(upgradeOriginHeight) : -1)) {
+            LOG.i("echo-quality upgrade skip: gate denied cur=" + currentHeight
+                    + " target=" + targetHeight + " done=" + upgradesDone);
+            return;
+        }
+        List<VodInfo.VodSeries> targetList = vod.seriesMap.get(target);
+        if (targetList == null || targetList.isEmpty()) return;
+        VodInfo.VodSeries currentSeries = host.currentSeries(vod.playFlag, Math.max(vod.playIndex, 0));
+        int nextIndex = EpisodeMatcher.sameEpisodeIndex(currentSeries, targetList, vod.playIndex);
+        // 拍照出发地:回滚窗口内的失败先回到这里(已验证可播)
+        upgradeOriginFlag = vod.playFlag;
+        upgradeOriginIndex = vod.playIndex;
+        upgradeOriginHeight = currentHeight;
+        upgradedAtElapsed = SystemClock.elapsedRealtime();
+        upgradesDone++;
+        switchLineTo(target, nextIndex, "echo-quality upgrade " + currentHeight + "p",
+                R.string.player_quality_upgrading);
+    }
+
+    /**
+     * 升档失败回滚:升档后 [QualityGovernor.ROLLBACK_WINDOW_MS] 内出现失败/判劣质,
+     * 第一优先切回出发地 —— 目标画质**确定**(升级前的档),不让通用链漫游到未知档。
+     *
+     * @return true = 已回滚接管;false = 无升档在观察期,走通用失败链
+     */
+    private boolean maybeRollbackUpgrade(String why) {
+        PlaybackAttemptState st = host.attemptState();
+        if (upgradedAtElapsed == 0L) return false;
+        if (!QualityGovernor.inRollbackWindow(SystemClock.elapsedRealtime(), upgradedAtElapsed)) {
+            // 窗口已过:清快照,此后失败按普通卡顿处理
+            upgradedAtElapsed = 0L;
+            return false;
+        }
+        String flag = upgradeOriginFlag;
+        int index = upgradeOriginIndex;
+        upgradedAtElapsed = 0L;
+        if (TextUtils.isEmpty(flag)) return false;
+        upgradeLockedThisSession = true;
+        LOG.i("echo-quality upgrade-rollback(" + why + "): back to " + flag
+                + ", upgrades locked this session");
+        // 出发地在升档时被 switchLineTo 记为"已试",回滚要先摘掉这个标记
+        st.triedLineFlags.remove(flag);
+        switchLineTo(flag, index, "echo-quality upgrade-rollback",
+                R.string.player_trying_other_line);
+        return true;
     }
 
     /**
@@ -459,6 +587,9 @@ final class PlaybackRetryDelegate {
         PlaybackAttemptState st = host.attemptState();
         PlaybackViewBridge view = host.view();
         if (view == null) return false;
+        // 升档失败回滚优先(2026-10-10):升档观察期内判劣质,先回出发地(已验证可播、档位已知),
+        // 不走"降档→站序→换源"漫游到未知档 —— 升档场景的最优解是"回到出发地"
+        if (maybeRollbackUpgrade("too-slow")) return true;
         // 卡顿时同源换线是代价最小的一跳,故这里**故意不看** allowAutoSwitchLine ——
         // 它由全屏决定,本意是"别拿换集打断正在看的画面";可卡顿意味着画面已经废了,
         // 再看它等于把最便宜的一跳也关掉,只剩"重新搜索 + 重取详情"这种重跳。
@@ -492,6 +623,7 @@ final class PlaybackRetryDelegate {
 
     void handleResolvePlayUrlTimeout() {
         PlaybackAttemptState st = host.attemptState();
+        if (maybeRollbackUpgrade("resolve-timeout")) return;
         if (retryWithFreshResolve("resolveTimeout")) return;
         LOG.i("echo-resolvePlayUrl timeout, try next line");
         host.cancelPlayRequest();
@@ -507,6 +639,7 @@ final class PlaybackRetryDelegate {
 
     void handleResolvePlayUrlFailed(String err) {
         PlaybackAttemptState st = host.attemptState();
+        if (maybeRollbackUpgrade("resolve-failed")) return;
         LOG.i("echo-resolvePlayUrl failed, try next line: " + err);
         host.cancelPlayRequest();
         host.stopParse();

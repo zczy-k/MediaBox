@@ -42,6 +42,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import xyz.doikki.videoplayer.player.AbstractPlayer;
 import xyz.doikki.videoplayer.player.VideoView;
 
 /**
@@ -580,6 +581,28 @@ public class PlaybackController {
         public void onPlaybackTooSlow() {
             retry.handlePlaybackTooSlow();
         }
+
+        @Override
+        public long bufferedAheadMs() {
+            // 内核无关口径:duration × 缓冲百分比 − 已播位置;拿不到返回 -1(不计入富余判定)
+            PlaybackViewBridge v = view;
+            if (v == null) return -1L;
+            AbstractPlayer p = v.mediaPlayer();
+            if (p == null) return -1L;
+            try {
+                long dur = p.getDuration();
+                int pct = p.getBufferedPercentage();
+                if (dur <= 0 || pct <= 0) return 0L;
+                return Math.max(0L, dur * pct / 100L - p.getCurrentPosition());
+            } catch (Throwable th) {
+                return -1L;
+            }
+        }
+
+        @Override
+        public void onNetworkPlentiful() {
+            retry.handleNetworkPlentiful();
+        }
     });
 
     // -------------------- 状态开关(供页面在既有流程点调用) --------------------
@@ -589,6 +612,8 @@ public class PlaybackController {
         st.beginNewPlay();
         // 内容边界:质量看门狗重新计(换集/换源/重播后不该继承上一段的劣质累计)
         quality.reset();
+        // 内容边界:升档计数/会话锁/出发地快照作废(2026-10-10 自适应画质)
+        retry.resetUpgradeState();
         // 新内容开始 ⇒ 上一条"播完待撤会话"的判定作废(否则那条迟到的消息会打到本次新会话上)
         timeouts.cancelPendingCompletionDrop();
         // 换内容(换集/换线/换源/重播)⇒ 上一次确认的"纯音频"作废,由新内容自己重新确认
@@ -661,6 +686,8 @@ public class PlaybackController {
     public void markPlaybackStarted() {
         st.playbackStarted = true;
         cancelPlayTimeout();
+        // 自适应画质:稳定期计时起点(升档门控"进集 ≥60s")
+        retry.noteEpisodeStart();
     }
 
     public boolean isPlaybackStarted() {

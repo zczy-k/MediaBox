@@ -176,4 +176,26 @@ object LineQualitySelector {
         // 降得最少:取低于当前档里最高的那条
         return candidates.maxByOrNull { it.height }?.flag
     }
+
+    /**
+     * 升档选线(2026-10-10,自适应画质):[pickDowngrade] 的镜像 —— 取**高于**当前实测档里
+     * 最低的那条("升得最少",单步走,本集还有额度可继续升)。
+     *
+     * <p>候选只来自实测记忆,不探测(探测属第二批后台择优);没记忆不猜,与降档同一口径。
+     */
+    fun pickUpgrade(
+        measured: List<VideoQualityPolicy.Variant>,
+        currentFlag: String,
+        currentHeight: Int,
+        triedFlags: Set<String>,
+    ): String? {
+        if (currentHeight <= 0) return null
+        val candidates = measured.filter {
+            it.flag.isNotEmpty() && it.flag != currentFlag && it.known &&
+                it.height > currentHeight && !triedFlags.contains(it.flag)
+        }
+        if (candidates.isEmpty()) return null
+        // 升得最少:取高于当前档里最低的那条
+        return candidates.minByOrNull { it.height }?.flag
+    }
 }

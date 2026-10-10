@@ -36,6 +36,12 @@ final class PlaybackQualityWatchdog {
 
         /** 判定为"持续劣质"时回调(实现方决定换线还是换源) */
         void onPlaybackTooSlow();
+
+        /** 已缓冲未播时长(毫秒);内核拿不到返回 -1。网络富余信号用(升档判定) */
+        long bufferedAheadMs();
+
+        /** 网络持续富余(连续满速推进 + 缓冲余量达标)时回调;是否真的升档由 QualityGovernor 门控 */
+        void onNetworkPlentiful();
     }
 
     /** 采样间隔 */
@@ -52,6 +58,21 @@ final class PlaybackQualityWatchdog {
      * 取 0.5 而非 0.9:弱网下起播前几拍会慢,给一点余量;真卡死的推进量接近 0,0.5 足以区分。
      */
     private static final float MIN_PROGRESS_RATIO = 0.5f;
+
+    // -------------------- 网络富余检测(2026-10-10 自适应画质:升档信号) --------------------
+
+    /** 单次采样内推进 ≥ 经过时间 × 本比例 视为"满速" */
+    private static final float GOOD_PROGRESS_RATIO = 0.95f;
+
+    /** 连续多少次满速采样后进入富余判定(3 × 5s = 15s,与劣质滞回对称) */
+    private static final int GOOD_STREAK_TO_UPGRADE = 3;
+
+    /** 缓冲余量达标线:已缓冲未播 ≥ 20s 才认为升过去不会马上饿死 */
+    private static final long HEADROOM_MIN_MS = 20_000L;
+
+    private int goodStreak = 0;
+
+    private long lastPlentifulAt = 0L;
 
     private final Host host;
 
@@ -85,6 +106,7 @@ final class PlaybackQualityWatchdog {
         lastPosition = -1L;
         lastSampleAt = SystemClock.uptimeMillis();
         badStreak = 0;
+        goodStreak = 0;
         handler.removeCallbacks(sampler);
         handler.postDelayed(sampler, SAMPLE_INTERVAL_MS);
     }
@@ -103,6 +125,7 @@ final class PlaybackQualityWatchdog {
      */
     void reset() {
         badStreak = 0;
+        goodStreak = 0;
         lastPosition = -1L;
         lastSampleAt = SystemClock.uptimeMillis();
     }
@@ -153,8 +176,15 @@ final class PlaybackQualityWatchdog {
         int streakBefore = badStreak;
         if (bad) {
             badStreak++;
+            goodStreak = 0;
         } else {
             badStreak = 0;
+            // 网络富余累计:推进接近满速才计入(0.5~0.95 之间是"在动但不敢说富余")
+            if (advanced >= (long) (elapsed * GOOD_PROGRESS_RATIO)) {
+                goodStreak++;
+            } else {
+                goodStreak = 0;
+            }
         }
 
         // ⚠️ 诊断日志只在**判定结果变化**时打印,不再每次采样都打。
@@ -183,6 +213,17 @@ final class PlaybackQualityWatchdog {
             badStreak = 0;
             LOG.i("echo-quality: too slow, trigger switch");
             host.onPlaybackTooSlow();
+        }
+
+        // 网络富余 → 升档检查(2026-10-10):与劣质同款滞回 + 同款冷却,
+        // 冷却与 lastTriggeredAt 共用 —— 刚因卡顿换过线,不该立刻又升档来回折腾
+        if (goodStreak >= GOOD_STREAK_TO_UPGRADE
+                && host.bufferedAheadMs() >= HEADROOM_MIN_MS
+                && now - lastPlentifulAt >= COOLDOWN_MS) {
+            lastPlentifulAt = now;
+            goodStreak = 0;
+            LOG.i("echo-quality: network plentiful, check upgrade");
+            host.onNetworkPlentiful();
         }
 
         scheduleNext();
