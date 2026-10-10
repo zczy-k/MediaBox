@@ -570,7 +570,10 @@ class SearchViewModel : ViewModel() {
                                         state
                                     }
                                     val finalState = settled ?: ResultState.Timeout
-                                    settleSource(key, finalState)
+                                    // 重试轮不重复计进度(2026-10-10):该源首轮已计入 settledCount,
+                                    // 复位 Pending 只是为了让重试结果能写进终态,进度数字必须单调递增 ——
+                                    // 否则弱网下"已搜 74"会肉眼可见地倒退再涨回来(真机实证)
+                                    settleSource(key, finalState, countProgress = !isRetry)
                                     if (finalState == ResultState.Timeout) {
                                         cancelSourceRequests(key)
                                     }
@@ -625,12 +628,13 @@ class SearchViewModel : ViewModel() {
                 val retriable = results.value
                     .filter { it.state == ResultState.Timeout && it.sourceKey in keys && retriedKeys.add(it.sourceKey) }
                     .map { it.sourceKey }
-                if (retriable.isNotEmpty()) {
-                    // 复位终态:settleSource 只写非终态,Timeout 必须先回到 Pending;
-                    // 同时回退 settledCount(该源刚被计过一次 Timeout 终态,重试完成会再计一次)
+                if (retriable.isNotEmpty() && retriable.size * 2 < keys.size) {
+                    // 复位终态:settleSource 只写非终态,Timeout 必须先回到 Pending。
+                    // ⚠️ 不再回退 settledCount(2026-10-10):进度数字必须单调递增,重试轮收口
+                    // 不重复计数(见 settleSource 的 countProgress)。回退会让弱网下"已搜 74"
+                    // 倒退到 20 多再涨回来 —— 用户看到的就是"搜索更多点了之后进度回转"。
                     results.value = results.value.map { r ->
                         if (r.sourceKey in retriable && r.state == ResultState.Timeout) {
-                            settledCount.value = (settledCount.value - 1).coerceAtLeast(0)
                             r.copy(state = ResultState.Pending, elapsedMs = -1L)
                         } else {
                             r
@@ -639,6 +643,12 @@ class SearchViewModel : ViewModel() {
                     LOG.i("echo-searchplan retry-start n=" + retriable.size + " timeoutMs=" + RETRY_TIMEOUT_MS)
                     launchBatch(keys = retriable, timeoutMs = RETRY_TIMEOUT_MS, isRetry = true)
                 } else {
+                    if (retriable.isNotEmpty()) {
+                        // 弱网逃生口(2026-10-10):本批超时过半,重试几乎注定再超时(4s 白等一轮),
+                        // 直接进续批。真机实证:batch=50 超时 49,重试全灭,每批平白多耗 8 秒。
+                        // (retriedKeys 已在上方 filter 的 add 里登记,无需重复)
+                        LOG.i("echo-searchplan retry-skip weak-network n=" + retriable.size + " batch=" + keys.size)
+                    }
                     maybeContinueBatching()
                 }
             }
@@ -740,8 +750,12 @@ class SearchViewModel : ViewModel() {
      *
      * <p>耗时是这个改造里最缺的东西:此前所有"搜索慢"的判断都只能靠体感,
      * 因为既没有每源耗时,也没有"这个源到底是没命中还是挂了"的区分。
+     *
+     * @param countProgress 是否计入"已搜 N 源"进度(2026-10-10)。重试轮传 false:
+     *   该源首轮已计过一次,重试只是刷新终态与结果 —— 进度必须**单调递增**,
+     *   回退再涨回会让用户误以为搜索重来了一遍(真机实证的"进度回转")。
      */
-    private fun settleSource(sourceKey: String, state: ResultState) {
+    private fun settleSource(sourceKey: String, state: ResultState, countProgress: Boolean = true) {
         val elapsed = sourceStartAt[sourceKey]?.let {
             android.os.SystemClock.elapsedRealtime() - it
         } ?: -1L
@@ -755,8 +769,10 @@ class SearchViewModel : ViewModel() {
                 next
             }
         }
-        // 只在真正从"非终态"切进终态时计数,避免重复回包把进度算多
-        if (updated != null) settledCount.value = (settledCount.value + 1).coerceAtMost(totalCount.value)
+        // 只在真正从"非终态"切进终态时计数,避免重复回包把进度算多;重试轮不计(见 KDoc)
+        if (updated != null && countProgress) {
+            settledCount.value = (settledCount.value + 1).coerceAtMost(totalCount.value)
+        }
         recordSourceOutcome(sourceKey, state, updated)
     }
 
