@@ -35,6 +35,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.github.tvbox.osc.ui.theme.cardContainer
 
@@ -353,6 +354,10 @@ private fun RowValue(text: String, enabled: Boolean, modifier: Modifier = Modifi
         } else {
             MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
         },
+        // 单行截断:value 文本一旦过长会吃满 Row 宽度,把左侧标题列挤成每字一行的竖排
+        // (真机 v1.0.43 回归)。宁可见省略号,也不让它挤压标题。
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
         modifier = modifier,
     )
 }

@@ -190,22 +190,26 @@ fun PlaySettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewM
                     // 「画质选项」三档:只分化起播前的探测策略(口径见 DeviceCapability.QualityMode);
                     // 起播后的降档/换线/换源链三档一致,这里只改 KV,无其它副作用
                     val mode = qualityMode
+                    // 存量用户可能已存「画质优先」:不改写 KV(关掉开关即自动恢复),但必须把
+                    // "当前没在生效"讲清楚,否则用户会以为设置坏了。
+                    // ⚠️ 说明文案放 **subtitle**,不能放 valueText —— SettingsRow 是
+                    // `Column(weight(1f)) + RowValue`,无行数限制的长 valueText 会吃满宽度,
+                    // 把标题列挤成每字一行的竖排(真机 v1.0.43 回归,已修)。
+                    val firstPaused = trafficSaver && mode == DeviceCapability.QualityMode.QUALITY_FIRST
                     SettingsOptionMenuRow(
                         title = stringResource(R.string.settings_video_quality_mode),
-                        subtitle = stringResource(R.string.settings_video_quality_mode_subtitle),
-                        valueText = if (trafficSaver && mode == DeviceCapability.QualityMode.QUALITY_FIRST) {
-                            // 存量用户可能已存「画质优先」:不改写 KV(关掉开关即自动恢复),
-                            // 但必须把"当前没在生效"讲清楚,否则用户会以为设置坏了
-                            stringResource(R.string.video_quality_quality_first_paused)
+                        subtitle = if (firstPaused) {
+                            stringResource(R.string.settings_video_quality_mode_paused_subtitle)
                         } else {
-                            stringResource(
-                                when (mode) {
-                                    DeviceCapability.QualityMode.QUALITY_FIRST -> R.string.video_quality_quality_first
-                                    DeviceCapability.QualityMode.SPEED_FIRST -> R.string.video_quality_speed_first
-                                    else -> R.string.video_quality_auto
-                                },
-                            )
+                            stringResource(R.string.settings_video_quality_mode_subtitle)
                         },
+                        valueText = stringResource(
+                            when (mode) {
+                                DeviceCapability.QualityMode.QUALITY_FIRST -> R.string.video_quality_quality_first
+                                DeviceCapability.QualityMode.SPEED_FIRST -> R.string.video_quality_speed_first
+                                else -> R.string.video_quality_auto
+                            },
+                        ),
                         options = listOf(
                             stringResource(R.string.video_quality_quality_first),
                             stringResource(R.string.video_quality_auto),
