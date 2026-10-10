@@ -522,7 +522,7 @@ final class PlaybackRetryDelegate {
                     + " (untriedHigher=" + untriedHigher + ")");
             // 第二批:网络富余但无候选 → 请详情页补探测未测线路(幂等,只探直连型未测者),
             // 填上记忆后下一次富余检查(≥30s 后)才有资格做升档决策
-            if (untriedHigher == 0 && DeviceCapability.QualityMode.current().shouldProbeOnFirstWatch
+            if (untriedHigher == 0 && DeviceCapability.QualityMode.current().getShouldProbeOnFirstWatch()
                     && vod.seriesMap != null && vod.seriesMap.size() > 1) {
                 EventBus.getDefault().post(new RefreshEvent(RefreshEvent.TYPE_PROBE_MISSING_LINES));
                 LOG.i("echo-quality probe-request posted");
