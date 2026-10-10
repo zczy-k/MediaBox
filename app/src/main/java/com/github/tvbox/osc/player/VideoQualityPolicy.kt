@@ -64,11 +64,18 @@ object VideoQualityPolicy {
     /** 画质天花板的高度兜底阈值(宽度未上报/非标准时用) */
     const val CEILING_HEIGHT = 2160
 
-    /** 达标锚(电视):有效宽度 ≥ 此值算"够清晰" */
-    const val ANCHOR_WIDTH_TV = 1920
+    /**
+     * **达标锚 = 1080P 级**：有效宽度 ≥[ANCHOR_WIDTH]，**或**有效高度 ≥[ANCHOR_HEIGHT]。
+     *
+     * <p>⚠️ **不要按设备给锚打折**（2026-10-10 真机教训）。手机曾用 `1280`，理由大概是
+     * "手机屏也就 1080 宽" —— 结果 `1280×534` 的有效宽度**恰好 1280**，被判「已达锚」，
+     * 而自动画质档按设计「达锚即停」不再补救 ⇒ 用户被锁在 534，**必须手动切到「画质优先」才动**。
+     * 锚表达的是**产品语义**（"1080P 及以上"），不是屏幕物理宽度 ⇒ 手机与 TV 同锚。
+     */
+    const val ANCHOR_WIDTH = 1920
 
-    /** 达标锚(手机) */
-    const val ANCHOR_WIDTH_MOBILE = 1280
+    /** 锚的高度兜底：非标准宽高（如 1600×1200）宽度不足但高度达标时，同样算 1080P 级 */
+    const val ANCHOR_HEIGHT = 1080
 
     /**
      * 等效线性清晰度 **S = √(W × H)**。0 = 不可计算(尺寸未知)。
@@ -92,11 +99,20 @@ object VideoQualityPolicy {
     fun isAtCeiling(v: Variant?): Boolean =
         v != null && v.known && (v.width >= CEILING_WIDTH || v.height >= CEILING_HEIGHT)
 
-    /** 是否达到达标锚(有效宽度 ≥[anchorWidth])。anchorWidth ≤ 0 时视为"无锚",一律通过 */
+    /**
+     * 是否达到达标锚：有效宽度 ≥[anchorWidth]，**或**有效高度 ≥[ANCHOR_HEIGHT]。
+     *
+     * <p>取"或"是必要的：只用宽度会把 1600×1200 这类"宽度不足但高度达标"的非标变体一律判未达标；
+     * 只用高度则会误杀 1920×800（宽银幕 1080p，高度只有 800，但它就是 1080P 级）。
+     * 两种合法形态都要能通过。
+     *
+     * @param anchorWidth ≤ 0 时视为"无锚"，一律通过
+     */
     @JvmStatic
     fun meetsAnchor(v: Variant?, anchorWidth: Int): Boolean {
         if (anchorWidth <= 0) return true
-        return v != null && v.known && v.width >= anchorWidth
+        if (v == null || !v.known) return false
+        return v.width >= anchorWidth || v.height >= ANCHOR_HEIGHT
     }
 
     /**

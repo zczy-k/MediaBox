@@ -183,10 +183,16 @@ class VideoQualityPolicyTest {
     }
 
     @Test
-    fun meetsAnchor_usesEffectiveWidth() {
-        assertTrue(VideoQualityPolicy.meetsAnchor(v(1920, 800), VideoQualityPolicy.ANCHOR_WIDTH_TV))
-        assertFalse(VideoQualityPolicy.meetsAnchor(v(1280, 720), VideoQualityPolicy.ANCHOR_WIDTH_TV))
-        assertTrue(VideoQualityPolicy.meetsAnchor(v(1280, 720), VideoQualityPolicy.ANCHOR_WIDTH_MOBILE))
+    fun meetsAnchor_1080pLevel_noDeviceDiscount() {
+        // 宽度达标,含宽银幕 1080p(宽 1920 但高只有 800 —— 它就是 1080P 级)
+        assertTrue(VideoQualityPolicy.meetsAnchor(v(1920, 800), VideoQualityPolicy.ANCHOR_WIDTH))
+        assertTrue(VideoQualityPolicy.meetsAnchor(v(1920, 1080), VideoQualityPolicy.ANCHOR_WIDTH))
+        // 高度兜底:非标准宽高,宽度不足但高度达标
+        assertTrue(VideoQualityPolicy.meetsAnchor(v(1600, 1200), VideoQualityPolicy.ANCHOR_WIDTH))
+        // 720p 级**不算**达标 —— 手机不再打折(锚曾是 1280,真机因此被锁在低画质)
+        assertFalse(VideoQualityPolicy.meetsAnchor(v(1280, 720), VideoQualityPolicy.ANCHOR_WIDTH))
+        // 真机案例:1280×534 曾被判"已达锚"⇒ 自动画质档不补救。必须判未达标
+        assertFalse(VideoQualityPolicy.meetsAnchor(v(1280, 534), VideoQualityPolicy.ANCHOR_WIDTH))
         // anchorWidth ≤ 0 ⇒ 视为"无锚",一律通过
         assertTrue(VideoQualityPolicy.meetsAnchor(VideoQualityPolicy.Variant(), 0))
     }

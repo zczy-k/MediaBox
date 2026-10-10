@@ -656,11 +656,10 @@ class DetailViewModel : ViewModel() {
         val cap = DeviceCapability.capHeight(app)
         val currentFlag = info.playFlag ?: return
         val remembered = VideoQualityMemory.lookupAll(siteKey, vod, siteOrder)
-        val anchor = if (DeviceCapability.isTelevision(app)) {
-            VideoQualityPolicy.ANCHOR_WIDTH_TV
-        } else {
-            VideoQualityPolicy.ANCHOR_WIDTH_MOBILE
-        }
+        // 达标锚(手机与 TV **同锚** = 1080P 级):不再按设备打折 ——
+        // 手机锚曾用 1280,导致 1280×534 这类"宽而扁"的低清片被判"已达锚",
+        // 自动画质档于是按"达锚即停"不补救,用户必须手动切画质优先才动(2026-10-10 真机教训)
+        val anchor = VideoQualityPolicy.ANCHOR_WIDTH
         // 达标且非画质优先 ⇒ 不折腾(与"够好即停"同一口径);当前未知则继续扫(要填记忆)
         val currentBefore = remembered.firstOrNull { it.flag == currentFlag }
         if (VideoQualityPolicy.meetsAnchor(currentBefore, anchor) &&
