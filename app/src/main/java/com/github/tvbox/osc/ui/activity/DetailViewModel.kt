@@ -13,6 +13,9 @@ import com.github.tvbox.osc.util.DetailNoListMemory
 import com.github.tvbox.osc.util.SearchSettings
 import com.github.tvbox.osc.util.SourceCompletenessPolicy
 import com.github.tvbox.osc.util.QualityLabelPolicy
+import com.github.tvbox.osc.util.EpisodeNormalizer
+import com.github.tvbox.osc.util.EpisodeSetMath
+import com.github.tvbox.osc.util.EpisodeType
 import com.github.tvbox.osc.bean.AbsXml
 import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.bean.VodInfo
@@ -166,7 +169,7 @@ class DetailViewModel : ViewModel() {
     // P-完整性方案(2026-10-09):当前片的权威参照系与起播/纠偏状态
     // completenessTitleKey/OwnCount 由 recordCompleteness 在详情就绪时写入
     private var completenessTitleKey = ""
-    private var completenessOwnCount = 0
+    private var completenessOwnSet: Set<Int> = emptySet()
     /** 起播跳过当前源(记忆已知严重不全)后等待换源链结果;链收口无果回退起播当前源 */
     private var pendingCompletenessSkip = false
     /** 播放中纠偏每部片只触发一次,防止候选事件反复引发切换 */
@@ -905,16 +908,14 @@ class DetailViewModel : ViewModel() {
                 // 走换源链(候选已按完整度排序,最全候选先试);链收口无果时回退起播当前源
                 // (见 finishFallbackWithoutResult 的 pendingCompletenessSkip 分支)。
                 // 权威未知 / 非"严重不全"档:照常秒开,聚合在播放中并行,不受影响。
-                if (completenessOwnCount > 1 &&
-                    SourceCompletenessPolicy.tier(
-                        completenessOwnCount,
-                        CompletenessMemory.authority(completenessTitleKey),
-                    ) == SourceCompletenessPolicy.Tier.BACKUP
+                val confirmedSet = CompletenessMemory.confirmedSet(completenessTitleKey)
+                if (SourceCompletenessPolicy.tier(completenessOwnSet, confirmedSet) ==
+                    SourceCompletenessPolicy.Tier.BACKUP
                 ) {
                     pendingCompletenessSkip = true
                     LOG.i(
-                        "echo-completeness skip-origin own=$completenessOwnCount" +
-                            " auth=${CompletenessMemory.authority(completenessTitleKey)}"
+                        "echo-completeness skip-origin own=${completenessOwnSet.size}" +
+                            " auth=${confirmedSet.size}"
                     )
                     startFallbackIfNeeded(auto = true)
                     return@launch
@@ -1282,10 +1283,15 @@ class DetailViewModel : ViewModel() {
     /** P-完整性:当前片的权威集数(选集面板"缺集"标注用);0=未知 */
     fun completenessAuthority(): Int = CompletenessMemory.authority(completenessTitleKey)
 
-    /** P-完整性:某线路的可数集数(集名不可数返回 null);选集面板"缺集"标注用 */
-    fun lineEpisodeCount(flagName: String?): Int? {
-        val list = vodInfo?.seriesMap?.get(flagName) ?: return null
-        return EpisodeTotals.episodeCount(list.map { s -> s.name as String? })
+    /** P-完整性:某线路相对可信参考集的缺失集号(升序);选集面板"缺集"标注用 */
+    fun lineMissingEpisodes(flagName: String?): List<Int> {
+        val list = vodInfo?.seriesMap?.get(flagName) ?: return emptyList()
+        val own = HashSet<Int>()
+        list.forEach { e ->
+            val n = EpisodeNormalizer.normalize(e.name)
+            if (n.type == EpisodeType.REGULAR && n.episode != null) own.add(n.episode)
+        }
+        return EpisodeSetMath.missing(own, CompletenessMemory.confirmedSet(completenessTitleKey))
     }
 
     /** 该线路在该集上是否有可直接探测的直链(与 PlayLoader.shouldDirectPlay 同口径) */
@@ -1306,7 +1312,10 @@ class DetailViewModel : ViewModel() {
         var bestCount = 0
         info.seriesMap?.forEach { (flag, list) ->
             val label = QualityLabelPolicy.priorityFromLabel(flag)
-            val count = EpisodeTotals.episodeCount(list.map { s -> s.name as String? }) ?: 0
+            val count = list.mapNotNull { e ->
+                val n = EpisodeNormalizer.normalize(e.name)
+                if (n.type == EpisodeType.REGULAR) n.episode else null
+            }.distinct().size
             val covers = list.size > info.playIndex
             if (label > bestLabel ||
                 (label == bestLabel && covers && !bestCovers) ||
@@ -1535,14 +1544,24 @@ class DetailViewModel : ViewModel() {
      * 后面的候选会随着信息变多获得更准的排序。
      */
     private fun sortFallbackCandidatesByCompleteness() = synchronized(fallbackCandidates) {
+        val snap = CompletenessMemory.snapshot(completenessTitleKey)
+        val confirmed = EpisodeSetMath.confirmed(snap.values)
         fallbackCandidates.sortWith(
             compareByDescending<Movie.Video> { video ->
-                val authority = CompletenessMemory.authority(SearchSettings.normalizedTitle(video.name))
+                // 优先用已记录的正片集合(覆盖/连续性口径),无集合退回 note 先验(数量口径)
+                val set = snap[video.sourceKey]
                 val prior = SourceCompletenessPolicy.priorCountFromNote(video.note)
-                SourceCompletenessPolicy.rankScore(
-                    SourceCompletenessPolicy.tier(prior, authority),
-                    prior,
-                )
+                if (set != null && confirmed.isNotEmpty()) {
+                    SourceCompletenessPolicy.rankScore(
+                        SourceCompletenessPolicy.tier(set, confirmed),
+                        set.size,
+                    )
+                } else {
+                    SourceCompletenessPolicy.rankScore(
+                        SourceCompletenessPolicy.tier(prior, confirmed.size),
+                        prior,
+                    )
+                }
                 // P-质量维度 tie-break:同完整度分内,标称高清/4K 的源优先,TC 沉底;
                 // 电影(权威未知,全员同分)由此获得画质排序——多集剧集数仍主导
             }.thenByDescending { video ->
@@ -1563,24 +1582,31 @@ class DetailViewModel : ViewModel() {
         val titleKey = SearchSettings.normalizedTitle(title)
         completenessTitleKey = titleKey
         if (titleKey.isEmpty()) {
-            completenessOwnCount = 0
+            completenessOwnSet = emptySet()
             LOG.i("echo-completeness record skip: empty title key")
             return
         }
-        var best = 0
-        var countable = false
-        info.seriesMap?.values?.forEach { list ->
-            val count = EpisodeTotals.episodeCount(list.map { s -> s.name as String? })
-            if (count != null) {
-                countable = true
-                if (count > best) best = count
+        val srcKey = info.sourceKey ?: sourceKey
+        // 每条线路经 EpisodeNormalizer 标准化,只收 REGULAR 正片(预告/花絮/特别篇/UNKNOWN 剔除),
+        // 跨线路取并集 = 该源可用正片;跨源两源印证由 CompletenessMemory/EpisodeSetMath 完成
+        var own = emptySet<Int>()
+        info.seriesMap?.forEach { (flag, list) ->
+            val s = HashSet<Int>()
+            list.forEach { e ->
+                val n = EpisodeNormalizer.normalize(e.name)
+                if (n.type == EpisodeType.REGULAR && n.episode != null) s.add(n.episode)
             }
+            if (s.isNotEmpty()) own = own.union(s)
         }
-        completenessOwnCount = if (countable) best else 0
-        if (best > 1) CompletenessMemory.record(titleKey, best, info.sourceKey ?: sourceKey)
+        completenessOwnSet = own
+        if (own.isNotEmpty()) CompletenessMemory.record(titleKey, srcKey, own)
+        val confirmed = CompletenessMemory.confirmedSet(titleKey)
+        val covPct = (SourceCompletenessPolicy.coverage(own, confirmed) * 100).toInt()
+        // 无条件打印(2026-10-09 教训:诊断日志不该有守卫)
         LOG.i(
-            "echo-completeness record title=$titleKey countable=$countable best=$best" +
-                " authority=${CompletenessMemory.authority(titleKey)} own=${completenessOwnCount}"
+            "echo-completeness record title=$titleKey src=$srcKey regular=${own.size}" +
+                " confirmed=${confirmed.size} cov=${covPct}%" +
+                " continuity=${EpisodeSetMath.continuity(own)}"
         )
     }
 
@@ -1645,19 +1671,31 @@ class DetailViewModel : ViewModel() {
         if (completenessCorrected) return
         if (pageState.value !is PageState.Ready) return
         if (fallbackActive || fallbackLoadingCandidate) return
-        val auth = CompletenessMemory.authority(completenessTitleKey)
-        if (auth <= 0 || completenessOwnCount <= 1) return
-        if (SourceCompletenessPolicy.tier(completenessOwnCount, auth) != SourceCompletenessPolicy.Tier.BACKUP) return
+        val confirmed = CompletenessMemory.confirmedSet(completenessTitleKey)
+        if (confirmed.isEmpty() || completenessOwnSet.isEmpty()) return
+        if (SourceCompletenessPolicy.tier(completenessOwnSet, confirmed) !=
+            SourceCompletenessPolicy.Tier.BACKUP
+        ) return
         val better = synchronized(fallbackCandidates) {
             fallbackCandidates.any { c ->
-                val prior = SourceCompletenessPolicy.priorCountFromNote(c.note)
-                SourceCompletenessPolicy.tier(prior, auth) == SourceCompletenessPolicy.Tier.COMPLETE
+                val set = completenessCandidateSet(c, confirmed)
+                set != null && SourceCompletenessPolicy.tier(set, confirmed) ==
+                    SourceCompletenessPolicy.Tier.COMPLETE
             }
         }
         if (!better) return
         completenessCorrected = true
-        LOG.i("echo-completeness correct-trigger own=$completenessOwnCount auth=$auth")
+        LOG.i("echo-completeness correct-trigger own=${completenessOwnSet.size} auth=${confirmed.size}")
         startFallbackIfNeeded(auto = true)
+    }
+
+    /** 候选的正片集号集合:优先取已记录的实测集合,否则退回 note 先验按可信参考集大小换算 */
+    private fun completenessCandidateSet(c: Movie.Video, confirmed: Set<Int>): Set<Int>? {
+        CompletenessMemory.snapshot(completenessTitleKey)[c.sourceKey]?.let { return it }
+        val prior = SourceCompletenessPolicy.priorCountFromNote(c.note)
+        if (prior <= 0) return null
+        // note 只有数量没有集号:构造 1..prior 的近似集合(仅供档位判定,不用于缺集标注)
+        return (1..prior).toSet()
     }
 
     private fun finishFallbackWithoutResult() {

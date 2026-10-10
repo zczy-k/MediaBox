@@ -232,7 +232,7 @@ internal fun EpisodeSheet(vm: DetailViewModel, revision: Int, slideFromEnd: Bool
                             onClick = { vm.onFlagClick(flag.name ?: "") },
                             // 不再显示站点自报的 flag 名(常见假的"1080P/蓝光",有的还带站名/域名):
                             // 只给"线路序号 + 实测画质",没测到就只给序号 —— 宁缺勿假。
-                            label = { Text(lineLabel(index, flag.name, lineHeights, vm.lineEpisodeCount(flag.name), vm.completenessAuthority())) },
+                            label = { Text(lineLabel(index, flag.name, lineHeights, vm.lineMissingEpisodes(flag.name))) },
                             shape = RoundedCornerShape(20.dp),
                             colors = MaterialTheme.colorScheme.filterChipColors(),
                         )

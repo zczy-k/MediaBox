@@ -322,8 +322,7 @@
     <string name="search_scope_narrow_hint">Only %1$d of %2$d searchable sources selected — adjust in Home → Search settings</string>
     <string name="search_load_all">Search all sources</string>
     <string name="search_result_source_count">%1$d sources</string>
-    <string name="detail_line_missing_range">missing ep. %1$d-%2$d</string>
-    <string name="detail_line_missing_one">missing ep. %1$d</string>
+    <string name="detail_line_missing_list">missing ep. %1$s</string>
     <string name="search_sites_none_hint">No sites selected — searches will return nothing</string>
     <string name="search_sites_selected_hint">Selected %1$d/%2$d. Select all to search every site</string>
     <string name="search_sites_empty">No sites available</string>

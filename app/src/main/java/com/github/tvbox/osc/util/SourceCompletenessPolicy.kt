@@ -73,6 +73,29 @@ object SourceCompletenessPolicy {
     }
 
     /**
+     * 集合口径档位(第二阶段 A2,2026-10-10):按**覆盖率**分档 ——
+     * coverage = |own ∩ confirmed| / |confirmed|;可信参考集为空(单源/新片)⇒ 不判;
+     * own 为空(集名不可数)⇒ 不降权。
+     */
+    fun tier(own: Set<Int>, confirmed: Set<Int>): Tier = when {
+        confirmed.isEmpty() -> Tier.UNKNOWN_AUTHORITY
+        own.isEmpty() -> Tier.UNKNOWN_SOURCE
+        else -> {
+            val cov = coverage(own, confirmed)
+            when {
+                cov >= 0.999 -> Tier.COMPLETE
+                cov >= 0.8 -> Tier.NEAR
+                else -> Tier.BACKUP
+            }
+        }
+    }
+
+    /** 覆盖率 0.0-1.0;可信参考集为空返回 -1(不判) */
+    fun coverage(own: Set<Int>, confirmed: Set<Int>): Double =
+        if (confirmed.isEmpty()) -1.0
+        else own.intersect(confirmed).size.toDouble() / confirmed.size
+
+    /**
      * 换源链排序分(越大越优先)。四段含义:
      * <ul>
      *   <li>完整(3000+):最优先;同档内集数多者优先 —— "更新越快权重越高";</li>

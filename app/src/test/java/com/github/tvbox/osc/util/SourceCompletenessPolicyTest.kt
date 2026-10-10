@@ -87,6 +87,50 @@ class SourceCompletenessPolicyTest {
         assertEquals(null, SourceCompletenessPolicy.missingRange(30, 0))
     }
 
+    // ==================== 集合口径档位(第二阶段 A2) ====================
+
+    private fun setOf(vararg eps: Int) = eps.toSet()
+
+    @Test
+    fun `可信参考集为空_单源_不判`() {
+        assertEquals(
+            SourceCompletenessPolicy.Tier.UNKNOWN_AUTHORITY,
+            SourceCompletenessPolicy.tier(setOf(1, 2, 3), emptySet()),
+        )
+    }
+
+    @Test
+    fun `own为空_集名不可数_不降权`() {
+        assertEquals(
+            SourceCompletenessPolicy.Tier.UNKNOWN_SOURCE,
+            SourceCompletenessPolicy.tier(emptySet(), setOf(1, 2, 3)),
+        )
+    }
+
+    @Test
+    fun `覆盖率三档_完整_轻微_备用`() {
+        val confirmed = setOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
+        assertEquals(
+            SourceCompletenessPolicy.Tier.COMPLETE,
+            SourceCompletenessPolicy.tier(setOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12), confirmed),
+        )
+        assertEquals(
+            SourceCompletenessPolicy.Tier.NEAR,
+            SourceCompletenessPolicy.tier(setOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11), confirmed),
+        )
+        // 缺第 9 集(11/12=91.7% NEAR,但连续性下降由标注呈现,档位仍 NEAR)
+        val withHole = setOf(1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 12)
+        assertEquals(
+            SourceCompletenessPolicy.Tier.NEAR,
+            SourceCompletenessPolicy.tier(withHole, confirmed),
+        )
+        // 9/12=75% 落入备用
+        assertEquals(
+            SourceCompletenessPolicy.Tier.BACKUP,
+            SourceCompletenessPolicy.tier(setOf(1, 2, 3, 4, 5, 6, 7, 8, 9), confirmed),
+        )
+    }
+
     // ==================== rankScore ====================
 
     @Test

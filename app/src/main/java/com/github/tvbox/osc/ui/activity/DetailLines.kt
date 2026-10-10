@@ -14,7 +14,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.github.tvbox.osc.R
 import com.github.tvbox.osc.bean.VodInfo
 import com.github.tvbox.osc.ui.theme.filterChipColors
-import com.github.tvbox.osc.util.SourceCompletenessPolicy
+import com.github.tvbox.osc.util.EpisodeSetMath
 
 /**
  * 线路 chip 的显示名:「线路N」,实测到画质时再补「 · 1080P」,
@@ -32,17 +32,13 @@ internal fun lineLabel(
     index: Int,
     flagName: String?,
     heights: Map<String, Int>,
-    lineCount: Int? = null,
-    authority: Int = 0,
+    missing: List<Int> = emptyList(),
 ): String {
     val base = stringResource(R.string.detail_line_index, index + 1)
     val suffix = LineLabelPolicy.qualitySuffix(flagName?.let { heights[it] } ?: 0)
-    val missing = SourceCompletenessPolicy.missingRange(lineCount ?: 0, authority)
-    val missingText = when {
-        missing == null -> ""
-        missing.first == missing.second -> stringResource(R.string.detail_line_missing_one, missing.first)
-        else -> stringResource(R.string.detail_line_missing_range, missing.first, missing.second)
-    }
+    // 缺失列表来自可信参考集(≥2 源印证)的精确差集;空列表=无缺失或权威不足,不标(宁缺勿假)
+    val missingText = if (missing.isEmpty()) ""
+    else stringResource(R.string.detail_line_missing_list, EpisodeSetMath.missingText(missing))
     return buildList {
         add(base)
         if (suffix.isNotEmpty()) add(suffix)
@@ -90,7 +86,7 @@ internal fun DetailLineSection(
             FilterChip(
                 selected = flag.name == currentFlag,
                 onClick = { vm.onFlagClick(flag.name ?: "") },
-                label = { Text(lineLabel(index, flag.name, lineHeights, vm.lineEpisodeCount(flag.name), vm.completenessAuthority())) },
+                label = { Text(lineLabel(index, flag.name, lineHeights, vm.lineMissingEpisodes(flag.name))) },
                 shape = RoundedCornerShape(20.dp),
                 colors = MaterialTheme.colorScheme.filterChipColors(),
             )
