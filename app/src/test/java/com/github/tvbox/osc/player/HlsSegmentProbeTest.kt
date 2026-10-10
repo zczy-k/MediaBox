@@ -273,7 +273,9 @@ class HlsSegmentProbeTest {
         fun toBytes(): ByteArray {
             val out = ByteArray((bits.size + 7) / 8)
             for (i in bits.indices) {
-                if (bits[i]) out[i / 8] = (out[i / 8].toInt() or (0x80 shl (i % 8))).toByte()
+                // ⚠️ 必须是 **shr**(MSB-first 的位偏移):写成 shl 会把位推出字节丢弃,
+                // 首字节就从 0x42 变 0x02 —— 正是这个 bug 让首轮 CI 的三个 HEVC 用例全挂
+                if (bits[i]) out[i / 8] = (out[i / 8].toInt() or (0x80 shr (i % 8))).toByte()
             }
             return out
         }
