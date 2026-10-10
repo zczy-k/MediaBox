@@ -272,6 +272,10 @@ dependencies {
     coreLibraryDesugaring(libs.desugar.jdk.libs)
 
     testImplementation(libs.junit)
+    // 2026-10-10:JVM 单测需要真实的 org.json 行为(空串抛异常等契约)。
+    // 不补真实库时,android.jar 的 stub(isReturnDefaultValues=true)只返默认值,
+    // QualityMemoryJsonContractTest 的「空串会抛」断言永远测不出来。
+    testImplementation("org.json:json:20231013")
 }
 
 configurations.configureEach {

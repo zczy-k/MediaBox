@@ -135,7 +135,9 @@ private fun RatingBadge(video: Movie.Video, modifier: Modifier = Modifier) {
 }
 
 private val RATING_SCORE_REGEX = Regex("评分[:：]?\\s*(\\d+(?:\\.\\d+)?)") // i18n: keep(源备注评分提取)
-private val RATING_SCORE_SUFFIX_REGEX = Regex("^(\\d+(?:\\.\\d+)?)\\s*分$") // i18n: keep(源备注评分提取)
+// 非锚定匹配:站点会把站名与评分混排("某站 7.2分",RatingBadgeLeakTest 锁此语义);
+// 尾随 (?!钟) 排除"分钟"类时长("片长30分钟"不能被当成评分)。2026-10-10 修正
+private val RATING_SCORE_SUFFIX_REGEX = Regex("(\\d+(?:\\.\\d+)?)\\s*分(?!钟)") // i18n: keep(源备注评分提取)
 
 /**
  * 从源备注(note)里提取**可安全展示**的短标签,通常是评分。

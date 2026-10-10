@@ -28,11 +28,12 @@ class LineLabelPolicyTest {
 
     @Test
     fun nonStandardHeightsRoundDownAndNeverOverstate() {
-        // 1088 是 1080 档(不能报 1440P),1441 是 1440 档,719 只能算 576 档
+        // 1088 是 1080 档(不能报 1440P),1441 是 1440 档,719 只能算 576 档;
+        // 1079 不足 1080 ⇒ 只能报 720 档(2026-10-10 修正:原期望 "1080P" 与"向下取档"自相矛盾)
         assertEquals("1080P", LineLabelPolicy.qualitySuffix(1088))
         assertEquals("1440P", LineLabelPolicy.qualitySuffix(1441))
         assertEquals("576P", LineLabelPolicy.qualitySuffix(719))
-        assertEquals("1080P", LineLabelPolicy.qualitySuffix(1079))
+        assertEquals("720P", LineLabelPolicy.qualitySuffix(1079))
     }
 
     @Test

@@ -21,8 +21,10 @@ import org.junit.Test
  * <p>为排查这个问题花了整整四轮构建 —— 所以用测试把"空串必须先挡掉"锁住。
  *
  * <p>注意:本测试只验证 org.json 的**行为契约**(空串会抛)与修复后的兜底语义,
- * 不验证 `VideoQualityMemory` 本身 —— 后者要读 MMKV(`org.json` 在 unit test 下
- * `isReturnDefaultValues=true` 只返默认值,测了等于没测,见该类 KDoc)。
+ * 不验证 `VideoQualityMemory` 本身 —— 后者要读 MMKV(单测环境没有实现,测了等于没测)。
+ * 「空串会抛」这半条契约的可测性依赖 `testImplementation("org.json:json")`:
+ * 没有它时,unit test 下 org.json 被 `isReturnDefaultValues=true` 换成"只返默认值"的 stub,
+ * 空串根本不抛(2026-10-10 补依赖后,本文件从"恒挂 2 条"变为真实契约验证)。
  */
 class QualityMemoryJsonContractTest {
 

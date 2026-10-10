@@ -66,14 +66,18 @@ class Mp4BoxReaderTest {
 
     @Test
     fun readsVersion0Tkhd() {
-        val (w, h) = Mp4BoxReader.readVideoSize(fullFile(1920, 1080, 0), 10_000)!!
+        // 2026-10-10 修正:length 的契约是"buffer 里有效字节数"(生产调用传 buffer.size),
+        // 不能传 10000 —— 会先命中 length > buf.size 的越界守卫,null 来自守卫而非解析结果。
+        val data = fullFile(1920, 1080, 0)
+        val (w, h) = Mp4BoxReader.readVideoSize(data, data.size)!!
         assertEquals(1920, w)
         assertEquals(1080, h)
     }
 
     @Test
     fun readsVersion1Tkhd() {
-        val (w, h) = Mp4BoxReader.readVideoSize(fullFile(3840, 2160, 1), 10_000)!!
+        val data = fullFile(3840, 2160, 1)
+        val (w, h) = Mp4BoxReader.readVideoSize(data, data.size)!!
         assertEquals(3840, w)
         assertEquals(2160, h)
     }
@@ -83,7 +87,8 @@ class Mp4BoxReaderTest {
         val out = ByteArrayOutputStream()
         out.write(ftyp())
         out.write(box("moov", box("trak", tkhd(1280, 720, 0)), use64BitSize = true))
-        val (w, h) = Mp4BoxReader.readVideoSize(out.toByteArray(), 10_000)!!
+        val data = out.toByteArray()
+        val (w, h) = Mp4BoxReader.readVideoSize(data, data.size)!!
         assertEquals(1280, w)
         assertEquals(720, h)
     }
@@ -94,7 +99,8 @@ class Mp4BoxReaderTest {
         val out = ByteArrayOutputStream()
         out.write(ftyp())
         out.write(box("mdat", ByteArray(64)))
-        assertNull(Mp4BoxReader.readVideoSize(out.toByteArray(), 10_000))
+        val data = out.toByteArray()
+        assertNull(Mp4BoxReader.readVideoSize(data, data.size))
     }
 
     @Test
@@ -122,7 +128,8 @@ class Mp4BoxReaderTest {
         val out = ByteArrayOutputStream()
         out.write(ftyp())
         out.write(box("moov", box("trak", tkhd(0, 0, 0))))
-        assertNull(Mp4BoxReader.readVideoSize(out.toByteArray(), 10_000))
+        val data = out.toByteArray()
+        assertNull(Mp4BoxReader.readVideoSize(data, data.size))
     }
 
     @Test

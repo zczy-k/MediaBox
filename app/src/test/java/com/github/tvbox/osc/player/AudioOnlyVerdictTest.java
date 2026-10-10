@@ -59,8 +59,9 @@ public class AudioOnlyVerdictTest {
         // 内容边界必须复位,否则上一部是影视就会让下一部真音乐永远判不出来
         PlaybackAttemptState st = new PlaybackAttemptState();
         st.everHadVideoTrack = true;
-        assertEquals(Boolean.FALSE,
-                MusicSessionDelegate.audioOnlyOrNull(KNOWN, true, 0, st.everHadVideoTrack));
+        // 曾见视频轨 ⇒ 此刻"视频轨为空"只是解析未完成,应为"未知"而非"确定影视"
+        // (与 videoSeenThenGone_staysUnknown 同口径;2026-10-10 修正原断言笔误)
+        assertNull(MusicSessionDelegate.audioOnlyOrNull(KNOWN, true, 0, st.everHadVideoTrack));
         st.beginNewPlay();
         assertFalse(st.everHadVideoTrack);
         assertEquals(Boolean.TRUE,
