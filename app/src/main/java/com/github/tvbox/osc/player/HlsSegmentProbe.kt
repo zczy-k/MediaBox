@@ -10,9 +10,13 @@ import java.io.ByteArrayOutputStream
  * [VideoQualityPolicy.parseHlsMaster] 对后者必然返回 null ⇒ 全部落进 `probe-no-size`
  * ⇒ 对"整源都是 HLS 子列表"的片源，自动升档**完全失效**（真机实测：9 条线路探出 0 条）。
  *
- * <p>但真实分辨率一直躺在**首个分片**里：H.264 的 SPS 携带 `pic_width_in_mbs` / `pic_height_in_map_units`，
- * 而 MPEG-TS 打包时 SPS 就在第一个视频包里 —— 真机实测该分片 `profile=100 level=4.0 1914x798`，
- * **SPS 位于视频 payload 第 29 字节，读 96KB 足够**（比读 master playlist 还便宜）。
+ * <p>但真实分辨率一直躺在**首个分片**里：SPS 携带宽高，而 MPEG-TS 打包时 SPS 就在第一个视频包里
+ * —— 真机实测该分片 `profile=100 level=4.0 1914x798`，**SPS 位于视频 payload 第 29 字节，
+ * 读 96KB 足够**（比读 master playlist 还便宜）。
+ *
+ * <p>**H.264 与 H.265/HEVC 都支持**（2026-10-11 起）：两者共用同一条 TS 解复用，
+ * 差别在 SPS 的找法与语法（见 [parseTsHevcSize]）。入口用 [parseTsVideoSize] 做
+ * **内容嗅探**——依次尝试两种 SPS，谁解得出用谁，不信任 PMT/URL 的声明。
  *
  * <p>本文件是**纯解析**：无网络、无 Android 依赖，可 JVM 单测。网络那一步留在
  * [VideoQualityProbe]（它持有 OkHttp client 与读取预算）。
@@ -27,8 +31,20 @@ object HlsSegmentProbe {
     /** NAL unit type：SPS（H.264） */
     private const val NAL_SPS = 7
 
-    /** PMT 中 H.264 的 stream_type（H.265 是 0x24，本版不支持，见文件尾注释） */
+    /** PMT 中 H.264 的 stream_type */
     private const val STREAM_TYPE_H264 = 0x1B
+
+    /** PMT 中 H.265/HEVC 的 stream_type（2026-10-11 起：与 H.264 同样进分片内探） */
+    private const val STREAM_TYPE_HEVC = 0x24
+
+    /**
+     * HEVC 的 NAL 头是 **2 字节**（H.264 是 1 字节）：`forbidden(1) + type(6) + layer_id(6) + tid+1(3)`。
+     * SPS 的 type=33 ⇒ 第一字节 = `33 << 1 = 0x42`（layer_id 高位为 0 时）；
+     * 第二字节的低 3 位是 `temporal_id_plus1`，规范要求 ≥ 1。
+     * 按位匹配而不是硬编码 0x42 0x01：容忍 layer_id ≠ 0 的少见流。
+     */
+    private const val HEVC_NAL_SPS_MASK = 0x7E
+    private const val HEVC_NAL_SPS_PATTERN = 0x42
 
     /** 拼视频 payload 的封顶：SPS 在开头，攒够这些就停（避免把整个分片读进内存） */
     private const val MAX_VIDEO_PAYLOAD = 256 * 1024
@@ -106,6 +122,40 @@ object HlsSegmentProbe {
      */
     @JvmStatic
     fun parseTsH264Size(data: ByteArray, length: Int): IntArray? {
+        val payload = demuxVideoPayload(data, length) ?: return null
+        return findSpsSize(payload, payload.size)
+    }
+
+    /**
+     * MPEG-TS → **H.265/HEVC** SPS → `[width, height]`（2026-10-11 新增）。
+     *
+     * <p>与 [parseTsH264Size] 共用同一条 TS 解复用（[demuxVideoPayload]，PMT 同时认
+     * `0x1B`/`0x24`），差别只在 SPS 的找法与语法：HEVC 的 NAL 头是 2 字节、
+     * SPS 携带 `pic_width_in_luma_samples`（直接就是像素数，没有 H.264 的宏块换算）。
+     *
+     * <p>**只解到宽高就停**：HEVC SPS 里 `pic_width/height` 位于 conformance window 之前，
+     * 后面的 `scaling_list` / `st_ref_pic_set` / VUI 全部不用碰 —— 解析面越小越不容易错位。
+     */
+    @JvmStatic
+    fun parseTsHevcSize(data: ByteArray, length: Int): IntArray? {
+        val payload = demuxVideoPayload(data, length) ?: return null
+        return findHevcSpsSize(payload, payload.size)
+    }
+
+    /**
+     * **内容嗅探**入口：同一份分片字节，H.264 与 HEVC 依次尝试。
+     *
+     * <p>为什么入口做成"依次尝试"而不是"按 PMT 的 stream_type 分派"：
+     * 真机见过站点把 stream_type 写错/写死的情况 —— **分片里的字节不会骗人，PMT 的声明会**。
+     * 两个解析器都自带 NAL type 校验，猜错的那条会安全地返回 null，不会产出错误尺寸。
+     */
+    @JvmStatic
+    fun parseTsVideoSize(data: ByteArray, length: Int): IntArray? {
+        return parseTsH264Size(data, length) ?: parseTsHevcSize(data, length)
+    }
+
+    /** TS 解复用（PAT → PMT → 视频 PID → 拼 payload），H.264 / HEVC 共用。 */
+    private fun demuxVideoPayload(data: ByteArray, length: Int): ByteArray? {
         val end = minOf(length, data.size)
         if (end < TS_PACKET * 3) return null
 
@@ -153,8 +203,7 @@ object HlsSegmentProbe {
         }
 
         if (video.size() <= 0) return null
-        val payload = video.toByteArray()
-        return findSpsSize(payload, payload.size)
+        return video.toByteArray()
     }
 
     // ==================== 内部：TS 解复用 ====================
@@ -200,7 +249,7 @@ object HlsSegmentProbe {
         return -1
     }
 
-    /** PMT：跳过节目信息，取 stream_type == H.264 的 elementary PID */
+    /** PMT：跳过节目信息，取视频 elementary PID（H.264 `0x1B` 或 H.265 `0x24`） */
     private fun readPmtVideoPid(d: ByteArray, from: Int, to: Int): Int {
         if (from >= to) return -1
         var p = from + 1 + (d[from].toInt() and 0xFF)
@@ -214,7 +263,7 @@ object HlsSegmentProbe {
             val st = d[i].toInt() and 0xFF
             val pid = ((d[i + 1].toInt() and 0x1F) shl 8) or (d[i + 2].toInt() and 0xFF)
             val esLen = ((d[i + 3].toInt() and 0x0F) shl 8) or (d[i + 4].toInt() and 0xFF)
-            if (st == STREAM_TYPE_H264) return pid
+            if (st == STREAM_TYPE_H264 || st == STREAM_TYPE_HEVC) return pid
             i += 5 + esLen
         }
         return -1
@@ -400,6 +449,130 @@ object HlsSegmentProbe {
     private val HIGH_PROFILES = intArrayOf(
         100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135,
     )
+
+    // ==================== 内部：H.265/HEVC SPS ====================
+
+    /**
+     * 找 HEVC 的 SPS 并解宽高（2026-10-11）。
+     *
+     * <p>HEVC 的 NAL 头是 2 字节：第一字节 `type(6) = 33` ⇒ `(b0 and 0x7E) == 0x42`；
+     * 第二字节低 3 位是 `temporal_id_plus1`，规范要求 ≥ 1（据此过滤偶发的字节巧合）。
+     * SPS body 从起始码后 **5** 字节开始（3 字节起始码 + 2 字节 NAL 头）。
+     *
+     * <p>与 H.264 的查找互不干扰：H.264 侧看 `b0 and 0x1F == 7`，`0x42` 在 H.264 里是
+     * NAL type 2（分片数据），两边都不会把对方的数据当成自己的 SPS —— 双方解析失败
+     * 也只是返回 null 继续扫，**不会产出错误尺寸**。
+     */
+    private fun findHevcSpsSize(d: ByteArray, len: Int): IntArray? {
+        var i = 0
+        while (i + 6 < len) {
+            if (d[i].toInt() == 0 && d[i + 1].toInt() == 0 && d[i + 2].toInt() == 1) {
+                val b0 = d[i + 3].toInt() and 0xFF
+                val b1 = d[i + 4].toInt() and 0xFF
+                if ((b0 and HEVC_NAL_SPS_MASK) == HEVC_NAL_SPS_PATTERN && (b1 and 0x07) != 0) {
+                    val rbsp = toRbsp(d, i + 5, len)
+                    val size = parseHevcSps(rbsp)
+                    if (size != null) return size
+                }
+                i += 3
+            } else {
+                i++
+            }
+        }
+        return null
+    }
+
+    /**
+     * HEVC SPS → 宽高（含 conformance window 修正）。
+     *
+     * <p>**只解到 `pic_width/height_in_luma_samples` + conformance window 就返回** ——
+     * 宽高在 SPS 里位置靠前，后面的 scaling_list / st_ref_pic_set / VUI 全部不用碰，
+     * 解析面越小越不容易因个别流的可变结构而错位。
+     *
+     * <p>与 H.264 的两处语法差异（都是踩过才记下的）：
+     * ① NAL 头 2 字节，SPS 里没有 8 位的 profile/level 前缀，取而代之的是 96 位的 profile_tier_level；
+     * ② 宽高是**直接的字素样本数**（H.264 是宏块数 ×16），所以 1920x800 这类值不需要裁剪修正也能直出。
+     */
+    private fun parseHevcSps(rbsp: ByteArray): IntArray? {
+        val r = BitReader(rbsp)
+        if (r.u(4) < 0) return null                       // sps_video_parameter_set_id
+        val maxSub = r.u(3)                               // sps_max_sub_layers_minus1
+        if (maxSub < 0 || maxSub > 7) return null
+        if (r.u(1) < 0) return null                       // temporal_id_nesting_flag
+        if (!skipProfileTierLevel(r, maxSub)) return null
+        if (r.ue() < 0) return null                       // sps_seq_parameter_set_id
+        val chroma = r.ue()
+        if (chroma < 0 || chroma > 3) return null
+        val sepColour = if (chroma == 3) r.u(1) else 0
+        if (sepColour < 0) return null
+        val w = r.ue()
+        val h = r.ue()
+        if (w <= 0 || h <= 0) return null
+        val cw = r.u(1)                                   // conformance_window_flag
+        if (cw < 0) return null
+        var width = w
+        var height = h
+        if (cw == 1) {
+            val l = r.ue()
+            val rr = r.ue()
+            val t = r.ue()
+            val b = r.ue()
+            if (l < 0 || rr < 0 || t < 0 || b < 0) return null
+            // SubWidthC / SubHeightC（separate_colour_plane=1 视同单色,步长 1）
+            val sx: Int
+            val sy: Int
+            when {
+                chroma == 0 || sepColour == 1 -> { sx = 1; sy = 1 }
+                chroma == 1 -> { sx = 2; sy = 2 }
+                chroma == 2 -> { sx = 2; sy = 1 }
+                else -> { sx = 1; sy = 1 }
+            }
+            width -= (l + rr) * sx
+            height -= (t + b) * sy
+        }
+        // 越界即弃:宁可"探测不到"也不能把畸形流解出的垃圾尺寸写进记忆
+        if (width <= 0 || height <= 0 || width > 16384 || height > 16384) return null
+        return intArrayOf(width, height)
+    }
+
+    /**
+     * 跳过 profile_tier_level。
+     *
+     * <p>位序:space(2)+tier(1)+idc(5) → compat[32] → 4 个源/打包 flag → 43 位 reserved +
+     * 1 位 inbld → level_idc(8) —— 恰好 **96 位 = 12 字节**（maxNumSubLayersMinus1 == 0 时）。
+     * 多 sub-layer 的流（可伸缩编码,流媒体里少见）按规范补齐各 present 标志与 88/8 位块,
+     * 解错位会让后面的宽高全错 —— 所以这段必须完整实现,不能只处理常见情形。
+     */
+    private fun skipProfileTierLevel(r: BitReader, maxSub: Int): Boolean {
+        if (r.u(2) < 0 || r.u(1) < 0 || r.u(5) < 0) return false
+        for (k in 0 until 32) if (r.u(1) < 0) return false
+        for (k in 0 until 4) if (r.u(1) < 0) return false
+        for (k in 0 until 43) if (r.u(1) < 0) return false
+        if (r.u(1) < 0) return false
+        if (r.u(8) < 0) return false                      // general_level_idc
+        val profilePresent = BooleanArray(maxSub)
+        val levelPresent = BooleanArray(maxSub)
+        for (i in 0 until maxSub) {
+            val p = r.u(1)
+            val l = r.u(1)
+            if (p < 0 || l < 0) return false
+            profilePresent[i] = p == 1
+            levelPresent[i] = l == 1
+        }
+        if (maxSub > 0) {
+            for (i in maxSub until 8) if (r.u(2) < 0) return false
+            for (i in 0 until maxSub) {
+                if (profilePresent[i] && !skipBits(r, 88)) return false
+                if (levelPresent[i] && r.u(8) < 0) return false
+            }
+        }
+        return true
+    }
+
+    private fun skipBits(r: BitReader, n: Int): Boolean {
+        for (k in 0 until n) if (r.u(1) < 0) return false
+        return true
+    }
 
     // ==================== 内部：URL ====================
 

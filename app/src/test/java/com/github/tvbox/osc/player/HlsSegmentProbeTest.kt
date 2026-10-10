@@ -255,4 +255,113 @@ class HlsSegmentProbeTest {
             videoPacketWithSps()
         assertNull(HlsSegmentProbe.parseTsH264Size(data, data.size))
     }
+
+    // ==================== H.265/HEVC 分片内探(2026-10-11) ====================
+
+    /** 位写出器:HEVC SPS 位域复杂,手工字节不可维护,必须按规范逐位构造 */
+    private class BitWriter {
+        private val bits = ArrayList<Boolean>()
+        fun u(n: Int, v: Int) { for (k in n - 1 downTo 0) bits.add(((v shr k) and 1) == 1) }
+        fun ue(v: Int) {
+            var k = 0
+            val m = v + 1
+            while ((1 shl (k + 1)) <= m) k++
+            u(k, 0)
+            u(1, 1)
+            if (k > 0) u(k, m - (1 shl k))
+        }
+        fun toBytes(): ByteArray {
+            val out = ByteArray((bits.size + 7) / 8)
+            for (i in bits.indices) {
+                if (bits[i]) out[i / 8] = (out[i / 8].toInt() or (0x80 shl (i % 8))).toByte()
+            }
+            return out
+        }
+    }
+
+    /**
+     * 构造最小 HEVC SPS NAL(2 字节头 + SPS body,写到 conformance window 为止)。
+     * 位序与 ITU-T H.265 7.3.2.2 一致;profile_tier_level 按 96 位(单 sub-layer)填写。
+     */
+    private fun hevcSpsNal(w: Int, h: Int): ByteArray {
+        val bw = BitWriter()
+        bw.u(1, 0); bw.u(6, 33); bw.u(6, 0); bw.u(3, 1)   // NAL 头:forbidden + type=33(SPS) + layer + tid+1
+        bw.u(4, 0)                                        // sps_video_parameter_set_id
+        bw.u(3, 0)                                        // sps_max_sub_layers_minus1
+        bw.u(1, 1)                                        // temporal_id_nesting_flag
+        bw.u(2, 0); bw.u(1, 0); bw.u(5, 1)                // profile_space / tier / idc = Main
+        for (i in 0 until 32) bw.u(1, if (i == 1) 1 else 0)   // general_profile_compatibility_flag[1]=1
+        bw.u(1, 1); bw.u(1, 0); bw.u(1, 1); bw.u(1, 1)    // progressive / interlaced / non_packed / frame_only
+        for (i in 0 until 43) bw.u(1, 0)                  // reserved_zero_43bits
+        bw.u(1, 0)                                        // general_inbld_flag
+        bw.u(8, 120)                                      // general_level_idc = 4.0
+        bw.ue(0)                                          // sps_seq_parameter_set_id
+        bw.ue(1)                                          // chroma_format_idc = 4:2:0
+        bw.ue(w)                                          // pic_width_in_luma_samples
+        bw.ue(h)                                          // pic_height_in_luma_samples
+        bw.u(1, 0)                                        // conformance_window_flag = 0
+        return bw.toBytes()
+    }
+
+    private fun hex(b: ByteArray): String = b.joinToString("") { "%02x".format(it) }
+
+    /** PMT 的 stream_type 字节在第 13 位(MPEG-2 负例已用过这个下标) */
+    private fun pmtWith(streamType: Int): ByteArray =
+        pmtPayload.copyOf().also { it[13] = streamType.toByte() }
+
+    private fun videoPacketWith(nal: ByteArray): ByteArray {
+        val payload = byteArrayOf(
+            0x00, 0x00, 0x01, 0xE0.toByte(), 0x00, 0x00, 0x80.toByte(), 0x80.toByte(), 0x05,
+            0x00, 0x00, 0x00, 0x01,
+        ) + nal
+        return tsPacket(0x100, true, payload)
+    }
+
+    private fun hevcTs(streamType: Int, w: Int, h: Int): ByteArray =
+        tsPacket(0x0000, false, patPayload) +
+            tsPacket(0x1000, false, pmtWith(streamType)) +
+            videoPacketWith(hevcSpsNal(w, h))
+
+    @Test
+    fun `parseTsHevcSize 从构造的SPS解出1920x800`() {
+        val data = hevcTs(0x24, 1920, 800)
+        val size = HlsSegmentProbe.parseTsHevcSize(data, data.size)!!
+        assertEquals(1920, size[0])
+        assertEquals(800, size[1])
+    }
+
+    @Test
+    fun `parseTsHevcSize 构造的NAL与独立实现逐字节一致`() {
+        // 参考字节由另一套独立实现(Python 复刻)按同一规范生成 ——
+        // 两套实现写出同一位流,才能确认 Kotlin 的位序没有写错
+        assertEquals(
+            "4201010140000000b0000000000078a003c0803210",
+            hex(hevcSpsNal(1920, 800)),
+        )
+    }
+
+    @Test
+    fun `parseTsVideoSize PMT声明H264但内容是HEVC仍能解出`() {
+        // 内容嗅探优于声明:站点把 stream_type 写错/写死是常态,分片里的字节不会骗人
+        val data = hevcTs(0x1B, 1920, 800)
+        val size = HlsSegmentProbe.parseTsVideoSize(data, data.size)!!
+        assertEquals(1920, size[0])
+        assertEquals(800, size[1])
+    }
+
+    @Test
+    fun `parseTsHevcSize 非视频PMT不误判`() {
+        // 0x02 = MPEG-2:既不是 H.264 也不是 HEVC,不该把视频包硬解出尺寸
+        assertNull(HlsSegmentProbe.parseTsHevcSize(hevcTs(0x02, 1920, 800), 188 * 3))
+    }
+
+    @Test
+    fun `parseTsVideoSize H264老路径不受影响`() {
+        val data = patPayload.let { tsPacket(0x0000, false, it) } +
+            pmtPayload.let { tsPacket(0x1000, false, it) } +
+            videoPacketWithSps()
+        val size = HlsSegmentProbe.parseTsVideoSize(data, data.size)!!
+        assertEquals(1914, size[0])
+        assertEquals(798, size[1])
+    }
 }

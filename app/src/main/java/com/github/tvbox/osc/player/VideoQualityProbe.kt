@@ -219,8 +219,8 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
                 // fMP4 的 init 段(或分片本身是 mp4):moov/stsd 就是尺寸真值,与 MP4 探测同一条路
                 val mp4 = Mp4BoxReader.readVideoSize(buffer, buffer.size)
                 if (mp4 != null) return@use intArrayOf(mp4.first, mp4.second)
-                // MPEG-TS:解 PAT→PMT→视频 PID→SPS
-                HlsSegmentProbe.parseTsH264Size(buffer, buffer.size)
+                // MPEG-TS:按**内容**依次试 H.264 / H.265 的 SPS(不信 PMT/URL 声明)
+                HlsSegmentProbe.parseTsVideoSize(buffer, buffer.size)
             }
         } catch (t: Throwable) {
             null
