@@ -1,5 +1,7 @@
 package com.github.tvbox.osc.player;
 
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.text.TextUtils;
 
@@ -88,6 +90,22 @@ final class PlaybackRetryDelegate {
 
     /** 回滚后锁定:本集会话不再升档(防"升→卡→降→再升"振荡) */
     private boolean upgradeLockedThisSession = false;
+
+    /** 补探测完成后的立即复查(不等看门狗下一个 30s 周期);主线程,与看门狗同 looper */
+    private final Handler upgradeHandler = new Handler(Looper.getMainLooper());
+
+    private static final long UPGRADE_RECHECK_DELAY_MS = 5_000L;
+
+    private boolean upgradeRecheckScheduled = false;
+
+    private final Runnable upgradeRecheck = new Runnable() {
+        @Override
+        public void run() {
+            upgradeRecheckScheduled = false;
+            // 补探测(预算 2s)此时应已写完记忆:立即复查升档
+            handleNetworkPlentiful(false);
+        }
+    };
 
     PlaybackRetryDelegate(Host host) {
         this.host = host;
@@ -470,6 +488,8 @@ final class PlaybackRetryDelegate {
 
     /** 新内容边界(beginNewPlay):升档计数/会话锁/出发地快照全部作废 */
     void resetUpgradeState() {
+        upgradeHandler.removeCallbacks(upgradeRecheck);
+        upgradeRecheckScheduled = false;
         upgradeOriginFlag = "";
         upgradeOriginIndex = -1;
         upgradeOriginHeight = 0;
@@ -492,7 +512,21 @@ final class PlaybackRetryDelegate {
      * 候选只来自实测记忆( pickUpgrade,升得最少单步走),不探测不猜。
      */
     void handleNetworkPlentiful() {
+        handleNetworkPlentiful(true);
+    }
+
+    /**
+     * @param fromWatchdog true=看门狗富余信号(无候选时可安排一次补探后复查);
+     *                     false=补探后的立即复查(不再安排,防 5s 循环)
+     */
+    void handleNetworkPlentiful(boolean fromWatchdog) {
         PlaybackAttemptState st = host.attemptState();
+        // 暂停/拖动中不升档:复查定时器可能落在用户暂停的间隙,此时切换会打断静止画面
+        PlaybackViewBridge stateView = host.view();
+        if (stateView == null || !stateView.isPlaying()) {
+            LOG.i("echo-quality upgrade skip: not playing");
+            return;
+        }
         if (upgradeLockedThisSession) {
             LOG.i("echo-quality upgrade skip: session locked");
             return;
@@ -522,10 +556,14 @@ final class PlaybackRetryDelegate {
                     + " (untriedHigher=" + untriedHigher + ")");
             // 第二批:网络富余但无候选 → 请详情页补探测未测线路(幂等,只探直连型未测者),
             // 填上记忆后下一次富余检查(≥30s 后)才有资格做升档决策
-            if (untriedHigher == 0 && DeviceCapability.QualityMode.current().getShouldProbeOnFirstWatch()
+            if (untriedHigher == 0 && fromWatchdog && !upgradeRecheckScheduled
+                    && DeviceCapability.QualityMode.current().getShouldProbeOnFirstWatch()
                     && vod.seriesMap != null && vod.seriesMap.size() > 1) {
                 EventBus.getDefault().post(new RefreshEvent(RefreshEvent.TYPE_PROBE_MISSING_LINES));
-                LOG.i("echo-quality probe-request posted");
+                // 补探测预算 2s,5s 后立即复查 —— 记忆刚填上就检查,不等看门狗下一个 30s 周期
+                upgradeRecheckScheduled = true;
+                upgradeHandler.postDelayed(upgradeRecheck, UPGRADE_RECHECK_DELAY_MS);
+                LOG.i("echo-quality probe-request posted, recheck in 5s");
             }
             return;
         }
@@ -553,6 +591,8 @@ final class PlaybackRetryDelegate {
         upgradeOriginHeight = currentHeight;
         upgradedAtElapsed = SystemClock.elapsedRealtime();
         upgradesDone++;
+        upgradeHandler.removeCallbacks(upgradeRecheck);
+        upgradeRecheckScheduled = false;
         switchLineTo(target, nextIndex, "echo-quality upgrade " + currentHeight + "p",
                 R.string.player_quality_upgrading);
     }

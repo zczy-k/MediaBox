@@ -145,6 +145,11 @@ class DetailViewModel : ViewModel() {
 
     private var manualLineSwitchPending = false
 
+    /** 探测负结果冷却(会话级,键=线路 flag):探测跑通但拿不到尺寸/解析失败的线路不落记忆,
+     *  若不冷却会被 plentiful→probe-request 每 30s 反复空探(2026-10-10 真机观察,单次虽小但纯浪费) */
+    private val probeNegativeAt = HashMap<String, Long>()
+    private var probeNegativeScope = ""
+
     private var vodName = ""
     private var vodPicture = ""
     private var fromCollect = false
@@ -484,7 +489,16 @@ class DetailViewModel : ViewModel() {
         val mode = DeviceCapability.QualityMode.current()
         if (!mode.shouldProbeOnFirstWatch) return
         val remembered = VideoQualityMemory.lookupAll(sourceKey, vodId, siteOrder)
-        val missing = siteOrder.filter { flag -> remembered.none { it.flag == flag } }
+        // 负冷却按片隔离:换片清空(不同片同名 flag 的坏地址互不相干)
+        val scopeKey = "$sourceKey|$vodId"
+        if (probeNegativeScope != scopeKey) {
+            probeNegativeScope = scopeKey
+            probeNegativeAt.clear()
+        }
+        val nowMs = System.currentTimeMillis()
+        val missing = siteOrder.filter { flag ->
+            remembered.none { it.flag == flag } && !probeNegativeCooldownActive(flag, nowMs)
+        }
         if (missing.isEmpty()) return
         // 只探**直连型**线路(与 PlayLoader.shouldDirectPlay 同口径):爬虫型线路要先跑 getPlay
         // 解析才拿得到地址,每条 1~3 秒且同类 Spider 不能并发,代价与"更快开始播放"冲突。
@@ -518,10 +532,23 @@ class DetailViewModel : ViewModel() {
                     probe = { url -> probe.probe(url, headers) },
                 )
             }.orEmpty()
+            var knownNew = 0
             probed.forEach { v ->
                 if (v.flag.isEmpty()) return@forEach
+                if (!v.known) {
+                    // 探测请求跑通但拿不到尺寸(坏地址/错误 JSON):进负冷却,不落记忆污染
+                    probeNegativeAt[v.flag] = System.currentTimeMillis()
+                    return@forEach
+                }
+                probeNegativeAt.remove(v.flag)
                 VideoQualityMemory.record(siteKey, vod, v)
+                knownNew++
             }
+            // 压根没拿到结果(resolve 失败)的目标同样进负冷却
+            targets.forEach { flag ->
+                if (probed.none { it.flag == flag }) probeNegativeAt[flag] = System.currentTimeMillis()
+            }
+            if (knownNew > 0) LOG.i("echo-line-probe new-known=$knownNew (negative=${probeNegativeAt.size})")
             // 会话可能已经换片/换源:那时刷新会把新内容的画质写进来
             if (siteKey != sourceKey || vod != vodId) return@launch
             publishLineQualityHeights()
@@ -531,6 +558,14 @@ class DetailViewModel : ViewModel() {
     /** 探测预算:单条 800ms(见 VideoQualityProbe),留一倍余量给并发调度 */
     private object LineQualityProbeBudget {
         const val totalMs = 2000L
+
+        /** 负结果冷却:探不到尺寸/解析失败的线路,10 分钟内不再重探 */
+        const val negativeCooldownMs = 10L * 60 * 1000
+    }
+
+    private fun probeNegativeCooldownActive(flag: String, nowMs: Long): Boolean {
+        val at = probeNegativeAt[flag] ?: return false
+        return nowMs - at < LineQualityProbeBudget.negativeCooldownMs
     }
 
     fun requestPlay() {
