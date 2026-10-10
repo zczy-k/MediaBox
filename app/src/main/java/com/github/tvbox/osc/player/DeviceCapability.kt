@@ -24,8 +24,9 @@ object DeviceCapability {
     /** 软解码时的上限:真机实测(麒麟990 手机)1080P H264 软解丢帧 0 已属勉强,再上一档必卡 */
     private const val DEFAULT_CAP_SOFTWARE = 1080
 
-    /** 标准档位阶梯:某一档播不了就落到它的下一档,再下一档就是"不限制" */
-    private val LADDER = intArrayOf(2160, 1440, 1080, 720, 480)
+    /** 失败后下推的安全余量(分子/分母):失败点往下让出 25%,给解码与带宽留裕度 */
+    private const val CAP_BACKOFF_NUM = 3
+    private const val CAP_BACKOFF_DEN = 4
 
     /**
      * 是否电视 / 盒子。
@@ -53,9 +54,14 @@ object DeviceCapability {
     private const val SOFTWARE_DECODE_LABEL = "软解码" // i18n: keep —— 与设置页/PlayerConfigDelegate 同口径的字面量
 
     /**
-     * 记一次"这一档起播失败",把上限压到它的下一档。
+     * 记一次"这一档起播失败",把上限压到**明显低于失败点**。
      *
-     * <p>只在**已经学到过上限**时才继续下调:首播就因为一次失败把上限压到 1080P,
+     * <p>⚠️ 这里原来用一张写死的分辨率阶梯表(`[2160,1440,1080,720,480]`)去取"下一档",**已删除**。
+     * 理由(见《选线机制设计》附录 A.4):站点真实存在的分辨率远不止这五种,写死表既覆盖不到、
+     * 又与全项目"只认实测、不写死分辨率"的口径冲突。改为**按固定安全余量从失败点下推**——
+     * 这里需要的是"安全裕度",不是"画质档位",所以比例推导比查表更贴语义。
+     *
+     * <p>只在**已经学到过上限**时才继续下调:首播就因为一次失败把上限压下来,
      * 会让一台本来能播 4K 的设备永久失去上高档的机会(而那次失败可能只是网络抖动)。
      */
     @JvmStatic
@@ -64,8 +70,8 @@ object DeviceCapability {
         val learned = KV.get(HawkConfig.VIDEO_QUALITY_CAP, 0)
         if (learned <= 0) return
         if (failedHeight <= learned) return
-        val next = LADDER.firstOrNull { it < failedHeight } ?: 0
-        if (next == learned) return
+        val next = failedHeight / CAP_BACKOFF_DEN * CAP_BACKOFF_NUM
+        if (next <= 0 || next == learned) return
         KV.put(HawkConfig.VIDEO_QUALITY_CAP, next)
         LOG.d("DeviceCapability", "cap down after failure at ${failedHeight}p -> $next")
     }

@@ -488,7 +488,7 @@ class DetailViewModel : ViewModel() {
         val siteOrder = info.seriesMap?.keys?.toList().orEmpty()
         if (siteOrder.size <= 1) return
         // 流量节省开启 ⇒ 不发起批量补探测(口径见《选线机制设计》附录 F.6):
-        // 升档已被门控关死(见 QualityGovernor.canUpgrade 的 trafficSaver 参数),
+        // 升档已被门控关死(见 QualityGovernor.canSwitchUp 的 trafficSaver 参数),
         // 而这条批量探测(N × ≤256KB)的服务对象正是"填升档候选",此时纯属白花流量。
         if (DeviceCapability.trafficSaverOn()) {
             LOG.i("echo-line-probe skip: traffic saver on")

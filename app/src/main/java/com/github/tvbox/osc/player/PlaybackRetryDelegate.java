@@ -6,6 +6,7 @@ import android.os.SystemClock;
 import android.text.TextUtils;
 
 import com.github.tvbox.osc.R;
+import com.github.tvbox.osc.base.App;
 import com.github.tvbox.osc.bean.VodInfo;
 import com.github.tvbox.osc.event.RefreshEvent;
 import com.github.tvbox.osc.util.EpisodeMatcher;
@@ -78,7 +79,13 @@ final class PlaybackRetryDelegate {
 
     private int upgradeOriginIndex = -1;
 
-    private int upgradeOriginHeight = 0;
+    /**
+     * 出发地的等效清晰度 S(不是档位序号)。
+     *
+     * <p>会话锁改按 **S** 判:回滚后在"目标 S 高于出发地 S"时一律拒绝,不再依赖写死的档位表
+     * (见《选线机制设计》附录 A.4)。
+     */
+    private int upgradeOriginS = 0;
 
     /** 升档时刻(uptimeMillis);0 = 无升档在途 */
     private long upgradedAtElapsed = 0L;
@@ -389,30 +396,35 @@ final class PlaybackRetryDelegate {
     }
 
     /**
-     * 当前线路的**实测**高度(像素);拿不到返回 0。
+     * 当前线路的**实测画质**;拿不到返回 null。
      *
-     * <p>只认内核上报的真实尺寸,不从 flag 名或 URL 猜 —— 降档的方向判断错了比不降更糟。
+     * <p>⚠️ 宽高都要:判据已从"高度档位"换成等效清晰度 S=√(W×H)(见《选线机制设计》附录 A),
+     * 只拿高度会把 1920×800(宽银幕 1080p)误判成"未达 1080"。
+     *
+     * <p>只认内核上报的真实尺寸,不从 flag 名或 URL 猜 —— 方向判断错了比不切更糟。
      */
-    private int currentMeasuredHeight() {
+    private VideoQualityPolicy.Variant currentMeasuredVariant() {
         PlaybackViewBridge view = host.view();
-        if (view == null) return 0;
+        if (view == null) return null;
         try {
             AbstractPlayer mediaPlayer = view.mediaPlayer();
-            if (!(mediaPlayer instanceof ExoPlayer)) return 0;
+            if (!(mediaPlayer instanceof ExoPlayer)) return null;
             for (TrackInfoBean video : ((ExoPlayer) mediaPlayer).getTrackInfo().getVideo()) {
-                if (video != null && video.height > 0) return video.height;
+                if (video != null && video.width > 0 && video.height > 0) {
+                    return VideoQualityPolicy.measured(video.width, video.height, video.bitrate);
+                }
             }
         } catch (Throwable ignored) {
-            LOG.d("PlaybackController", "measured height unavailable");
+            LOG.d("PlaybackController", "measured size unavailable");
         }
-        return 0;
+        return null;
     }
 
     /**
-     * 换到**实测分辨率更低**的一条(卡顿/起播失败时的第一跳)。
+     * 换到**实测画质更低**的一条(卡顿/起播失败时的第一跳)。
      *
      * <p>与 {@link #tryNextLine()} 的区别只在"选哪一条":按站点顺序换可能换到同样高的档,白折腾一次起播;
-     * 按实测高度降则直击"分辨率超过网络/设备能力"这个真因。两者都失败才落到换线 → 换源。
+     * 按实测画质降则直击"画质超过网络/设备能力"这个真因。两者都失败才落到换线 → 换源。
      *
      * <p>候选来自实测记忆,所以**没记忆的集降不了档**(这是刻意的:没数据不猜)。
      */
@@ -422,20 +434,20 @@ final class PlaybackRetryDelegate {
         if (vod == null || vod.seriesMap == null || vod.seriesMap.isEmpty()) return false;
         if (TextUtils.isEmpty(vod.playFlag) || TextUtils.isEmpty(vod.sourceKey)) return false;
         List<String> lineFlags = EpisodeMatcher.lineFlagsInDisplayOrder(vod);
-        int currentHeight = currentMeasuredHeight();
-        if (currentHeight <= 0) {
-            LOG.i("echo-downgrade: current height unknown, skip");
+        VideoQualityPolicy.Variant current = currentMeasuredVariant();
+        if (current == null) {
+            LOG.i("echo-downgrade: current size unknown, skip");
             return false;
         }
         List<VideoQualityPolicy.Variant> measured =
                 VideoQualityMemory.lookupAll(vod.sourceKey, vod.id, lineFlags);
-        String target = LineQualitySelector.pickDowngrade(measured, vod.playFlag, currentHeight, st.triedLineFlags);
+        String target = LineQualitySelector.pickDowngrade(measured, vod.playFlag, current, st.triedLineFlags);
         if (target == null) return false;
         List<VodInfo.VodSeries> targetList = vod.seriesMap.get(target);
         if (targetList == null || targetList.isEmpty()) return false;
         VodInfo.VodSeries currentSeries = host.currentSeries(vod.playFlag, Math.max(vod.playIndex, 0));
         int nextIndex = EpisodeMatcher.sameEpisodeIndex(currentSeries, targetList, vod.playIndex);
-        return switchLineTo(target, nextIndex, "echo-downgrade " + currentHeight + "p",
+        return switchLineTo(target, nextIndex, "echo-downgrade " + current.getHeight() + "p",
                 R.string.player_trying_other_line);
     }
 
@@ -506,7 +518,7 @@ final class PlaybackRetryDelegate {
         upgradeRecheckScheduled = false;
         upgradeOriginFlag = "";
         upgradeOriginIndex = -1;
-        upgradeOriginHeight = 0;
+        upgradeOriginS = 0;
         upgradedAtElapsed = 0L;
         episodeStartElapsed = 0L;
         upgradesDone = 0;
@@ -519,11 +531,12 @@ final class PlaybackRetryDelegate {
     }
 
     /**
-     * 看门狗报"网络持续富余" → 线内升档(换更高实测档线路,换线不换集)。
+     * 看门狗报"网络持续富余" → 换到画质更高的线路(换线不换集)。
      *
-     * <p>门控全部在 [QualityGovernor.canUpgrade]:画质档位(SPEED_FIRST 永不升/AUTO ≥2 档/
-     * QUALITY_FIRST ≥1 档)、稳定期(≥60s)、每集额度(≤2 次)、会话锁。
-     * 候选只来自实测记忆( pickUpgrade,升得最少单步走),不探测不猜。
+     * <p>门控全部在 [QualityGovernor.canSwitchUp]:流量节省(开启即拒)、实测尺寸缺失即拒、
+     * 超设备上限即拒、已达 4K 级即停、"值得切"(S 比值 ≥θ 且 ΔS ≥32,或同清晰度 bpp 显著更高)、
+     * 稳定期(≥60s)、每集额度(≤2 次)、会话锁(按 S)。
+     * 候选只来自实测记忆([LineQualitySelector.pickUpgrade] 一次到位取最优),不探测不猜。
      */
     void handleNetworkPlentiful() {
         handleNetworkPlentiful(true);
@@ -553,18 +566,19 @@ final class PlaybackRetryDelegate {
         VodInfo vod = host.vod();
         if (vod == null || TextUtils.isEmpty(vod.playFlag) || TextUtils.isEmpty(vod.sourceKey)) return;
         if (vod.seriesMap == null || vod.seriesMap.isEmpty()) return;
-        int currentHeight = currentMeasuredHeight();
-        if (currentHeight <= 0) return;
+        VideoQualityPolicy.Variant current = currentMeasuredVariant();
+        if (current == null) return;
         List<String> lineFlags = EpisodeMatcher.lineFlagsInDisplayOrder(vod);
         List<VideoQualityPolicy.Variant> measured =
                 VideoQualityMemory.lookupAll(vod.sourceKey, vod.id, lineFlags);
-        String target = LineQualitySelector.pickUpgrade(measured, vod.playFlag, currentHeight, st.triedLineFlags);
+        String target = LineQualitySelector.pickUpgrade(measured, vod.playFlag, current, st.triedLineFlags);
         if (target == null) {
             // 区分"记忆里就没有更高档"与"有但都试过了"(2026-10-10):前者值得补探测,
             // 后者补探测也无济于事 —— 候选都被 tried 排除,说明这集的更高档已经试过并失败过
             long untriedHigher = measured.stream()
                     .filter(v -> v.getFlag() != null && !v.getFlag().isEmpty() && !v.getFlag().equals(vod.playFlag)
-                            && v.getHeight() > currentHeight && !st.triedLineFlags.contains(v.getFlag()))
+                            && VideoQualityPolicy.sharpness(v) > VideoQualityPolicy.sharpness(current)
+                            && !st.triedLineFlags.contains(v.getFlag()))
                     .count();
             LOG.i("echo-quality upgrade skip: no higher measured tier in memory"
                     + " (untriedHigher=" + untriedHigher + ")");
@@ -584,19 +598,23 @@ final class PlaybackRetryDelegate {
             }
             return;
         }
-        int targetHeight = 0;
+        VideoQualityPolicy.Variant targetVariant = null;
         for (VideoQualityPolicy.Variant v : measured) {
             if (target.equals(v.getFlag())) {
-                targetHeight = v.getHeight();
+                targetVariant = v;
                 break;
             }
         }
         long sinceStart = episodeStartElapsed == 0L ? -1L : SystemClock.elapsedRealtime() - episodeStartElapsed;
-        if (!QualityGovernor.canUpgrade(DeviceCapability.effectiveMode(), currentHeight, targetHeight,
-                sinceStart, upgradesDone, upgradeLockedThisSession ? QualityGovernor.tierOf(upgradeOriginHeight) : -1,
+        App app = App.getInstance();
+        int capHeight = app == null ? 0 : DeviceCapability.capHeight(app);
+        // 会话锁按 **S** 判(回滚后 = 出发地 S):目标 S 高于出发地一律拒,不再依赖写死的档位表
+        if (!QualityGovernor.canSwitchUp(DeviceCapability.effectiveMode(), current, targetVariant, capHeight,
+                sinceStart, upgradesDone, upgradeLockedThisSession ? upgradeOriginS : -1,
                 DeviceCapability.trafficSaverOn())) {
-            LOG.i("echo-quality upgrade skip: gate denied cur=" + currentHeight
-                    + " target=" + targetHeight + " done=" + upgradesDone);
+            LOG.i("echo-quality upgrade skip: gate denied curS=" + VideoQualityPolicy.sharpness(current)
+                    + " targetS=" + (targetVariant == null ? -1 : VideoQualityPolicy.sharpness(targetVariant))
+                    + " done=" + upgradesDone);
             return;
         }
         List<VodInfo.VodSeries> targetList = vod.seriesMap.get(target);
@@ -606,12 +624,12 @@ final class PlaybackRetryDelegate {
         // 拍照出发地:回滚窗口内的失败先回到这里(已验证可播)
         upgradeOriginFlag = vod.playFlag;
         upgradeOriginIndex = vod.playIndex;
-        upgradeOriginHeight = currentHeight;
+        upgradeOriginS = VideoQualityPolicy.sharpness(current);
         upgradedAtElapsed = SystemClock.elapsedRealtime();
         upgradesDone++;
         upgradeHandler.removeCallbacks(upgradeRecheck);
         upgradeRecheckScheduled = false;
-        switchLineTo(target, nextIndex, "echo-quality upgrade " + currentHeight + "p",
+        switchLineTo(target, nextIndex, "echo-quality upgrade " + current.getHeight() + "p",
                 R.string.player_quality_upgrading);
     }
 

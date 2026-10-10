@@ -55,9 +55,16 @@ chaquopy {
             .firstOrNull { file(it).exists() }
             ?.let { buildPython(it) }
         pip {
-            // 纯 Python 包走国内镜像;Android 平台 wheel 只在 Chaquopy 官方仓库,
-            // 而 Chaquopy 检测到 -i 后不会再自动附加自己的仓库(chaquopy/pip_install.py),故显式补上
-            options("-i", "https://mirrors.aliyun.com/pypi/simple/")
+            // 纯 Python 包走官方 PyPI;Android 平台 wheel 只在 Chaquopy 官方仓库,
+            // 而 Chaquopy 检测到 -i 后不会再自动附加自己的仓库(chaquopy/pip_install.py),故显式补上。
+            //
+            // ⚠️ 2026-10-10:原来指向 https://mirrors.aliyun.com/pypi/simple/,**已改回官方源**。
+            // 原因:该镜像只同步了 wheel 本体,缺 PEP 658 的 `<wheel>.metadata` 旁路文件,
+            // 而 pip 对这个 404 **不回退**(不去下载完整 wheel 读元数据),直接 `HTTP error 404` 并 exit 1
+            // ⇒ `:pyramid:installDiagPythonRequirements` 硬失败、整条出包流程挂掉。
+            // 实测:同一路径 `wheel=200` 而 `wheel.metadata=404`。
+            // CI runner 在境外,官方源本身也更快;本机无 JAVA_HOME/Android SDK 不做本地构建,故境内无影响。
+            options("-i", "https://pypi.org/simple/")
             options("--extra-index-url", "https://chaquo.com/pypi-13.1")
             install("lxml")
             install("ujson")

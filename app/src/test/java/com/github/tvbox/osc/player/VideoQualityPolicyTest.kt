@@ -152,4 +152,59 @@ class VideoQualityPolicyTest {
         assertNotNull(best)
         assertEquals(720, best!!.height)
     }
+
+    // ==================== 度量层:等效清晰度 S / 天花板 / 达标锚 ====================
+
+    @Test
+    fun sharpness_isGeometricMean() {
+        assertEquals(1440, VideoQualityPolicy.sharpness(v(1920, 1080)))
+        assertEquals(960, VideoQualityPolicy.sharpness(v(1280, 720)))
+        assertEquals(139, VideoQualityPolicy.sharpness(v(160, 120)))
+        // 未知尺寸 ⇒ 0(含义是"还没测到",不是"没有画面")
+        assertEquals(0, VideoQualityPolicy.sharpness(VideoQualityPolicy.Variant()))
+    }
+
+    @Test
+    fun sharpness_letterboxIsNotPenalized() {
+        // 宽银幕 1080p(1920×800)按高度只有 800 会被误判成"未达 1080";按 S 明确高于 720p
+        assertTrue(VideoQualityPolicy.sharpness(v(1920, 800)) > VideoQualityPolicy.sharpness(v(1280, 720)))
+        // 1280×534 与 1728×720:旧"档位"口径(向上取整)把两者归成同一档 ⇒ 死区;按 S 前者明显更低
+        assertTrue(VideoQualityPolicy.sharpness(v(1728, 720)) > VideoQualityPolicy.sharpness(v(1280, 534)))
+    }
+
+    @Test
+    fun isAtCeiling_usesLevelNotEquality() {
+        // 非标宽高也算 4K 级 —— 否则会永远认为"上面还有",无限追高
+        assertTrue(VideoQualityPolicy.isAtCeiling(v(3840, 1600)))
+        assertTrue(VideoQualityPolicy.isAtCeiling(v(3840, 2160)))
+        assertFalse(VideoQualityPolicy.isAtCeiling(v(2560, 1440)))
+        assertFalse(VideoQualityPolicy.isAtCeiling(null))
+        assertFalse(VideoQualityPolicy.isAtCeiling(VideoQualityPolicy.Variant()))
+    }
+
+    @Test
+    fun meetsAnchor_usesEffectiveWidth() {
+        assertTrue(VideoQualityPolicy.meetsAnchor(v(1920, 800), VideoQualityPolicy.ANCHOR_WIDTH_TV))
+        assertFalse(VideoQualityPolicy.meetsAnchor(v(1280, 720), VideoQualityPolicy.ANCHOR_WIDTH_TV))
+        assertTrue(VideoQualityPolicy.meetsAnchor(v(1280, 720), VideoQualityPolicy.ANCHOR_WIDTH_MOBILE))
+        // anchorWidth ≤ 0 ⇒ 视为"无锚",一律通过
+        assertTrue(VideoQualityPolicy.meetsAnchor(VideoQualityPolicy.Variant(), 0))
+    }
+
+    @Test
+    fun measured_factoryBuildsMeasuredVariant() {
+        val m = VideoQualityPolicy.measured(1920, 1080, 5_000_000)
+        assertEquals(1920, m.width)
+        assertEquals(1080, m.height)
+        assertEquals(5_000_000, m.bitrate)
+        assertEquals(VideoQualityPolicy.Confidence.MEASURED, m.confidence)
+    }
+
+    @Test
+    fun score_primaryKeyIsSharpness_notHeightOrFlag() {
+        // 同高度、不同宽度:旧口径(主键=高度)会判平局,按 S 则更宽的那条胜出
+        assertTrue(VideoQualityPolicy.score(v(1728, 720)) > VideoQualityPolicy.score(v(1280, 720)))
+        // 宽银幕 1080p 压过 720p
+        assertTrue(VideoQualityPolicy.score(v(1920, 800)) > VideoQualityPolicy.score(v(1280, 720)))
+    }
 }

@@ -1,5 +1,8 @@
 package com.github.tvbox.osc.player
 
+import kotlin.math.roundToInt
+import kotlin.math.sqrt
+
 /**
  * 线路画质优选策略:**纯逻辑**,不碰网络 / 存储 / 视图,可直接单测。
  *
@@ -50,8 +53,64 @@ object VideoQualityPolicy {
         return (v.bitrate.toLong() / pixels).toInt()
     }
 
-    /** 分辨率权重步长:一档分辨率差的量级必须压过所有次键之和(见 [score]) */
-    private const val RESOLUTION_STEP = 10_000_000L
+    // ── 度量层:等效清晰度 / 天花板 / 达标锚(《选线机制设计》附录 A)────────────────────
+    //
+    // 这一层是"不写死分辨率"的落点:所有比较都从**实测量**推导,
+    // 不预设任何档位表(480/720/1080/1440/2160 那种表覆盖不到站点真实存在的分辨率)。
+
+    /** 画质天花板(4K 级)的宽度阈值:达此宽度即视为到顶,停止向上追 */
+    const val CEILING_WIDTH = 3840
+
+    /** 画质天花板的高度兜底阈值(宽度未上报/非标准时用) */
+    const val CEILING_HEIGHT = 2160
+
+    /** 达标锚(电视):有效宽度 ≥ 此值算"够清晰" */
+    const val ANCHOR_WIDTH_TV = 1920
+
+    /** 达标锚(手机) */
+    const val ANCHOR_WIDTH_MOBILE = 1280
+
+    /**
+     * 等效线性清晰度 **S = √(W × H)**。0 = 不可计算(尺寸未知)。
+     *
+     * <p>为什么不用高度:1920×800(宽银幕 1080p)按高度只有 800,会被判成"未达 1080" —— 误杀。
+     * 为什么不用档位:S 是连续量,直接回答"谁更清晰",不需要先归类到某个写死的档。
+     */
+    @JvmStatic
+    fun sharpness(v: Variant): Int {
+        if (!v.known) return 0
+        return sqrt(v.width.toDouble() * v.height.toDouble()).roundToInt()
+    }
+
+    /**
+     * 是否已达天花板(4K 级):有效宽度 ≥[CEILING_WIDTH],或高度 ≥[CEILING_HEIGHT]。
+     *
+     * <p>用"级"不用等值:3840×1600 与 3840×2160 同为 4K 级,都判达顶 ——
+     * 否则非标宽高会漏判,系统永远认为"上面还有",无限追高。
+     */
+    @JvmStatic
+    fun isAtCeiling(v: Variant?): Boolean =
+        v != null && v.known && (v.width >= CEILING_WIDTH || v.height >= CEILING_HEIGHT)
+
+    /** 是否达到达标锚(有效宽度 ≥[anchorWidth])。anchorWidth ≤ 0 时视为"无锚",一律通过 */
+    @JvmStatic
+    fun meetsAnchor(v: Variant?, anchorWidth: Int): Boolean {
+        if (anchorWidth <= 0) return true
+        return v != null && v.known && v.width >= anchorWidth
+    }
+
+    /**
+     * 内核上报尺寸的构造入口。
+     *
+     * <p>供 Java 侧(`PlaybackRetryDelegate.currentMeasuredVariant`)调用 —— 免去在 Java 里
+     * 拼 5 参构造并显式传默认值,减少 Kotlin↔Java 互操作面。
+     */
+    @JvmStatic
+    fun measured(width: Int, height: Int, bitrate: Int): Variant =
+        Variant(width, height, bitrate, Confidence.MEASURED)
+
+    /** 清晰度权重步长:S 差 1 的量级必须压过所有次键之和(见 [score]) */
+    private const val SHARPNESS_STEP = 10_000_000L
     private const val BPP_STEP = 10_000L
     private const val BPP_CAP = 99
 
@@ -62,14 +121,17 @@ object VideoQualityPolicy {
     }
 
     /**
-     * 排序键,越大越优先。三个位段从高到低:分辨率 → 每像素码率(封顶 [BPP_CAP]) → 可信度。
+     * 排序键,越大越优先。三个位段从高到低:**清晰度 S** → 每像素码率(封顶 [BPP_CAP]) → 可信度。
      *
-     * <p>未知分辨率(`height == 0`)得 0 分主键,因此天然排在所有已知档之后 —— 没有信息就没有优先权。
+     * <p>主键用 S 而不是高度:1920×800 这类宽银幕按高度只有 800,会被 1280×720 反超(误判);
+     * 按 S 则 1240 > 960,顺序正确。同理 1728×720(S=1115)能正确压过 1280×534(S=826)。
+     *
+     * <p>未知尺寸得 0 分主键,因此天然排在所有已知档之后 —— 没有信息就没有优先权。
      */
     fun score(v: Variant): Long {
-        val height = if (v.known) v.height.toLong() else 0L
+        val s = sharpness(v).toLong()
         val bpp = bitsPerPixel(v).coerceIn(0, BPP_CAP).toLong()
-        return height * RESOLUTION_STEP + bpp * BPP_STEP + confidenceBonus(v.confidence)
+        return s * SHARPNESS_STEP + bpp * BPP_STEP + confidenceBonus(v.confidence)
     }
 
     /**

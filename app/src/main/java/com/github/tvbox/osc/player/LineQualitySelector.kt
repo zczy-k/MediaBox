@@ -146,17 +146,19 @@ object LineQualitySelector {
     )?.flag
 
     /**
-     * 挑一条**实测分辨率更低**的候选,用于卡顿时降档。
+     * 挑一条**实测画质更低**的候选,用于卡顿时降档。
      *
      * <p>"降档"与"换线"是同一个操作(换 flag),区别只在**选哪一条**:按站点顺序换可能换到同样高的档,
-     * 白折腾一次起播;按实测高度降则直击"分辨率超过网络/设备能力"这个真因。
+     * 白折腾一次起播;按实测画质降则直击"画质超过网络/设备能力"这个真因。
      *
      * <p>三条硬约束,少一条就会误伤:
      * <ul>
-     *   <li>当前高度未知(0)⇒ 返回 null —— 不知道现在多高就没法判断"更低";</li>
-     *   <li>候选必须有**实测**高度(`known`)—— 没测过的不能当"更低",那是猜;</li>
+     *   <li>当前画质未知(尺寸缺失)⇒ 返回 null —— 不知道现在多清晰就没法判断"更低";</li>
+     *   <li>候选必须有**实测**尺寸(`known`)—— 没测过的不能当"更低",那是猜;</li>
      *   <li>已试过的线路跳过 —— 否则会在两条之间来回切。</li>
      * </ul>
+     *
+     * <p>口径:按等效清晰度 S 比较(不是高度)—— 见 [VideoQualityPolicy.sharpness]。
      *
      * @return 目标 flag；没有可降的档时 null(调用方继续走"换线 → 换源")
      */
@@ -164,39 +166,43 @@ object LineQualitySelector {
     fun pickDowngrade(
         measured: List<VideoQualityPolicy.Variant>,
         currentFlag: String,
-        currentHeight: Int,
+        current: VideoQualityPolicy.Variant?,
         triedFlags: Set<String>,
     ): String? {
-        if (currentHeight <= 0) return null
+        val currentS = current?.let { VideoQualityPolicy.sharpness(it) } ?: 0
+        if (currentS <= 0) return null
         val candidates = measured.filter {
             it.flag.isNotEmpty() && it.flag != currentFlag && it.known &&
-                it.height < currentHeight && !triedFlags.contains(it.flag)
+                VideoQualityPolicy.sharpness(it) < currentS && !triedFlags.contains(it.flag)
         }
         if (candidates.isEmpty()) return null
         // 降得最少:取低于当前档里最高的那条
-        return candidates.maxByOrNull { it.height }?.flag
+        return candidates.maxByOrNull { VideoQualityPolicy.score(it) }?.flag
     }
 
     /**
-     * 升档选线(2026-10-10,自适应画质):[pickDowngrade] 的镜像 —— 取**高于**当前实测档里
-     * 最低的那条("升得最少",单步走,本集还有额度可继续升)。
+     * 升档选线(2026-10-10,自适应画质):[pickDowngrade] 的镜像 —— 取**高于**当前实测画质里最优的一条。
      *
-     * <p>候选只来自实测记忆,不探测(探测属第二批后台择优);没记忆不猜,与降档同一口径。
+     * <p>⚠️ **一次到位,不逐级**:逐级(每次只升相邻一档)意味着 N 次重载 = N 次闪屏,
+     * 用户体验不可接受(见《选线机制设计》附录 A 的修订记录)。所以这里直接取候选里的最优。
+     *
+     * <p>候选只来自实测记忆,不探测(探测属后台择优);没记忆不猜,与降档同一口径。
      */
     @JvmStatic
     fun pickUpgrade(
         measured: List<VideoQualityPolicy.Variant>,
         currentFlag: String,
-        currentHeight: Int,
+        current: VideoQualityPolicy.Variant?,
         triedFlags: Set<String>,
     ): String? {
-        if (currentHeight <= 0) return null
+        val currentS = current?.let { VideoQualityPolicy.sharpness(it) } ?: 0
+        if (currentS <= 0) return null
         val candidates = measured.filter {
             it.flag.isNotEmpty() && it.flag != currentFlag && it.known &&
-                it.height > currentHeight && !triedFlags.contains(it.flag)
+                VideoQualityPolicy.sharpness(it) > currentS && !triedFlags.contains(it.flag)
         }
         if (candidates.isEmpty()) return null
-        // 升得最少:取高于当前档里最低的那条
-        return candidates.minByOrNull { it.height }?.flag
+        // 一次到位:直接取画质最高的那条
+        return candidates.maxByOrNull { VideoQualityPolicy.score(it) }?.flag
     }
 }
