@@ -227,6 +227,13 @@ final class PlaybackRetryDelegate {
         PlaybackAttemptState st = host.attemptState();
         if (st.hasRetriedAfterStart) return false;
         if (TextUtils.isEmpty(host.webPlayUrl())) return false;
+        // 非 http(s) 地址(如 "Ksvideo-<超长token>" 伪协议)重播必然再挂(ExoPlayer 当本地文件
+        // → ENAMETOOLONG,2026-10-10 真机实证):不浪费时间重播,直接放行给 autoRetry 换线路/换源
+        if (!host.webPlayUrl().startsWith("http")) {
+            LOG.i("echo-autoRetry skip replay: non-http url, go ladder directly");
+            st.playbackStarted = false;
+            return false;
+        }
         st.hasRetriedAfterStart = true;
         st.hasRetriedSameUrlOnBoot = true;
         LOG.i("echo-autoRetry retry after started error: " + host.webPlayUrl());
@@ -288,7 +295,10 @@ final class PlaybackRetryDelegate {
         int exoErrorKind = exoLastErrorKind();
         // 记下判据:阶梯后面可能一路换线/换源都失败,收口时只剩这里能区分"断网"与"片源废"
         st.lastFailureNetwork = exoErrorKind == ExoPlayer.ERROR_KIND_NETWORK;
-        if (exoErrorKind != ExoPlayer.ERROR_KIND_DECODE
+        // 非 http(s) 伪协议地址:重播/换内核/换解码全都无意义(地址本身打不开),
+        // 直接换线路/换源 —— 同源其他线路若也是坏地址,会以同样速度快速失败(每次 <200ms)
+        boolean nonHttpUrl = !TextUtils.isEmpty(host.webPlayUrl()) && !host.webPlayUrl().startsWith("http");
+        if (!nonHttpUrl && exoErrorKind != ExoPlayer.ERROR_KIND_DECODE
                 && !st.hasRetriedSameUrlOnBoot && !TextUtils.isEmpty(host.webPlayUrl())) {
             st.hasRetriedSameUrlOnBoot = true;
             LOG.i("echo-autoRetry replay same url before decode fallback: " + host.webPlayUrl());
@@ -301,8 +311,8 @@ final class PlaybackRetryDelegate {
             return true;
         }
         // ③ 硬解→软解:解码类起播失败覆盖面最广的兜底,排在换内核之前(先保住用户选的内核)
-        if (exoErrorKind != ExoPlayer.ERROR_KIND_NETWORK && trySoftDecodeFallback()) return true;
-        if (host.webPlayUrl() != null) {
+        if (!nonHttpUrl && exoErrorKind != ExoPlayer.ERROR_KIND_NETWORK && trySoftDecodeFallback()) return true;
+        if (host.webPlayUrl() != null && !nonHttpUrl) {
             if (st.allowSwitchPlayer && !st.hasAutoSwitchedPlayer) {
                 LOG.i("echo-autoRetry switch player and replay current url");
                 int playerType = host.playerCfg().optInt("pl", -1);
@@ -320,7 +330,11 @@ final class PlaybackRetryDelegate {
                     return true;
                 }
             }
+            if (nonHttpUrl) {
+            LOG.i("echo-autoRetry non-http url, fast-fail to next line/source");
+        } else {
             LOG.i("echo-autoRetry current url failed after player switch, try next line");
+        }
             return tryNextLineIfEnabled();
         }
         return tryNextLineIfEnabled();

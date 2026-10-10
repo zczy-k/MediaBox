@@ -149,6 +149,9 @@ class DetailViewModel : ViewModel() {
      *  若不冷却会被 plentiful→probe-request 每 30s 反复空探(2026-10-10 真机观察,单次虽小但纯浪费) */
     private val probeNegativeAt = HashMap<String, Long>()
     private var probeNegativeScope = ""
+    /** 探测穷尽闩(按片):全是爬虫型线路(无可探直连)时,补探测对本片永远无产出,
+     *  置闩后忽略后续 probe-request(换片自动复位)—— 否则 plentiful 每 30s 空转一轮 */
+    private var probeExhausted = false
 
     private var vodName = ""
     private var vodPicture = ""
@@ -494,6 +497,11 @@ class DetailViewModel : ViewModel() {
         if (probeNegativeScope != scopeKey) {
             probeNegativeScope = scopeKey
             probeNegativeAt.clear()
+            probeExhausted = false
+        }
+        if (probeExhausted) {
+            LOG.i("echo-line-probe skip: exhausted this vod (no probe-able lines)")
+            return
         }
         val nowMs = System.currentTimeMillis()
         val missing = siteOrder.filter { flag ->
@@ -517,7 +525,13 @@ class DetailViewModel : ViewModel() {
                 " direct=" + targets.size + " idx=" + index +
                 " (empty-skip: lines<=1 | mode-off | all-remembered | no-direct-url)"
         )
-        if (targets.isEmpty()) return
+        if (targets.isEmpty()) {
+            // 全是爬虫型线路:本管线永远探不了(解析要走 getPlay,1~3s/条且 Spider 不能并发)。
+            // 置闩停止响应 probe-request;爬虫线路的实测靠"看过一次"的内核上报积累(既有路径)。
+            probeExhausted = true
+            LOG.i("echo-line-probe exhausted: all missing lines are crawler-type, latch on")
+            return
+        }
         val headers = probeHeaders(sourceKey)
         val probe = VideoQualityProbe()
         val siteKey = sourceKey
