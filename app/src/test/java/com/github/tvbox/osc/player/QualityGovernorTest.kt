@@ -79,6 +79,39 @@ class QualityGovernorTest {
         assertFalse(QualityGovernor.canUpgrade(DeviceCapability.QualityMode.QUALITY_FIRST, 1080, 0, 120_000L, 0, -1))
     }
 
+    // ==================== 流量节省(见《选线机制设计》附录 F) ====================
+
+    @Test
+    fun `流量节省开启时任何模式都不升档`() {
+        // 它是最外层门:先于档位/档差/稳定期/额度/会话锁 —— 开启即拒绝一切向上动作
+        DeviceCapability.QualityMode.values().forEach { mode ->
+            assertFalse(
+                QualityGovernor.canUpgrade(mode, 480, 2160, 600_000L, 0, -1, trafficSaver = true),
+            )
+        }
+    }
+
+    @Test
+    fun `流量节省关闭时门控行为与旧版一致`() {
+        assertTrue(
+            QualityGovernor.canUpgrade(
+                DeviceCapability.QualityMode.QUALITY_FIRST, 480, 1080, 120_000L, 0, -1,
+                trafficSaver = false,
+            ),
+        )
+        assertFalse(
+            QualityGovernor.canUpgrade(
+                DeviceCapability.QualityMode.SPEED_FIRST, 480, 1080, 120_000L, 0, -1,
+                trafficSaver = false,
+            ),
+        )
+    }
+
+    @Test
+    fun `省略流量节省参数时按关闭处理_既有调用点行为不被静默改变`() {
+        assertTrue(QualityGovernor.canUpgrade(DeviceCapability.QualityMode.QUALITY_FIRST, 480, 1080, 120_000L, 0, -1))
+    }
+
     // ==================== inRollbackWindow ====================
 
     @Test

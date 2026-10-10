@@ -56,6 +56,16 @@ public class HawkConfig {
     /** 「画质选项」三档(int:0=画质优先 1=自动画质 2=速度优先;取值口径见 DeviceCapability.QualityMode) */
     public static final String VIDEO_QUALITY_MODE = "video_quality_mode";
     /**
+     * 「流量节省」开关(boolean,默认 true)。
+     *
+     * <p>开启时禁止一切**向上**的画质动作(升档追踪 / 跨源搜寻 / 爬虫深探)，并把生效档位
+     * 归一化为「自动画质」；只保留向下兜底(故障降档)。口径见 DeviceCapability.trafficSaverOn / effectiveMode。
+     *
+     * <p>为什么单独一把开关而不是加第四档 QualityMode：QualityMode 是"起播探测策略"语义，
+     * 本开关是"是否允许向上"的**横切**语义；混进枚举会让 ordinal 与 KV 历史值错位。
+     */
+    public static final String TRAFFIC_SAVER = "traffic_saver";
+    /**
      * 「已确认无资源」标记(JSON,见 util/AvailabilityMemory):键 "站点|影片",
      * 值 "标记时间戳,站名"。用于把点空过一次的影片从列表里剔除(方案 B 第二层)。
      *

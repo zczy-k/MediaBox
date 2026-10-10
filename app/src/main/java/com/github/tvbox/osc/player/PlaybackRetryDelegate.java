@@ -569,9 +569,12 @@ final class PlaybackRetryDelegate {
             LOG.i("echo-quality upgrade skip: no higher measured tier in memory"
                     + " (untriedHigher=" + untriedHigher + ")");
             // 第二批:网络富余但无候选 → 请详情页补探测未测线路(幂等,只探直连型未测者),
-            // 填上记忆后下一次富余检查(≥30s 后)才有资格做升档决策
+            // 填上记忆后下一次富余检查(≥30s 后)才有资格做升档决策。
+            // ⚠️ 流量节省开启时不发这个请求:补探测**只为升档服务**,而不升档时它是纯浪费
+            // (口径见《选线机制设计》附录 F.6)。
             if (untriedHigher == 0 && fromWatchdog && !upgradeRecheckScheduled
-                    && DeviceCapability.QualityMode.current().getShouldProbeOnFirstWatch()
+                    && !DeviceCapability.trafficSaverOn()
+                    && DeviceCapability.effectiveMode().getShouldProbeOnFirstWatch()
                     && vod.seriesMap != null && vod.seriesMap.size() > 1) {
                 EventBus.getDefault().post(new RefreshEvent(RefreshEvent.TYPE_PROBE_MISSING_LINES));
                 // 补探测预算 2s,5s 后立即复查 —— 记忆刚填上就检查,不等看门狗下一个 30s 周期
@@ -589,8 +592,9 @@ final class PlaybackRetryDelegate {
             }
         }
         long sinceStart = episodeStartElapsed == 0L ? -1L : SystemClock.elapsedRealtime() - episodeStartElapsed;
-        if (!QualityGovernor.canUpgrade(DeviceCapability.QualityMode.current(), currentHeight, targetHeight,
-                sinceStart, upgradesDone, upgradeLockedThisSession ? QualityGovernor.tierOf(upgradeOriginHeight) : -1)) {
+        if (!QualityGovernor.canUpgrade(DeviceCapability.effectiveMode(), currentHeight, targetHeight,
+                sinceStart, upgradesDone, upgradeLockedThisSession ? QualityGovernor.tierOf(upgradeOriginHeight) : -1,
+                DeviceCapability.trafficSaverOn())) {
             LOG.i("echo-quality upgrade skip: gate denied cur=" + currentHeight
                     + " target=" + targetHeight + " done=" + upgradesDone);
             return;

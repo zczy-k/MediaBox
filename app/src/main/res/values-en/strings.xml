@@ -439,6 +439,13 @@
     <string name="video_quality_quality_first">Quality First</string>
     <string name="video_quality_auto">Auto</string>
     <string name="video_quality_speed_first">Speed First</string>
+    <string name="settings_traffic_saver">Data Saver</string>
+    <string name="settings_traffic_saver_subtitle">Will not chase higher quality automatically</string>
+    <string name="settings_traffic_saver_off_title">Turn off Data Saver?</string>
+    <string name="settings_traffic_saver_off_message">Turning this off enables Quality First, and the app will actively chase higher quality, which significantly increases data usage. Please proceed with caution.</string>
+    <string name="settings_traffic_saver_off_confirm">Turn off anyway</string>
+    <string name="video_quality_quality_first_locked_hint">Turn off Data Saver first</string>
+    <string name="video_quality_quality_first_paused">Auto (Quality First paused by Data Saver)</string>
 
     <!-- Tips: source loading -->
     <string name="toast_config_parse_failed">Failed to parse config</string>

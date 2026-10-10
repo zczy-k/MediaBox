@@ -108,4 +108,37 @@ object DeviceCapability {
                 values().getOrNull(KV.get(HawkConfig.VIDEO_QUALITY_MODE, AUTO.ordinal)) ?: AUTO
         }
     }
+
+    // ── 流量节省(口径见《选线机制设计》附录 F)────────────────────────────────────
+
+    /**
+     * 「流量节省」是否开启。默认 **true**。
+     *
+     * <p>读失败也返回 true:口径取"安全侧"——漏判成开启只是少花流量,漏判成关闭会多花用户的流量。
+     */
+    @JvmStatic
+    fun trafficSaverOn(): Boolean = KV.get(HawkConfig.TRAFFIC_SAVER, true)
+
+    @JvmStatic
+    fun setTrafficSaver(on: Boolean) {
+        KV.put(HawkConfig.TRAFFIC_SAVER, on)
+    }
+
+    /**
+     * 档位归一化:**纯逻辑**,可 JVM 单测(KV 在单测环境不可用,故把判断抽成无副作用函数)。
+     *
+     * <p>流量节省开启 ⇒ 生效档位恒为 [QualityMode.AUTO](画质优先被暂停);
+     * 关闭 ⇒ 原样返回用户存储的档位。**不改写 KV** —— 用户的选择保留,关掉开关即自动恢复。
+     */
+    @JvmStatic
+    fun resolveMode(stored: QualityMode, saverOn: Boolean): QualityMode =
+        if (saverOn) QualityMode.AUTO else stored
+
+    /**
+     * 实际生效的档位。**决策点必须读这个**,而不是 [QualityMode.current]。
+     *
+     * <p>UI 侧仍展示用户原选择(见 PlaySettingsPage),以便流量节省关闭后一键恢复。
+     */
+    @JvmStatic
+    fun effectiveMode(): QualityMode = resolveMode(QualityMode.current(), trafficSaverOn())
 }

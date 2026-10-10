@@ -446,6 +446,13 @@
     <string name="video_quality_quality_first">画质优先</string>
     <string name="video_quality_auto">自动画质</string>
     <string name="video_quality_speed_first">速度优先</string>
+    <string name="settings_traffic_saver">流量节省</string>
+    <string name="settings_traffic_saver_subtitle">开启后不主动追高，减少流量消耗</string>
+    <string name="settings_traffic_saver_off_title">关闭流量节省？</string>
+    <string name="settings_traffic_saver_off_message">关闭后可使用「画质优先」，应用会主动追踪更高画质，将明显增加流量消耗。请谨慎操作。</string>
+    <string name="settings_traffic_saver_off_confirm">仍要关闭</string>
+    <string name="video_quality_quality_first_locked_hint">需先关闭流量节省</string>
+    <string name="video_quality_quality_first_paused">自动画质（画质优先已因流量节省暂停）</string>
 
     <!-- 提示:源加载 -->
     <string name="toast_config_parse_failed">配置解析失败</string>

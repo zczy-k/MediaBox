@@ -487,7 +487,14 @@ class DetailViewModel : ViewModel() {
         val info = vodInfo ?: return
         val siteOrder = info.seriesMap?.keys?.toList().orEmpty()
         if (siteOrder.size <= 1) return
-        val mode = DeviceCapability.QualityMode.current()
+        // 流量节省开启 ⇒ 不发起批量补探测(口径见《选线机制设计》附录 F.6):
+        // 升档已被门控关死(见 QualityGovernor.canUpgrade 的 trafficSaver 参数),
+        // 而这条批量探测(N × ≤256KB)的服务对象正是"填升档候选",此时纯属白花流量。
+        if (DeviceCapability.trafficSaverOn()) {
+            LOG.i("echo-line-probe skip: traffic saver on")
+            return
+        }
+        val mode = DeviceCapability.effectiveMode()
         if (!mode.shouldProbeOnFirstWatch) return
         val remembered = VideoQualityMemory.lookupAll(sourceKey, vodId, siteOrder)
         // 负冷却按片隔离:换片清空(不同片同名 flag 的坏地址互不相干)
@@ -1275,7 +1282,9 @@ class DetailViewModel : ViewModel() {
         // 「画质选项」三档分流(口径见 DeviceCapability.QualityMode):速度优先跳过全部起播前探测。
         // 实测记忆回写在 MusicSessionDelegate,不受档位影响 —— 速度优先下照常积累,
         // 用户切回自动/画质档后立即受益。
-        val mode = DeviceCapability.QualityMode.current()
+        // ⚠️ 读 effectiveMode() 而非 current():流量节省开启时按**自动档**口径探测
+        // (预算 1s / 3 条),而不是画质优先的 2s / 4 条 —— 见《选线机制设计》附录 F.5。
+        val mode = DeviceCapability.effectiveMode()
         if (!mode.shouldProbeOnFirstWatch) return
         val seriesMap = info.seriesMap ?: return
         val siteOrder = seriesMap.keys.toList()

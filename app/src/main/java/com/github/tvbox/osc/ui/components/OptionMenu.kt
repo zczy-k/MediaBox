@@ -38,6 +38,7 @@ fun MediaBoxOptionMenu(
     onSelect: (Int) -> Unit,
     onDismissRequest: () -> Unit,
     modifier: Modifier = Modifier,
+    disabledIndices: Set<Int> = emptySet(),
 ) {
     DropdownMenu(
         expanded = expanded,
@@ -57,6 +58,7 @@ fun MediaBoxOptionMenu(
                 OptionMenuCard(
                     label = option,
                     selected = index == selectedIndex,
+                    enabled = index !in disabledIndices,
                     onClick = { onSelect(index) },
                 )
             }
@@ -64,16 +66,28 @@ fun MediaBoxOptionMenu(
     }
 }
 
+/**
+ * 单个菜单项。
+ *
+ * <p>[enabled] 为 false 时只做**视觉降权**(文字转次级色 + 容器转次级面),**仍然可点** ——
+ * 调用方要在点击后给出"为什么不可选"的解释(见 [SettingsOptionMenuRow.onDisabledSelect])。
+ * 彻底禁用而无反馈会让用户以为界面坏了。
+ */
 @Composable
 private fun OptionMenuCard(
     label: String,
     selected: Boolean,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     Surface(
         onClick = onClick,
         shape = MaterialTheme.shapes.small,
-        color = MaterialTheme.colorScheme.surfaceBright,
+        color = if (enabled) {
+            MaterialTheme.colorScheme.surfaceBright
+        } else {
+            MaterialTheme.colorScheme.surfaceContainer
+        },
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(
@@ -84,7 +98,11 @@ private fun OptionMenuCard(
                 text = label,
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = if (enabled) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
+                },
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
@@ -114,6 +132,8 @@ fun SettingsOptionMenuRow(
     iconRes: Int? = null,
     leadingIconRes: Int? = null,
     enabled: Boolean = true,
+    disabledIndices: Set<Int> = emptySet(),
+    onDisabledSelect: ((Int) -> Unit)? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box(modifier = modifier) {
@@ -131,9 +151,15 @@ fun SettingsOptionMenuRow(
                 expanded = expanded,
                 options = options,
                 selectedIndex = selectedIndex,
+                disabledIndices = disabledIndices,
                 onSelect = { index ->
-                    expanded = false
-                    onSelect(index)
+                    if (index in disabledIndices) {
+                        // 不写入、**不关闭菜单** —— 菜单留着,提示才看得懂在说哪一项
+                        onDisabledSelect?.invoke(index)
+                    } else {
+                        expanded = false
+                        onSelect(index)
+                    }
                 },
                 onDismissRequest = { expanded = false },
             )

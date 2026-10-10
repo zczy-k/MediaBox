@@ -129,6 +129,8 @@ public final class KVKeySpec implements KVDecoder.TypeRegistry {
         register(HawkConfig.AUTO_SWITCH_LINE, true);
         // 防滥用封禁(默认开启):反复失败的源自动停用一段时间
         register(HawkConfig.AUTO_BLOCK_BAD_SOURCES, true);
+        // 流量节省(默认开启):禁止一切向上的画质动作,生效档位归一化为自动画质
+        register(HawkConfig.TRAFFIC_SAVER, true);
         register(HawkConfig.DEFAULT_LOAD_LIVE, false);
         register(HawkConfig.INCOGNITO, false);
         register(HawkConfig.GESTURE_CONTROL_DISABLED, false);

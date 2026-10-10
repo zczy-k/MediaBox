@@ -44,6 +44,9 @@ object QualityGovernor {
      * @param sinceEpisodeStartMs 进集时长;-1 = 未知(起播标记未到达,不升)
      * @param upgradesDone      本集已升档次数
      * @param sessionLockedTier 会话锁定档(回滚后=出发地档;高于它的目标一律拒绝;-1 = 未锁)
+     * @param trafficSaver      「流量节省」开关(默认关闭)。开启 ⇒ 一切向上动作直接拒绝 ——
+     *                          这是**最外层**的门:省流量的关键不是 ≤256KB 的探测,而是避免
+     *                          长期播在高码率档上。调用方传 DeviceCapability.trafficSaverOn()。
      */
     @JvmStatic
     fun canUpgrade(
@@ -53,7 +56,10 @@ object QualityGovernor {
         sinceEpisodeStartMs: Long,
         upgradesDone: Int,
         sessionLockedTier: Int,
+        trafficSaver: Boolean = false,
     ): Boolean {
+        // 流量节省优先于其它一切条件:开启即不追高(口径见《选线机制设计》附录 F.6)
+        if (trafficSaver) return false
         if (currentHeight <= 0 || targetHeight <= 0) return false
         val currentTier = tierOf(currentHeight)
         val targetTier = tierOf(targetHeight)
