@@ -43,7 +43,7 @@ object CompletenessMemory {
                 JSONObject()
             }
             val entry = root.optJSONObject(titleKey) ?: JSONObject()
-            entry.put(sourceKey, EpisodeSetMath.encode(capped))
+            entry.put(sourceKey, EpisodeSetMath.encode(capped.toSet()))
             root.put(titleKey, entry)
             // 容量上限:超出时淘汰"已见最大集数最小"的片(参考价值最低)
             if (root.length() > MAX_TITLES) {

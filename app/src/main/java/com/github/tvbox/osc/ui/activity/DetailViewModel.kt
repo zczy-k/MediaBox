@@ -1280,9 +1280,6 @@ class DetailViewModel : ViewModel() {
         bumpRevision()
     }
 
-    /** P-完整性:当前片的权威集数(选集面板"缺集"标注用);0=未知 */
-    fun completenessAuthority(): Int = CompletenessMemory.authority(completenessTitleKey)
-
     /** P-完整性:某线路相对可信参考集的缺失集号(升序);选集面板"缺集"标注用 */
     fun lineMissingEpisodes(flagName: String?): List<Int> {
         val list = vodInfo?.seriesMap?.get(flagName) ?: return emptyList()
