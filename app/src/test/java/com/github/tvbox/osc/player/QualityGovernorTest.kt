@@ -30,55 +30,53 @@ class QualityGovernorTest {
 
     // ==================== canUpgrade ====================
 
-    private val q = DeviceCapability.QualityMode
-
     @Test
     fun `SPEED_FIRST 永不升档`() {
         assertFalse(
-            QualityGovernor.canUpgrade(q.SPEED_FIRST, 480, 1080, 120_000L, 0, -1),
+            QualityGovernor.canUpgrade(DeviceCapability.QualityMode.SPEED_FIRST, 480, 1080, 120_000L, 0, -1),
         )
     }
 
     @Test
     fun `AUTO 只在档差大于等于2时升`() {
         // 480→720 差 1 档:AUTO 不升
-        assertFalse(QualityGovernor.canUpgrade(q.AUTO, 480, 720, 120_000L, 0, -1))
+        assertFalse(QualityGovernor.canUpgrade(DeviceCapability.QualityMode.AUTO, 480, 720, 120_000L, 0, -1))
         // 480→1080 差 2 档:升
-        assertTrue(QualityGovernor.canUpgrade(q.AUTO, 480, 1080, 120_000L, 0, -1))
+        assertTrue(QualityGovernor.canUpgrade(DeviceCapability.QualityMode.AUTO, 480, 1080, 120_000L, 0, -1))
         // QUALITY_FIRST 差 1 档就升
-        assertTrue(QualityGovernor.canUpgrade(q.QUALITY_FIRST, 480, 720, 120_000L, 0, -1))
+        assertTrue(QualityGovernor.canUpgrade(DeviceCapability.QualityMode.QUALITY_FIRST, 480, 720, 120_000L, 0, -1))
     }
 
     @Test
     fun `稳定期未满不升`() {
-        assertFalse(QualityGovernor.canUpgrade(q.QUALITY_FIRST, 480, 1080, QualityGovernor.MIN_WATCH_MS - 1, 0, -1))
+        assertFalse(QualityGovernor.canUpgrade(DeviceCapability.QualityMode.QUALITY_FIRST, 480, 1080, QualityGovernor.MIN_WATCH_MS - 1, 0, -1))
         // -1 = 起播标记未到达,同样不升
-        assertFalse(QualityGovernor.canUpgrade(q.QUALITY_FIRST, 480, 1080, -1L, 0, -1))
-        assertTrue(QualityGovernor.canUpgrade(q.QUALITY_FIRST, 480, 1080, QualityGovernor.MIN_WATCH_MS, 0, -1))
+        assertFalse(QualityGovernor.canUpgrade(DeviceCapability.QualityMode.QUALITY_FIRST, 480, 1080, -1L, 0, -1))
+        assertTrue(QualityGovernor.canUpgrade(DeviceCapability.QualityMode.QUALITY_FIRST, 480, 1080, QualityGovernor.MIN_WATCH_MS, 0, -1))
     }
 
     @Test
     fun `每集额度用完不升`() {
         assertFalse(
-            QualityGovernor.canUpgrade(q.QUALITY_FIRST, 480, 1080, 120_000L, QualityGovernor.MAX_UPGRADES_PER_EPISODE, -1),
+            QualityGovernor.canUpgrade(DeviceCapability.QualityMode.QUALITY_FIRST, 480, 1080, 120_000L, QualityGovernor.MAX_UPGRADES_PER_EPISODE, -1),
         )
-        assertTrue(QualityGovernor.canUpgrade(q.QUALITY_FIRST, 480, 1080, 120_000L, 1, -1))
+        assertTrue(QualityGovernor.canUpgrade(DeviceCapability.QualityMode.QUALITY_FIRST, 480, 1080, 120_000L, 1, -1))
     }
 
     @Test
     fun `会话锁高于目标档时不升`() {
         // 回滚后锁在 720 档(1):1080(2) 被拒
-        assertFalse(QualityGovernor.canUpgrade(q.QUALITY_FIRST, 480, 1080, 120_000L, 0, 1))
+        assertFalse(QualityGovernor.canUpgrade(DeviceCapability.QualityMode.QUALITY_FIRST, 480, 1080, 120_000L, 0, 1))
         // 未锁(-1)不拦
-        assertTrue(QualityGovernor.canUpgrade(q.QUALITY_FIRST, 480, 1080, 120_000L, 0, -1))
+        assertTrue(QualityGovernor.canUpgrade(DeviceCapability.QualityMode.QUALITY_FIRST, 480, 1080, 120_000L, 0, -1))
     }
 
     @Test
     fun `目标不高于当前_或高度未知_不升`() {
-        assertFalse(QualityGovernor.canUpgrade(q.QUALITY_FIRST, 1080, 1080, 120_000L, 0, -1))
-        assertFalse(QualityGovernor.canUpgrade(q.QUALITY_FIRST, 1080, 720, 120_000L, 0, -1))
-        assertFalse(QualityGovernor.canUpgrade(q.QUALITY_FIRST, 0, 1080, 120_000L, 0, -1))
-        assertFalse(QualityGovernor.canUpgrade(q.QUALITY_FIRST, 1080, 0, 120_000L, 0, -1))
+        assertFalse(QualityGovernor.canUpgrade(DeviceCapability.QualityMode.QUALITY_FIRST, 1080, 1080, 120_000L, 0, -1))
+        assertFalse(QualityGovernor.canUpgrade(DeviceCapability.QualityMode.QUALITY_FIRST, 1080, 720, 120_000L, 0, -1))
+        assertFalse(QualityGovernor.canUpgrade(DeviceCapability.QualityMode.QUALITY_FIRST, 0, 1080, 120_000L, 0, -1))
+        assertFalse(QualityGovernor.canUpgrade(DeviceCapability.QualityMode.QUALITY_FIRST, 1080, 0, 120_000L, 0, -1))
     }
 
     // ==================== inRollbackWindow ====================
