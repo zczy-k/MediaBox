@@ -113,9 +113,13 @@ object Mp4BoxReader {
      * 深度优先遍历所有 box。
      *
      * <p>关键语义:**`visit` 返回 null 表示"这个 box 不是我要的",继续往下找**,而不是"整个搜索失败"。
-     * 老实现写成"命中目标就 return",于是音频轨的 `tkhd`(宽高 0 ⇒ 解析返回 null)会把整个搜索中断。
+     * 音频轨的 `tkhd` 宽高恒为 0,自然会返回 null 并让搜索继续到视频轨。
+     *
+     * <p>⚠️ **不能标 `inline`**:它是递归函数,而 Kotlin 禁止 `inline` 递归
+     * (CI 实证:`Inline function 'walk(...)' cannot be recursive`)。这里的 lambda 也不需要
+     * 非局部返回,普通函数即可。
      */
-    private inline fun walk(
+    private fun walk(
         buf: ByteArray,
         start: Int,
         end: Int,
