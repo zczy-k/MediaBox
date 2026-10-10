@@ -537,7 +537,10 @@ class DetailViewModel : ViewModel() {
                 " lines=" + siteOrder.size + " mode=" + mode.name +
                 " remembered=" + remembered.size + " missing=" + missing.size +
                 " direct=" + targets.size + " idx=" + index +
-                " (empty-skip: lines<=1 | mode-off | all-remembered | no-direct-url)"
+                // 走得到这一行却 targets 为空,唯一可能就是 no-direct-url ——
+                // 其余分支(lines<=1 / mode-off / all-remembered)都在本行**之前**已经 return。
+                // 旧文案把四个原因并列打印,读日志的人无法对号入座(2026-10-10 修正)。
+                " (empty ⇒ reason=no-direct-url)"
         )
         if (targets.isEmpty()) {
             // 全是爬虫型线路:本管线永远探不了(解析要走 getPlay,1~3s/条且 Spider 不能并发)。
@@ -693,9 +696,8 @@ class DetailViewModel : ViewModel() {
             return
         }
         sourceSweepDoneKey = sweepKey
-        val currentList = seriesMap[currentFlag]
-        // 不能写 coerceIn(0, size - 1):size 为 0 时下界 0 > 上界 -1,coerceIn 会抛 IllegalArgumentException
-        val index = if (currentList.isNullOrEmpty()) 0 else info.playIndex.coerceIn(0, currentList.size - 1)
+        // 不再按 currentFlag 取集号:统一解析路径自己定位集号(resolveTargetForProbe → probeIndexOf),
+        // 因为探测地址与"当前线路"无关(旧代码用当前线路的 index 去取别条线路的 series.url,本身就是近似)
         val headers = probeHeaders(siteKey)
         val probe = VideoQualityProbe()
         val token = detailBuildToken
@@ -706,30 +708,24 @@ class DetailViewModel : ViewModel() {
         qualityProbeJob?.cancel()
         qualityProbeJob = viewModelScope.launch {
             val startedAt = System.currentTimeMillis()
-            // ① 直链型:并行快探(每条只读 ≤256KB 文件头),不占 Spider 池
-            val directTargets = missing.filter { directUrlOf(seriesMap[it], index) != null }
-            val directProbed = withTimeoutOrNull(SourceSweepBudget.totalMs) {
-                LineQualitySelector.probeVariantsParallel(
-                    flags = directTargets,
-                    resolve = { flag -> directUrlOf(seriesMap[flag], index) },
-                    probe = { url -> probe.probe(url, headers) },
-                )
-            }.orEmpty()
-            // ② 爬虫型:**解析后探**(解析反正要跑,复用其结果只多一个 ≤256KB 的探测)。
-            //    串行 + 封顶 + 限时 —— 解析走 spider.playerContent,与播放/预载抢同一个 3 线程池。
-            // **不再按条数截断**（原 `take(deepProbeMax)` = 2 会把 7 条砍成 2 条）。
-            // 由 SourceSweepBudget.totalMs 统一兜底：预算耗尽才停，并记下还剩几条没跑。
-            val crawlerAll = missing.filter { flag -> directUrlOf(seriesMap[flag], index) == null }
-            val crawlerTargets = crawlerAll
-            // 只报"本轮计划探几条"。不再有 quota/截断 —— 条数已不设上限,由时间预算兜底
-            if (crawlerAll.isNotEmpty()) {
-                LOG.i("echo-quality deep-probe plan=" + crawlerAll.size + " (budget-bound, no quota)")
-            }
+            // **统一路径:逐条「解析(爬虫优先,与播放同源) → 探测」**。
+            //
+            // 为什么不再分"直链型/爬虫型":真机坐实 `series.url` **常常不是**播放地址 ——
+            // 同一条线的播放地址由爬虫现算(带签名/防盗链 header),而 `series.url` 只是站点那套镜像。
+            // "是 http 就直探"于是探到了**另一个地址**上,必然失败(真机:同一线路,
+            // 播放拿到 ixigua 的 mp4、探测打的是 fengbao 的 m3u8 → 404)。
+            // 解析与播放同路,探测才有意义。
+            //
+            // 成本由 SourceSweepBudget.totalMs(45s)统一兜底:预算耗尽即停,并记下还剩几条没跑。
+            // 条数**不设上限**(旧的 maxLines/deepProbeMax 两个魔法数字已删)。
+            LOG.i("echo-quality deep-probe plan=" + missing.size + " (budget-bound, no quota)")
             val deepProbed = ArrayList<VideoQualityPolicy.Variant>()
-            for (i in crawlerTargets.indices) {
-                val flag = crawlerTargets[i]
+            var viaSpider = 0
+            var viaDirect = 0
+            for (i in missing.indices) {
+                val flag = missing[i]
                 if (System.currentTimeMillis() - startedAt > SourceSweepBudget.totalMs) {
-                    LOG.i("echo-quality deep-probe budget-out skipped=" + (crawlerTargets.size - i))
+                    LOG.i("echo-quality deep-probe budget-out skipped=" + (missing.size - i))
                     break
                 }
                 // ⚠️ "解析失败" 与 "探测失败" 必须分开记。
@@ -738,32 +734,36 @@ class DetailViewModel : ViewModel() {
                 // 真机排障就卡在这里:7 条全是 crawler-type、probed=0,
                 // 却分不清是爬虫没解析出地址、解析/探测超时、还是拿到了地址读不出分辨率。
                 var noUrl = false
+                var via = ""
                 val measured = withTimeoutOrNull(SourceSweepBudget.deepProbeTimeoutMs) {
-                    val url = resolveUrlForProbe(flag)
-                    if (url.isNullOrEmpty()) {
+                    val target = resolveTargetForProbe(flag)
+                    if (target == null) {
                         noUrl = true
                         null
                     } else {
-                        probe.probe(url, headers)
+                        via = target.via
+                        probe.probe(target.url, mergeProbeHeaders(headers, target.headers))
                     }
                 }
                 if (measured == null || !measured.known) {
                     val why = when {
-                        noUrl -> "no-url"          // 爬虫没解析出地址
+                        noUrl -> "no-url"             // 爬虫与直链都给不出地址(播放同样播不了)
                         measured == null -> "timeout" // 解析 + 探测整体超时
-                        else -> "no-size"           // 拿到地址但读不出分辨率
+                        else -> "no-size"             // 拿到地址但读不出分辨率
                     }
                     LOG.i("echo-quality deep-probe " + why + " flag=" + flag)
                     probeNegativeAt[flag] = System.currentTimeMillis()
                     continue
                 }
+                if (via == "direct") viaDirect++ else viaSpider++
                 LOG.i(
                     "echo-quality deep-probe ok flag=" + flag +
-                        " size=" + measured.width + "x" + measured.height
+                        " size=" + measured.width + "x" + measured.height + " via=" + via
                 )
                 deepProbed.add(measured.copy(flag = flag))
             }
-            val allProbed = directProbed + deepProbed
+            LOG.i("echo-quality deep-probe via spider=" + viaSpider + " direct=" + viaDirect)
+            val allProbed = deepProbed
             // 落记忆:负结果进冷却、不落记忆(与补探测同一口径,避免 0×0 污染)
             allProbed.forEach { v ->
                 if (v.flag.isEmpty()) return@forEach
@@ -774,16 +774,9 @@ class DetailViewModel : ViewModel() {
                 probeNegativeAt.remove(v.flag)
                 VideoQualityMemory.record(siteKey, vod, v)
             }
-            // ⚠️ 只有**爬虫型**的失败进负冷却，**直链型失败不进**。
-            //
-            // 直链探测失败（404 / 被拒 / 超时）几乎都是**外部或瞬时**原因，而不是"这条线路不能用"。
-            // 一刀切拉黑 10 分钟的后果，真机已经出现：唯一那条 http 直链（实测真实 1914x798，
-            // 远高于当时在播的 1280x534）在一次失败后被静默排除，之后每轮扫描都是 direct=0 ——
-            // **把最可能拿到高画质的那条路堵死了**。直链探测本身很便宜（一个小请求），
-            // 每轮重试的代价远低于错过它。
-            crawlerTargets
-                .filter { f -> allProbed.none { it.flag == f } }
-                .forEach { probeNegativeAt[it] = System.currentTimeMillis() }
+            // 不再做"循环收尾统一拉黑":失败在循环内已**逐条**进负冷却;
+            // 而被 `totalMs` 预算跳过的线路**压根没被尝试**,收尾拉黑它们等于
+            // "因为没时间探,所以下次也别探了" —— 旧实现对 crawlerTargets 就有这个毛病。
             // 会话可能已经换片/换源:那时这次扫描的对象已失效
             if (siteKey != sourceKey || vod != vodId || token != detailBuildToken) return@launch
             if (allProbed.isNotEmpty()) publishLineQualityHeights()
@@ -799,7 +792,7 @@ class DetailViewModel : ViewModel() {
             val reject = QualityGovernor.rejectReasonForRemedy(mode, currentNow, best, cap, false)
             LOG.i(
                 "echo-quality sweep lines=" + missing.size +
-                    " direct=" + directTargets.size + " deep=" + crawlerTargets.size +
+                    " via=spider" + viaSpider + "/direct" + viaDirect +
                     " probed=" + allProbed.size +
                     " curS=" + (currentNow?.let { VideoQualityPolicy.sharpness(it) } ?: -1) +
                     " bestS=" + (best?.let { VideoQualityPolicy.sharpness(it) } ?: -1) +
@@ -2163,12 +2156,13 @@ class DetailViewModel : ViewModel() {
      * <p>⚠️ 只探**刚切的那一条**,不批量探:用户手动切线说明他在意这条,
      * 替他决定"其他线也值得探测"既浪费又可能触发站点风控。
      *
-     * <p>解析走 [PlayLoader] 原路径,复用其结果,不额外解析 —— 但注意
-     * [PlayLoader] 无解析缓存,所以这里只在自己发起的解析完成后测一次,
-     * 真正起播那次仍会照常解析(总请求数不增加,只是多一个 ≤256KB 的探测)。
+     * <p>解析与播放同路([resolveTargetForProbe]):先跑爬虫 `playerContent`,拿不到才退回
+     * `series.url`。**不能**像旧实现那样优先用 `series.url` —— 真机坐实它常常不是播放地址
+     * (同一条线的播放地址由爬虫现算),那样探的是另一个流。
+     * 本仓无解析缓存,所以起播那次仍会照常解析(多一次解析 + 一个 ≤256KB 的探测)。
      */
     private fun probeLineOnDemand(flagName: String) {
-        val info = vodInfo ?: return
+        vodInfo ?: return
         val mode = DeviceCapability.QualityMode.current()
         if (!mode.shouldProbeOnFirstWatch) return
         val site = sourceKey
@@ -2177,14 +2171,12 @@ class DetailViewModel : ViewModel() {
         // 已有实测值就别再探:重复请求毫无意义(这条线的画质是稳定的)
         val existing = VideoQualityMemory.lookupAll(site, vod, listOf(flagName))
         if (existing.isNotEmpty()) return
-        val index = probeIndexOf(info)
-        val direct = directUrlOf(info.seriesMap?.get(flagName), index)
         qualityProbeJob?.cancel()
         qualityProbeJob = viewModelScope.launch {
-            val url = direct ?: resolveUrlForProbe(flagName) ?: return@launch
+            val target = resolveTargetForProbe(flagName) ?: return@launch
             val probe = VideoQualityProbe()
             val measured = try {
-                probe.probe(url, probeHeaders(site))
+                probe.probe(target.url, mergeProbeHeaders(probeHeaders(site), target.headers))
             } catch (t: Throwable) {
                 null
             }
@@ -2196,40 +2188,92 @@ class DetailViewModel : ViewModel() {
     }
 
     /**
-     * 为画质探测解析一条线路的真实地址(爬虫型线路必须先跑 `playerContent`)。
+     * 探测目标:地址 + **与播放同源的 header**。
      *
-     * <p>返回 null 表示这条线路拿不到地址(站点未收录/解析失败)—— 调用方静默跳过,
-     * 不阻塞播放。
+     * @param via 解析来源(`spider` = 爬虫给出的真实流;`direct` = 爬虫给不出 → 退回 `series.url`)
      */
-    private suspend fun resolveUrlForProbe(flagName: String): String? {
+    private class ProbeTarget(
+        val url: String,
+        val headers: Map<String, String>,
+        val via: String,
+    )
+
+    /**
+     * 为画质探测解析一条线路的**播放地址与 header** —— **与播放走同一条路**。
+     *
+     * <p>⚠️ **先问爬虫,爬虫给不出才退回 `series.url`（2026-10-10 真机坐实,别改回去）**。
+     *
+     * <p>老实现是"`series.url` 是 http 就直接返回它,根本不问爬虫"。真机反例 ——
+     * **同一条「高清4K」线路、同一秒钟**:
+     * <pre>
+     *   播放 goPlayUrl    = v9-vllqsv.ixigua.com/…/o8Gac…/?…mime_type=video_mp4    ← 爬虫给的真实流,内核报 1728×720
+     *   探测 probe-failed = fengbao12.com/video/…/571a558145d2/index.m3u8           ← series.url,404
+     * </pre>
+     * **两者根本不是同一个地址。** 站点在 `series.url` 放的是自己那套 m3u8 镜像,而真正能播的流由爬虫
+     * 现算(带签名/防盗链,并携带 `user-agent`、`referer` 等)。跳过爬虫 ⇒ 探测的既不是播放地址、
+     * 也没有播放用的 header —— 这就是"**播放正常、探测永远失败**"的真正来源。
+     *
+     * <p>退回直链**只**在爬虫给不出 url 时发生,与播放的兜底口径完全一致:播放也是
+     * "先 `playerContent`,返回空且地址是 http 才回退直连"（见 `PlayLoader.shouldDirectPlay`）。
+     * ⚠️ 这条兜底**必须保留**:`ffzy/lf/yzzyvip` 这类源的 `series.url` 本身就是真实 m3u8,
+     * 真机上 100 次探测成功**全部**来自它们 —— 不能因为"直链不可信"就一刀砍掉。
+     *
+     * @return null 表示这条线路拿不到地址(站点未收录/解析失败)—— 调用方静默跳过,不阻塞播放
+     */
+    private suspend fun resolveTargetForProbe(flagName: String): ProbeTarget? {
         return try {
             val list = vodInfo?.seriesMap?.get(flagName) ?: return null
             val series = list.getOrNull(probeIndexOf(vodInfo ?: return null)) ?: return null
             val raw = series.url?.trim().orEmpty()
             if (raw.isEmpty()) return null
-            if (raw.startsWith("http://") || raw.startsWith("https://")) return raw
-            // 非直链:交给站点爬虫解析。本仓无解析缓存,这里只解析一次给探测用,
-            // 起播路径会自行再解析一次(PlayLoader 无缓存,这是既有事实)。
-            val bean = ApiConfig.get().getSource(sourceKey) ?: return null
-            val spider = ApiConfig.get().getCSP(bean) ?: return null
-            val json = spider.playerContent(flagName, raw, ApiConfig.get().getVipParseFlags())
-            if (json.isNullOrEmpty()) return null
-            parseResolvedUrl(json)
+            // ① 爬虫:与播放同一条路(播放对每条线路都先跑 playerContent)
+            val bean = ApiConfig.get().getSource(sourceKey)
+            val spider = bean?.let { ApiConfig.get().getCSP(it) }
+            if (spider != null) {
+                val json = spider.playerContent(flagName, raw, ApiConfig.get().getVipParseFlags())
+                if (!json.isNullOrEmpty()) {
+                    val obj = runCatching { org.json.JSONObject(json) }.getOrNull()
+                    val url = obj?.optString("url", "").orEmpty()
+                    if (url.isNotEmpty()) {
+                        // header 用与播放**同一个解析器**,避免两套口径:
+                        // PlayerHelper.extractPlayHeaders 兼容 header/headers 两种形态与嵌套 JSON 文本
+                        val playHeaders = runCatching {
+                            com.github.tvbox.osc.util.PlayerHelper.extractPlayHeaders(obj)
+                        }.getOrNull()
+                        return ProbeTarget(url, playHeaders ?: emptyMap(), "spider")
+                    }
+                }
+            }
+            // ② 爬虫给不出 ⇒ 退回站点原始地址(与播放的直连兜底一致)
+            if (raw.startsWith("http://") || raw.startsWith("https://")) {
+                return ProbeTarget(raw, emptyMap(), "direct")
+            }
+            null
         } catch (t: Throwable) {
             null
         }
     }
 
-    /** 从 `playerContent` 返回的 JSON 里取出真实播放地址。 */
-    private fun parseResolvedUrl(json: String): String? {
-        return try {
-            val obj = org.json.JSONObject(json)
-            val url = obj.optString("url", "")
-            if (url.isNotEmpty()) url else null
-        } catch (t: Throwable) {
-            null
+    /**
+     * 探测请求的 header = **爬虫头 ∪ 源配置头**(爬虫优先,键名大小写不敏感)。
+     *
+     * <p>与播放的合并口径(`PlayLoader.mergeSiteHeaders`)同序:先放播放会用的头,源配置**只补缺**。
+     * 反过来会让源配置把站点的防盗链 UA 顶掉 —— 真机上"播放正常、探测 404"最早就是这么来的。
+     */
+    private fun mergeProbeHeaders(
+        site: Map<String, String>,
+        playHeaders: Map<String, String>,
+    ): Map<String, String> {
+        if (playHeaders.isEmpty()) return site
+        val out = HashMap<String, String>(playHeaders)
+        site.forEach { (k, v) ->
+            if (k.isNotBlank() && v.isNotBlank() && out.keys.none { it.equals(k, ignoreCase = true) }) {
+                out[k] = v
+            }
         }
+        return out
     }
+
 
     fun toggleReverse() {
         val info = vodInfo ?: return
