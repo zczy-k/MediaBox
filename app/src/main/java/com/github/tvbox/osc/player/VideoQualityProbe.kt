@@ -82,6 +82,21 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
                             confidence = VideoQualityPolicy.Confidence.MEASURED,
                         )
                     }
+                    // ⚠️ 内容**看起来是 MP4** 却没解出尺寸 —— 必须单独留痕(2026-10-10)。
+                    //
+                    // 真机踩过:ixigua 一条线路内核从容器报出 1728x720(播放完全正常),
+                    // 探测却走到下面 m3u8 分支报 `probe-no-size`,日志里只能看到乱码的
+                    // `head=ftypisom…moov…`,完全看不出"为什么 moov 就在开头却解不出"。
+                    // 根因是读取器**只读了 tkhd**,而该文件尺寸只在 stsd 采样条目里
+                    // —— 已在 Mp4BoxReader 补上 stsd 回退(第二优先路径)。
+                    // 这条日志是为了万一还有别的结构差异时,能一眼看到 box 布局,不必再猜。
+                    if (Mp4BoxReader.looksLikeMp4(buffer, buffer.size)) {
+                        LOG.i(
+                            "echo-quality probe-mp4-miss boxes=" +
+                                Mp4BoxReader.topLevelTypes(buffer, buffer.size) +
+                                " bytes=" + buffer.size
+                        )
+                    }
                     // 2) m3u8 master:站点声明的清晰度,比 flag 名可信但不是文件真值
                     val text = String(buffer, 0, buffer.size, Charsets.UTF_8)
                     val hls = VideoQualityPolicy.parseHlsMaster(text)

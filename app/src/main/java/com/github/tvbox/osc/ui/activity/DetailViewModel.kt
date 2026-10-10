@@ -774,7 +774,14 @@ class DetailViewModel : ViewModel() {
                 probeNegativeAt.remove(v.flag)
                 VideoQualityMemory.record(siteKey, vod, v)
             }
-            (directTargets + crawlerTargets)
+            // ⚠️ 只有**爬虫型**的失败进负冷却，**直链型失败不进**。
+            //
+            // 直链探测失败（404 / 被拒 / 超时）几乎都是**外部或瞬时**原因，而不是"这条线路不能用"。
+            // 一刀切拉黑 10 分钟的后果，真机已经出现：唯一那条 http 直链（实测真实 1914x798，
+            // 远高于当时在播的 1280x534）在一次失败后被静默排除，之后每轮扫描都是 direct=0 ——
+            // **把最可能拿到高画质的那条路堵死了**。直链探测本身很便宜（一个小请求），
+            // 每轮重试的代价远低于错过它。
+            crawlerTargets
                 .filter { f -> allProbed.none { it.flag == f } }
                 .forEach { probeNegativeAt[it] = System.currentTimeMillis() }
             // 会话可能已经换片/换源:那时这次扫描的对象已失效

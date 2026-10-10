@@ -138,4 +138,147 @@ class Mp4BoxReaderTest {
         val full = fullFile(1920, 1080, 0)
         assertNull(Mp4BoxReader.readVideoSize(full, 8))
     }
+
+    // ==================== stsd 回退与"多 trak"回归(2026-10-10) ====================
+
+    /**
+     * 视觉采样条目:视觉条目的 body 布局 = `6(reserved)+2(dataRefIdx)` + `2+2+12` = 24,
+     * 紧跟 width(uint16) / height(uint16)。
+     */
+    private fun visualEntry(type: String, width: Int, height: Int): ByteArray {
+        val out = ByteArrayOutputStream()
+        repeat(6) { out.write(0) }                 // reserved
+        out.write(byteArrayOf(0, 1))               // data_reference_index
+        repeat(2 + 2 + 12) { out.write(0) }        // pre_defined / reserved / pre_defined[3]
+        out.write(byteArrayOf(((width ushr 8) and 0xFF).toByte(), (width and 0xFF).toByte()))
+        out.write(byteArrayOf(((height ushr 8) and 0xFF).toByte(), (height and 0xFF).toByte()))
+        repeat(4 + 4 + 4 + 2 + 32 + 2 + 2) { out.write(0) }   // 其余字段,解析不读,仅补长度
+        return box(type, out.toByteArray())
+    }
+
+    private fun stsd(entry: ByteArray): ByteArray {
+        val out = ByteArrayOutputStream()
+        out.write(byteArrayOf(0, 0, 0, 0))         // version + flags
+        out.write(u32(1L))                         // entry_count
+        out.write(entry)
+        return box("stsd", out.toByteArray())
+    }
+
+    private fun trakWithStsd(entry: ByteArray): ByteArray =
+        box("trak", box("mdia", box("minf", box("stbl", stsd(entry)))))
+
+    /**
+     * **回归护栏**:音频轨排在视频轨之前。
+     *
+     * <p>音频轨也有 `tkhd`,其宽高恒为 **0**,解析必然返回 null。这里锁住的是
+     * "**一个 box 解不出不等于整个搜索失败**":必须继续找下去,直到视频轨。
+     * （现实现天然满足 —— `visit` 返回 null 只表示"不是我要的"；
+     * 这条用例的价值是防止以后有人把 `visit` 改回"命中即返回"。）
+     */
+    @Test
+    fun audioTrakBeforeVideoTrak_stillReadsVideoSize() {
+        val out = ByteArrayOutputStream()
+        out.write(ftyp())
+        out.write(
+            box(
+                "moov",
+                ByteArrayOutputStream().apply {
+                    write(box("trak", tkhd(0, 0, 0)))        // 音频轨:宽高 0
+                    write(box("trak", tkhd(1728, 720, 0)))   // 视频轨:真值
+                }.toByteArray(),
+            ),
+        )
+        val data = out.toByteArray()
+        val (w, h) = Mp4BoxReader.readVideoSize(data, data.size)!!
+        assertEquals(1728, w)
+        assertEquals(720, h)
+    }
+
+    /** **真机回归(核心)**:`tkhd` 宽高为 0,必须回退到 `stsd` 的视觉采样条目。
+     *
+     *  <p>实据:ixigua 一条线路,内核从容器报出 1728x720(能播),探测却 `probe-no-size` ——
+     *  `tkhd` 偏移已按规范逐字节核对无误,故只剩"tkhd 里没尺寸、真值在采样条目"这一种解释。
+     */
+    @Test
+    fun zeroTkhd_fallsBackToStsdEntry() {
+        val out = ByteArrayOutputStream()
+        out.write(ftyp())
+        out.write(
+            box(
+                "moov",
+                ByteArrayOutputStream().apply {
+                    write(box("trak", tkhd(0, 0, 0)))
+                    write(trakWithStsd(visualEntry("avc1", 1728, 720)))
+                }.toByteArray(),
+            ),
+        )
+        val data = out.toByteArray()
+        val (w, h) = Mp4BoxReader.readVideoSize(data, data.size)!!
+        assertEquals(1728, w)
+        assertEquals(720, h)
+    }
+
+    /** 完全没有 `tkhd`(只有 `stsd`)时也要能出尺寸。 */
+    @Test
+    fun noTkhd_readsFromStsd() {
+        val out = ByteArrayOutputStream()
+        out.write(ftyp())
+        out.write(box("moov", trakWithStsd(visualEntry("hev1", 1920, 800))))
+        val data = out.toByteArray()
+        val (w, h) = Mp4BoxReader.readVideoSize(data, data.size)!!
+        assertEquals(1920, w)
+        assertEquals(800, h)
+    }
+
+    /** `tkhd` 优先:`tkhd` 有合法尺寸时,不被 `stsd` 覆盖(两者理论上一致,但以显示尺寸为准)。 */
+    @Test
+    fun tkhdWinsOverStsd() {
+        val out = ByteArrayOutputStream()
+        out.write(ftyp())
+        out.write(
+            box(
+                "moov",
+                ByteArrayOutputStream().apply {
+                    write(box("trak", tkhd(1920, 1080, 0)))
+                    write(trakWithStsd(visualEntry("avc1", 1280, 720)))
+                }.toByteArray(),
+            ),
+        )
+        val data = out.toByteArray()
+        val (w, h) = Mp4BoxReader.readVideoSize(data, data.size)!!
+        assertEquals(1920, w)
+        assertEquals(1080, h)
+    }
+
+    /**
+     * 音频条目**不得**被当成宽高:同一偏移在音频条目里是别的字段。
+     * 白名单外的类型必须跳过,宁可不报尺寸也不能报错尺寸。
+     */
+    @Test
+    fun audioEntryInStsd_isIgnored() {
+        val out = ByteArrayOutputStream()
+        out.write(ftyp())
+        out.write(
+            box(
+                "moov",
+                ByteArrayOutputStream().apply {
+                    write(box("trak", tkhd(0, 0, 0)))
+                    write(trakWithStsd(visualEntry("mp4a", 1728, 720)))
+                }.toByteArray(),
+            ),
+        )
+        val data = out.toByteArray()
+        assertNull(Mp4BoxReader.readVideoSize(data, data.size))
+    }
+
+    /** 排障辅助:能认出 MP4 并列出顶层 box,供失败日志使用。 */
+    @Test
+    fun diagnostics_looksLikeMp4AndTopLevelTypes() {
+        val data = fullFile(1920, 1080, 0)
+        org.junit.Assert.assertTrue(Mp4BoxReader.looksLikeMp4(data, data.size))
+        // ftyp = 8+16 = 24;moov = 8 + trak(8+ tkhd(8+84)) = 8+100 = 108
+        org.junit.Assert.assertEquals("ftyp:24,moov:108", Mp4BoxReader.topLevelTypes(data, data.size))
+        val html = "<html>".toByteArray()
+        org.junit.Assert.assertFalse(Mp4BoxReader.looksLikeMp4(html, html.size))
+    }
 }
