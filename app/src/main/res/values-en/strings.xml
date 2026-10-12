@@ -169,8 +169,6 @@
     <string name="search_progress_settled">%1$d/%2$d sources searched</string>
     <string name="search_progress_timeout">%1$d timed out</string>
     <string name="search_pinyin_resolved">Searched as \"%1$s\"</string>
-    <string name="search_pinyin_no_index">No local record for this pinyin yet. Search a Chinese title once to build it.</string>
-    <string name="search_pinyin_no_index_title">Cannot recognize \"%1$s\"</string>
     <string name="search_source_failed">Source request failed</string>
     <string name="search_source_timeout">Source timed out</string>
     <string name="search_card_unopenable">This source cannot open it directly. Try another source</string>

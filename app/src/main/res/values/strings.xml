@@ -174,10 +174,13 @@
     <string name="search_progress_settled">已搜 %1$d/%2$d 源</string>
     <string name="search_progress_timeout">%1$d 源超时</string>
     <!-- 2026-10-11:拼音搜索。用户敲拼音时明示"已按某个中文片名搜索" ——
-         否则结果里全是别的名字会让人以为搜错了。 -->
+         否则结果里全是别的名字会让人以为搜错了。
+         ⚠️ 2026-10-12:原先还有 search_pinyin_no_index / _title(解析失败时提示
+         "暂无法识别,先搜中文建立索引")。已删除 —— 那是**设计错误**:
+         拼音解析失败必须**退回普通搜索**,而不是拒绝服务。
+         番号 MIAA-195 也是"字母+数字",会被误判成拼音,于是番号搜索这条主路径
+         被那句提示整个拦住(真机实测确认)。 -->
     <string name="search_pinyin_resolved">已按「%1$s」搜索</string>
-    <string name="search_pinyin_no_index">本地还没有这个拼音的记录，先搜一次中文片名即可建立</string>
-    <string name="search_pinyin_no_index_title">「%1$s」暂无法识别</string>
     <string name="search_source_failed">该来源请求失败</string>
     <string name="search_source_timeout">该来源超时未响应</string>
     <string name="search_card_unopenable">该来源无法直接打开,请换个来源试试</string>

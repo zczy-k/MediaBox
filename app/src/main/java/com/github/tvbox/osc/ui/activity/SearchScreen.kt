@@ -80,7 +80,6 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
     var history by remember { mutableStateOf(KV.get(HawkConfig.SEARCH_HISTORY, ArrayList<String>())) }
     val searchedTitle by vm.searchedTitle.collectAsStateWithLifecycle()
     val pinyinNotice by vm.pinyinNotice.collectAsStateWithLifecycle()
-    val pinyinUnresolved by vm.pinyinUnresolved.collectAsStateWithLifecycle()
     val matchMode by vm.matchMode.collectAsStateWithLifecycle()
     val sitesEmpty by vm.sitesEmpty.collectAsStateWithLifecycle()
     val vodMenu = rememberVodCardMenuState()
@@ -172,12 +171,7 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
     ) { topPad, _ ->
         if (results.isEmpty() && !running && sitesEmpty) {
             SearchEmptyBox(topPad = topPad, text = stringResource(R.string.search_no_site))
-        } else if (results.isEmpty() && !running && pinyinUnresolved == null) {
-            // ⚠️ `pinyinUnresolved == null` 这个条件是必须的:拼音解析失败时
-            // results 为空、running 也为 false,若不排除就会落进**空闲页**(历史/热搜),
-            // 于是"「qjyf」暂无法识别"的说明**根本不会渲染** —— 用户看到的是一堆
-            // 与本次输入无关的历史记录,完全不知道为什么没结果。
-            // 排除后它落到下面的结果区,由 SearchResultsContent 的空态显示原因。
+        } else if (results.isEmpty() && !running) {
             SearchIdleContent(
                 history = history,
                 hotSearch = hotSearch,
@@ -211,7 +205,6 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
                 searchableSources = searchableCount,
                 timeoutCount = timeoutCount,
                 pinyinNotice = pinyinNotice,
-                pinyinUnresolved = pinyinUnresolved,
                 onLoadMore = { vm.loadNextBatch() },
                 onSearchAll = { vm.searchAllRemaining() },
                 onOpenSourceSettings = { showSearchSettings = true },
@@ -286,7 +279,6 @@ private fun SearchResultsContent(
     searchableSources: Int,
     timeoutCount: Int = 0,
     pinyinNotice: String? = null,
-    pinyinUnresolved: String? = null,
     onLoadMore: () -> Unit,
     onSearchAll: () -> Unit,
     onOpenSourceSettings: () -> Unit,
@@ -321,22 +313,12 @@ private fun SearchResultsContent(
         }
         SearchEmptyBox(
             topPad = topPad,
-            // 拼音查询解析不到本地索引时,空态必须**说清原因**:
-            // 否则用户敲 qjyf 看到"暂无搜索结果",只会以为这部片全库都没有 ——
-            // 而真相是"本地索引还没积累到它",先搜一次中文片名即可。
-            text = when {
-                // 参数是 val,智能转换直接可用(不需要 !!)
-                pinyinUnresolved != null ->
-                    stringResource(R.string.search_pinyin_no_index_title, pinyinUnresolved)
-                matchMode == SearchSettings.MatchMode.Exact ->
-                    stringResource(R.string.search_no_exact_result, searchedTitle)
-                else -> stringResource(R.string.search_no_result, searchedTitle)
-            },
-            statsText = if (pinyinUnresolved != null) {
-                stringResource(R.string.search_pinyin_no_index)
+            text = if (matchMode == SearchSettings.MatchMode.Exact) {
+                stringResource(R.string.search_no_exact_result, searchedTitle)
             } else {
-                statsText
+                stringResource(R.string.search_no_result, searchedTitle)
             },
+            statsText = statsText,
         )
         return
     }

@@ -22,12 +22,34 @@ class PinyinQueryTest {
     // ==================== looksLikePinyin ====================
 
     @Test
-    fun `纯字母与数字算拼音`() {
+    fun `纯字母算拼音`() {
         assertTrue(PinyinQuery.looksLikePinyin("qjyf"))
         assertTrue(PinyinQuery.looksLikePinyin("QJYF"))
         assertTrue(PinyinQuery.looksLikePinyin("qian jun yi fa"))
         assertTrue(PinyinQuery.looksLikePinyin("qian-jun"))
-        assertTrue(PinyinQuery.looksLikePinyin("miya195"))
+    }
+
+    /**
+     * ⚠️ 真机回归(2026-10-12):**番号绝不能判成拼音**。
+     *
+     * <p>初版允许数字,于是 `MIAA-195` 这类番号被判成拼音 ⇒ 本地索引必然查不到
+     * ⇒ 走进"解析失败"分支 ⇒ 用户看到"暂无法识别,先搜一次中文片名即可建立",
+     * **番号搜索整条主路径被弄坏**(用户实测确认)。
+     *
+     * <p>而番号搜索是本 App 的主要用例(`SearchSettings.parseIntent` 专门识别
+     * `INTENT_CODE_TOKEN` 并做冲突保护)。
+     *
+     * <p>判据:含数字即不判为拼音 —— 拼音输入几乎不会出现"字母紧接数字",
+     * 而番号的特征正是"字母块 + 数字块"。
+     */
+    @Test
+    fun `番号不得判成拼音_真机回归`() {
+        assertFalse("MIAA-195 是番号,不是拼音", PinyinQuery.looksLikePinyin("MIAA-195"))
+        assertFalse(PinyinQuery.looksLikePinyin("miya195"))
+        assertFalse(PinyinQuery.looksLikePinyin("SSIS-001"))
+        assertFalse(PinyinQuery.looksLikePinyin("FC2-PPV"))
+        assertFalse(PinyinQuery.looksLikePinyin("abc123"))
+        assertFalse(PinyinQuery.looksLikePinyin("IPX 580"))
     }
 
     @Test
@@ -41,7 +63,8 @@ class PinyinQueryTest {
 
     @Test
     fun `纯数字与空串不算拼音`() {
-        // 纯数字更可能是番号或年份,按普通关键词搜更合适
+        // 纯数字更可能是番号或年份,按普通关键词搜更合适。
+        // (含数字的字母串同样否决,见 `番号不得判成拼音_真机回归`)
         assertFalse(PinyinQuery.looksLikePinyin("12345"))
         assertFalse(PinyinQuery.looksLikePinyin(""))
         assertFalse(PinyinQuery.looksLikePinyin("   "))

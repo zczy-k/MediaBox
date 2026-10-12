@@ -124,16 +124,6 @@ class SearchViewModel : ViewModel() {
     val pinyinNotice = MutableStateFlow<String?>(null)
 
     /**
-     * 拼音查询**没能在本地索引里解析出片名**时的原始输入;null = 不是这种情况(2026-10-11)。
-     *
-     * <p>⚠️ 必须与 [pinyinNotice] **分开**两个状态,不能用一个字段兼表两件事:
-     * 解析成功时 `pinyinNotice = 中文片名` 而 `searchedTitle` 也被设成同一个中文片名 ——
-     * 若用"两者相等"去判"解析失败",**成功时也会误报**"无法识别"。
-     * 这是 2026-10-11 自查时抓到的逻辑缺陷(同一个值承担了两种语义)。
-     */
-    val pinyinUnresolved = MutableStateFlow<String?>(null)
-
-    /**
      * 当前订阅**全部可搜源**数(2026-10-09)。
      *
      * <p>与 [totalCount](= 本次实际参与搜索的勾选源数)配对:两者差距大说明勾选表在悄悄收窄
@@ -405,48 +395,36 @@ class SearchViewModel : ViewModel() {
     fun search(title: String) {
         val typed = title.trim()
         if (typed.isEmpty()) return
-        // ── 拼音搜索(2026-10-11)──────────────────────────────────────────────
+        // ── 拼音搜索(2026-10-11,2026-10-12 修正)──────────────────────────────
         //
-        // ⚠️ 关键约束:源站搜索接口收的是**字面关键词**。把 "qjyf" 原样发给源站是**必然 0 命中**
-        // (源站库里没有哪个片名是 qjyf)。所以拼音必须先在**本地索引**里解析成中文片名,
-        // 再拿那个中文片名去搜 —— 少了这一步,拼音就只是个永远搜不到东西的输入框。
+        // 关键约束:源站搜索接口收的是**字面关键词**。把 "qjyf" 原样发给源站是**必然 0 命中**
+        // (源站库里没有哪个片名是 qjyf)。所以拼音要**先**在本地索引里解析成中文片名,
+        // 再拿那个中文片名去搜。
         //
-        // 解析不到时**直接返回,不发任何请求**:那会是几百个注定失败的请求,
-        // 在超时率 75~83% 的环境里等于把用户白白拖住十几秒。
+        // ⚠️⚠️ 但**解析不到时绝不能拒绝服务**(这是初版的真实设计错误):
+        // 拼音与番号处在**同一个输入空间**(`MIAA-195`、`SSIS-001` 都是字母+数字),
+        // 无法先验区分。初版在解析失败时直接 `return`(一个请求都不发),
+        // 于是**番号搜索整条主路径被弄坏** —— 用户搜番号看到"暂无法识别,先搜一次中文片名"。
+        //
+        // 正确语义:**拼音只是一次"优先尝试"**。命中就用中文片名搜;
+        // 没命中就**原样退回普通关键词搜索**(源站本就支持番号搜索,这是它原本的能力)。
+        // 这样即使 looksLikePinyin 再判错,最坏也只是"多查一次本地索引",
+        // 绝不会让用户搜不了东西。
         val t = if (PinyinQuery.looksLikePinyin(typed)) {
             val resolved = TitleIndexMemory.resolve(typed)
-            if (resolved.isEmpty()) {
-                LOG.i("echo-pinyin resolve-empty q=" + typed + " (本地索引还没有该拼音;先搜中文即可积累)")
-                // ⚠️ 早退前必须**完成与正常搜索同一套收尾**:换代次 + 停掉上一轮 + 清空结果。
-                //
-                // 少了换代次/停搜,上一轮的结果会继续并入(回包的 searchToken 仍是"当前代"),
-                // 用户看到的是"顶部写着『qjyf 暂无法识别』、下面却挂着上一次搜索的结果" ——
-                // 一个自相矛盾的界面。这条路径返回得快,但状态机不能因此少走一步。
-                token = SEARCH_SEQ.incrementAndGet()
-                failRecordedForToken.clear()
-                stopPreviousSearch()
-                searchedTitle.value = typed
-                pinyinUnresolved.value = typed
+            if (resolved.isNotEmpty()) {
+                LOG.i("echo-pinyin resolved q=" + typed + " -> " + resolved.joinToString("|"))
+                pinyinNotice.value = resolved.first()
+                resolved.first()
+            } else {
+                // 退回普通搜索:不提示"无法识别",也不清空结果 —— 对用户而言这就是一次
+                // 普通的英文/番号搜索,源站该给什么就给什么。
+                LOG.i("echo-pinyin resolve-miss fallback-to-plain q=" + typed)
                 pinyinNotice.value = null
-                results.value = emptyList()
-                totalCount.value = 0
-                settledCount.value = 0
-                searchedCount.value = 0
-                timeoutCount.value = 0
-                hasMore.value = false
-                running.value = false
-                // 不是"没有可搜源"(那是另一个空态),而是"这个拼音还没被索引" ——
-                // 若误置 true,UI 会显示"未配置搜索源",把用户引到设置页去查一个不存在的问题。
-                sitesEmpty.value = false
-                return
+                typed
             }
-            LOG.i("echo-pinyin resolved q=" + typed + " -> " + resolved.joinToString("|"))
-            pinyinNotice.value = resolved.first()
-            pinyinUnresolved.value = null
-            resolved.first()
         } else {
             pinyinNotice.value = null
-            pinyinUnresolved.value = null
             typed
         }
         val configured = KV.get(HawkConfig.SEARCH_THREADS, HawkConfig.SEARCH_THREADS_DEFAULT)
