@@ -123,7 +123,12 @@ object TitleIndexMemory {
      *
      * <p>(`List<String>` 因 `Collection` 的协变声明仍是它的子类型,所以 Kotlin 侧的
      * `mapNotNull { it.name }` 调用点无需改动。)
+     *
+     * <p>⚠️ 必须 `@JvmStatic`:`RoomDataManger`(Java)以 `TitleIndexMemory.record(...)` 形式调用,
+     * 而 Kotlin `object` 的普通方法在字节码里是**实例方法**(需 `INSTANCE.record(...)`)。
+     * 本仓既有惯例就是给 Java 侧要用的方法加 `@JvmStatic`(见 DetailNoListMemory)。
      */
+    @JvmStatic
     fun record(titles: Collection<String?>) {
         if (titles.isEmpty()) return
         var queued = 0

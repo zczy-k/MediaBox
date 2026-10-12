@@ -9,7 +9,6 @@ import com.github.tvbox.osc.util.BoundedCall;
 import com.github.tvbox.osc.util.LOG;
 import com.github.tvbox.osc.util.TitleMatcher;
 import com.google.gson.Gson;
-import com.lzy.okgo.model.Response;
 import com.lzy.okgo.request.GetRequest;
 
 import java.util.List;
@@ -74,8 +73,13 @@ public final class MiniProbeReader {
                 if (extend != null && !extend.isEmpty()) {
                     request.params("extend", extend);
                 }
-                Response<String> response = request.execute();
-                return response.body();
+                // ⚠️ OkGo 的 `execute()` 返回的是 **okhttp3.Response**,不是
+                // `com.lzy.okgo.model.Response<String>`(那是**异步**回调 onSuccess 的参数类型)。
+                // 本仓既有写法见 JsLoader:123 `Response response = OkGo.<File>get(jar).execute();`。
+                // 踩坑记录:CI 报 "incompatible types: okhttp3.Response cannot be converted to
+                // com.lzy.okgo.model.Response<String>" —— 两者同名,极易写错。
+                okhttp3.Response response = request.execute();
+                return response.body() != null ? response.body().string() : "";
             }
         }, Math.max(1L, timeoutSeconds) * 1000L, "xhint-fetch-" + sourceKey);
 
