@@ -375,14 +375,6 @@ object SearchSettings {
         val n = normalizeCached(name)
         val k = normalizeCached(keyword)
         if (k.isEmpty()) return 0
-        // 番号查询:走**宽松**打分(2026-10-12)。见 [matchesCode] ——
-        // 番号主体相等即高相关,且**不套**"非正片降权"(用户搜番号就是要全部版本,
-        // 把带版本后缀的条目压到 2 分会让它们沉底,与"搜得全面"的诉求相反)。
-        val code = extractCode(keyword)
-        if (code.isNotEmpty() && containsCode(n, code)) {
-            // 标题以番号开头更贴合(番号片标题普遍是"番号 + 标题")
-            return if (n.startsWith(code)) 4 else 3
-        }
         var base = if (n.isEmpty()) {
             aliasScore(alias, k)
         } else when {
@@ -401,6 +393,21 @@ object SearchSettings {
         if (base == 0 && n.isNotEmpty()) {
             val auxK = k.replace("ー", "")
             if (auxK.isNotEmpty() && n.replace("ー", "").contains(auxK)) base = 2
+        }
+        // 番号查询:补一档"番号主体命中"的分(2026-10-12)。
+        //
+        // ⚠️ 只能**兜底补分**,不能**抢先返回** —— 否则会推翻更精确的通用档位。
+        // 真机 CI 抓到的回归:查询 `ABC-123` 时标题也是 `ABC-123`(全等,应为 5),
+        // 但 `extractCode` 把它判成番号并返回 4,把"全等"降级成了"前缀"。
+        // 所以这里用 max:通用档位更贴切就保留通用档位。
+        //
+        // 番号主体命中说明"这是同一个番号"(可能是不同版本),给 3~4 分;
+        // 且**不套**"非正片降权"(用户搜番号就是要全部版本,压到 2 分会让他们沉底,
+        // 与"搜得全面"的诉求相反),故在此直接返回。
+        val code = extractCode(keyword)
+        if (code.isNotEmpty() && containsCode(n, code)) {
+            val codeScore = if (n.startsWith(code)) 4 else 3
+            return maxOf(base, codeScore)
         }
         if (base <= 0) return base
         return if (isNonMainContent(name, note, keyword)) minOf(base, 2) else base
