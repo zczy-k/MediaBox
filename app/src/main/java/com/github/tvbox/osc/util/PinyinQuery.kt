@@ -55,34 +55,43 @@ object PinyinQuery {
      *
      * <p>代价:极少见的"片名里带数字、用户按拼音敲"(如《三体3》敲 `santi3`)
      * 不再走拼音解析,会按字面去搜 —— 那只是搜不到,不会拒绝服务,可接受。
+     *
+     * <p>## 为什么还要限长(2026-10-12 收敛为只认首字母后)
+     * 既然只匹配**首字母**,那么合法输入就是"2~6 个字母"(对应 2~6 字片名)。
+     * 超过 [MAX_INITIALS_LEN] 的字母串不再是首字母输入 —— 它更可能是:
+     * 用户真在敲英文片名(如 `thematrix`)、或误粘了一串东西。
+     * 那种情况**不该**去拼音索引里试(试了也几乎必然落空),直接按普通搜索走更省事。
+     *
+     * <p>⚠️ 这仍然只是"要不要去索引试一次"的判据 —— 命中与否都不会拒绝服务。
      */
     fun looksLikePinyin(query: String?): Boolean {
         val q = query?.trim().orEmpty()
         if (q.isEmpty()) return false
-        var hasLetter = false
+        var letterCount = 0
         for (c in q) {
             when {
-                c in 'a'..'z' || c in 'A'..'Z' -> hasLetter = true
+                c in 'a'..'z' || c in 'A'..'Z' -> letterCount++
                 // ⚠️ 数字一律否决:见 KDoc —— 含数字的字母串几乎都是番号,不是拼音
                 c in '0'..'9' -> return false
                 c == ' ' || c == '-' || c == '_' || c == '\'' -> {}
                 else -> return false   // 含 CJK / 标点 / 其它 ⇒ 不是拼音输入
             }
         }
-        return hasLetter
+        // 首字母输入的长度上限:见 KDoc
+        return letterCount in 1..MAX_INITIALS_LEN
     }
+
+    /**
+     * 首字母查询的字母数上限(不含分隔符)。
+     *
+     * <p>取 6:覆盖"六个字以内片名"的首字母,这已涵盖绝大多数中文片名;
+     * 更长的一律按普通搜索处理(见 [looksLikePinyin] 的说明)。
+     */
+    const val MAX_INITIALS_LEN = 6
 
     /** 归一化查询:小写、去所有非字母数字(空格/连字符/撇号都不参与比较) */
     fun normalize(raw: String?): String =
         NON_ALNUM.replace(raw?.lowercase(Locale.ROOT).orEmpty(), "")
-
-    /**
-     * 把"音节串"压成**全拼**。
-     *
-     * <p>输入是 [PinyinTransliterator] 产出的空格分隔音节(如 `"han yue"`),
-     * 输出 `"hanyue"`。同时容忍输入里本来就带连字符或已压紧的形式。
-     */
-    fun compact(pinyin: String?): String = normalize(pinyin)
 
     /**
      * 取**首字母串**:`"han yue"` → `"hy"`。
@@ -117,24 +126,30 @@ object PinyinQuery {
     /**
      * 拼音匹配打分:越高越贴合。0 = 不匹配。
      *
-     * <p>档位与中文匹配([SearchSettings.relevanceScore])刻意保持同构,
-     * 这样两边的分数可以在同一张表里比较。
+     * <p>## ⚠️ 只认**首字母**(2026-10-12 收敛,用户决定)
+     * 全拼档(`qianjunyifa`)已**刻意移除**。理由:
+     * <ul>
+     *   <li><b>TV 端是主场景</b>:遥控器上一个字一个字地按 10+ 个字母,成本高到用户
+     *       根本不会这么做;而首字母只需 2~4 键(`qjyf`),这才是 TV 端真实可用的输入方式;</li>
+     *   <li><b>全拼没有独立价值</b>:能敲出全拼的场景(手机/键盘),用户直接打中文更快 ——
+     *       全拼只是在"不想切输入法"时的一个折中,而首字母覆盖了同样的需求且更省力;</li>
+     *   <li><b>避免误命中</b>:全拼的"包含"档(`full.contains(q)`)会让任意短串命中大量片名
+     *       (如 `an` 命中所有含 an 音节的片名),信噪比差。首字母的碰撞面小得多。</li>
+     * </ul>
+     *
+     * <p>档位(与中文匹配 [SearchSettings.relevanceScore] 同构,便于同表比较):
+     * 首字母全等/前缀 = 2,包含 = 1。
+     * 全等与前缀**同档**:首字母信息量相同(`qj` 与 `qjyf` 都只是"开头几个字母"),
+     * 强行区分只会让排序对用户的按键次数敏感,而那不是内容相关度。
      */
     fun score(pinyin: String?, query: String?): Int {
-        val full = compact(pinyin)
         val q = normalize(query)
-        if (full.isEmpty() || q.isEmpty()) return 0
-        // 全拼:全等 / 前缀 / 包含
-        if (full == q) return 5
-        if (full.startsWith(q)) return 4
-        if (full.contains(q)) return 3
-        // 首字母:全等与前缀同档(信息量相同),包含再低一档
+        if (q.isEmpty()) return 0
         val ini = initials(pinyin)
-        if (ini.isNotEmpty()) {
-            if (ini == q) return 2
-            if (ini.startsWith(q)) return 2
-            if (ini.contains(q)) return 1
-        }
+        if (ini.isEmpty()) return 0
+        if (ini == q) return 2
+        if (ini.startsWith(q)) return 2
+        if (ini.contains(q)) return 1
         return 0
     }
 

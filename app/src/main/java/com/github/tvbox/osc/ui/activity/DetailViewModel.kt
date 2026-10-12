@@ -431,7 +431,19 @@ class DetailViewModel : ViewModel() {
         publishHeader()
         loadDetail(target.vodId, target.sourceKey)
         LOG.i("echo-detail-open collect=$fromCollect key=$sourceKey id=$vodId")
-        if (vodName.isNotEmpty()) startSourceSearch()
+        // ⚠️ 2026-10-12:这里**不再**无条件 `startSourceSearch()`。
+        //
+        // 原实现是 `if (vodName.isNotEmpty()) startSourceSearch()` —— 即"点开卡片的同时
+        // 立刻用 12 并发去搜几百个源"。后果(真机实测):
+        //   - 详情取数(用户真正在等的那一个请求)要跟几百个搜索请求抢线程与带宽;
+        //   - 日志里能看到 `echo-srcban pool kept=350/360` 与大量 SEARCH_TIMEOUT 刷屏,
+        //     全部发生在详情还没出来的时候;
+        //   - 用户感受就是"点卡片进去变慢了"。
+        //
+        // 改为走既有的 [prewarmSourceSearch](延迟 1.5s):绝大多数详情在 1.5s 内就 Ready,
+        // 于是这轮搜索**根本不会发**;只有当前源确实取不到(或很慢)时,才轮到它兜底 ——
+        // 而那条路径本来就是它设计的用途。判定逻辑一行没改,只是把"立刻发"改成"按需发"。
+        prewarmSourceSearch()
     }
 
     /** 换片时收掉上一部在途的聚合搜索,并让旧 token 立即失效(搜索回包仍靠 token 失配兜底) */
@@ -1077,16 +1089,17 @@ class DetailViewModel : ViewModel() {
             LOG.i("echo-source-prewarm skip reason=already-ready")
             return@Runnable
         }
-        // ⚠️ 这里**可能什么都不打** —— 那不是"预热没生效",而是搜索早已被别的入口启动过了。
-        // 实测(诊断包 v1.0.24 真机):首页/搜索点片进来走 [applyTarget],其 :240 行
-        // `if (vodName.isNotEmpty()) startSourceSearch()` 是**无条件**的,聚合搜索在详情
-        // 请求后 2~3ms 就已发出(pool=120)。等本 Runnable 到点时 [ensureSourceSearchRunning]
-        // 的 `if (sourcesSearching.value) return` 守卫直接短路 —— 不打日志,也不重复搜索。
-        // 所以判断预热是否生效**不能看这个前缀**,要看 [startSourceSearch] 的
+        // ⚠️ 这里**可能什么都不打** —— 那不是"预热没生效",而是搜索早已被别的入口启动过了
+        // (例如详情看门狗先判失败、或 [onDetailUnavailable] 已收口)。
+        // 那种情况下 [ensureSourceSearchRunning] 的 `if (sourcesSearching.value) return`
+        // 守卫直接短路 —— 不打日志,也不重复搜索。
+        // 所以判断预热是否生效**不能只看这个前缀**,还要看 [startSourceSearch] 的
         // `echo-source-search start` 时间戳相对 `echo-detail-watchdog-arm` 的差值。
         //
-        // 本预热的真正价值在 [switchSource] 路径:它走 [loadDetail] 而**不**经 :240,
-        // 那条路径上聚合搜索只由本 Runnable(或看门狗兜底)启动 —— 缺了它就会白等 20~45 秒。
+        // 2026-10-12 起本预热是**所有**进入详情路径的统一启动点:
+        // [applyTarget] 原先无条件 `startSourceSearch()`,已改为调本方法 ——
+        // 于是"点卡片就惊动几百个源"变成"1.5s 内详情就绪则根本不搜"。
+        // 详见 [applyTarget] 处的说明。
         LOG.i("echo-source-prewarm fire")
         ensureSourceSearchRunning()
     }
