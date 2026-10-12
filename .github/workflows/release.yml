@@ -1,5 +1,17 @@
 name: Build Release APK
 
+# 出包 + 单测(2026-10-12 合并为本仓库**唯一**的工作流)。
+#
+# 合并前有三个工作流,各自的真实状态:
+#   - dependabot-auto-merge.yml:运行次数 **0**。仓库 has_issues=False(PR 与 Issues 共用
+#     该开关)⇒ /pulls 返回 404 ⇒ 永远没有触发源;且它依赖的 secrets.PR_APPROVE_TOKEN
+#     未配置、仓库 allow_auto_merge=False(第 59 行的 gh pr merge --auto 必然失败)。
+#     三重死因,已删除。
+#   - unit-tests.yml:单测入口。已**并入本工作流**(见下方 Run unit tests 步骤),
+#     避免"要出包就得点两个按钮"以及两处配置各自漂移。
+#
+# 现在:一次触发即完成 [单测 → 编译 → 签名 → 出包]。单测刻意排在**签名还原之前** ——
+# 逻辑错能在几十秒内失败,不必先等 keystore 解码与 SDK 准备。
 on:
   workflow_dispatch:
     inputs:
@@ -82,6 +94,33 @@ jobs:
 
       - name: chmod gradlew
         run: chmod +x gradlew
+
+      # ── 单测(2026-10-12 由独立工作流 unit-tests.yml 并入)────────────────────────
+      #
+      # 为什么要并进来:`release.yml` 原先只做 assembleRelease/assembleDiag,**不跑单测** ——
+      # 于是"CI 绿"从来不等于"单测过"。历史上这已经放过真 bug 进包:
+      # 番号打分把"全等=5"降级成"前缀=4"、SearchViewModel 漏 import 之类,
+      # 都是 970 个单测里某一条能抓到、而"只编译"抓不到的。
+      #
+      # 为什么放在**签名还原之前**:单测是纯逻辑校验,不需要签名密钥。
+      # 放前面可以让"逻辑错"在几十秒内失败,而不必先等 keystore 解码 + SDK 准备。
+      #
+      # -x Chaquopy 的 Python 依赖安装:那步要联网装 pip 包,与单测无关,
+      #   失败会被误读成"单测挂了"。
+      - name: Run unit tests
+        run: |
+          set -euo pipefail
+          ./gradlew testDebugUnitTest --no-daemon --stacktrace \
+            -x :pyramid:installDebugPythonRequirements
+
+      # 单测报告:失败时唯一能看清"哪条用例挂了"的地方(日志里只有断言行号)
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: ignore
 
       # 签名材料不入库：keystore 与三个口令全部来自 GitHub Secrets，
       # 在此还原到 .key/app-release.jks 与环境变量，构建完随 runner 销毁。
