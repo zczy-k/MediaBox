@@ -71,13 +71,19 @@ object PinyinQuery {
      * 取**首字母串**:`"han yue"` → `"hy"`。
      *
      * <p>按音节边界取首字母,而不是取整串的首字母 —— 后者对多字片名没有意义。
-     * 音节边界用空白或连字符;若输入已压紧(无分隔),则退化为"整串首字母",
-     * 此时调用方本就不该指望首字母匹配。
+     * 音节边界用空白、连字符、下划线**或撇号**;若输入已压紧(无分隔),则退化为
+     * "整串首字母",此时调用方本就不该指望首字母匹配。
+     *
+     * <p>⚠️ 撇号必须算分隔符:ICU 给 `xi'an`(西安)这类音节加隔音撇号,
+     * 而 [PinyinTransliterator.normalizeSyllables] 会把撇号折成空格 —— 两处口径必须一致,
+     * 否则"转换侧产出 `xi an`、匹配侧直接收到 `xi'an`"两种输入会得出不同首字母
+     * (前者 `xa`、后者 `x`),同一部片在两条路径上匹配结果不同。
+     * 这是 CI 抓到的:单测期望 `xa` 实得 `x`。
      */
     fun initials(pinyin: String?): String {
         val raw = pinyin?.lowercase(Locale.ROOT)?.trim().orEmpty()
         if (raw.isEmpty()) return ""
-        val parts = raw.split(' ', '-', '_').filter { it.isNotEmpty() }
+        val parts = raw.split(' ', '-', '_', '\'').filter { it.isNotEmpty() }
         if (parts.size <= 1) {
             // 无音节分隔:无法可靠切分,返回整串首字母(调用方应避免依赖)
             val only = NON_ALNUM.replace(raw, "")

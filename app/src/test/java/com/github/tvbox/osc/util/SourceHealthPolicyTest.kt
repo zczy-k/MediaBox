@@ -441,12 +441,17 @@ class SourceHealthPolicyTest {
 
     @Test
     fun shouldDefer_slowSampleStillResetsStreak() {
-        // 采样耗时不能把"归零连续超时"这件事吞掉 —— 两件事必须同时生效
+        // 采样耗时不能把"归零连续超时"这件事吞掉 —— 两件事必须同时生效。
+        //
+        // ⚠️ 这里刻意**不传** suppressTimeoutBan:那个参数的语义就是"只追加证据、
+        // 不累加 timeoutStreak"(弱网雪崩保险丝)。传它则 streak 恒为 0,
+        // 这条用例就变成"0 → 0"的空断言,测不到"归零"这个行为。
+        // 单次超时不会触发封禁(规则 2 需连续 2 次),所以这里安全。
         var s = SourceHealthPolicy.recordFail(
             SourceHealthState(), SourceFailKind.SEARCH_TIMEOUT, SourceHealthPolicy.contentKey("电影A"), t0,
-            suppressTimeoutBan = true,
         )
         assertEquals(1, s.timeoutStreak)
+        assertFalse(SourceHealthPolicy.isBlocked(s, t0))
         s = SourceHealthPolicy.recordAnswered(s, now = t0 + 1, elapsedMs = 900L)
         assertEquals(0, s.timeoutStreak)
         assertEquals(900L, s.lastElapsedMs)
