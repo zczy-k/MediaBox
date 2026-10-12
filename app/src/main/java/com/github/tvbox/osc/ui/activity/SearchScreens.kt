@@ -281,7 +281,15 @@ internal fun RailResults(
     // LazyColumn 原地更新、滚动位置与动画稳定;无有效标题的条目退回 sourceKey+id 行键。
     // 单源视图(选中某源)不聚合 —— 该视图本身就是"展开后的来源",聚合反而多余。
     val dedupGroups: List<SearchDedupGroup> = remember(rows, selectedSource, searchedTitle) {
-        val groups = if (selectedSource != null) {
+        // ⚠️ 番号查询**不合并**(2026-10-12,用户决定):搜番号时每个源的每条结果
+        // 各自成卡。理由:番号片的"有码/无码/中文字幕/不同压制组"是**内容不同**的版本,
+        // 用户搜番号的目的就是"把这几个版本都摆出来挑",合并成一张卡会让他
+        // 以为只有一个版本(角标那个"N 个源"说不清是"同一版本多源"还是"多版本")。
+        //
+        // 与普通片名相反:剧集/电影的同名条目**应当**合并(那才是"同一部片多源"),
+        // 所以只对番号查询关掉聚合。
+        val isCodeQuery = SearchSettings.extractCode(searchedTitle).isNotEmpty()
+        val groups = if (selectedSource != null || isCodeQuery) {
             rows.map { v -> SearchDedupGroup("row_${v.sourceKey}_${v.id}", listOf(v), v) }
         } else {
             SearchDedupPolicy

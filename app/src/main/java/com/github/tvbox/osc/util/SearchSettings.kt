@@ -62,6 +62,28 @@ object SearchSettings {
     private val ASCII_CODE_TOKEN_PATTERN = Regex("[a-z0-9]+", RegexOption.IGNORE_CASE)
 
     /**
+     * 番号尾部的**版本标记**(如 `ADN-811-RM` 的 `-RM`、`FC2-PPV-4925855` 的 `-PPV`)。
+     *
+     * <p>匹配结尾的 1~4 个字母,分隔符**可选** —— 用户可能写 `ADN-811-RM`,
+     * 也可能写 `ADN811RM`(不加分隔符),两者都该剥成 `adn811`。
+     *
+     * <p>1~4 字母的上限:真正的番号尾段通常是数字,不会被 `[a-z]{1,4}` 匹配到;
+     * 而常见版本标记(`RM`/`C`/`UC`/`PPV`/`UNC`)都在 4 字母以内。
+     */
+    private val TRAILING_VERSION_TAG = Regex("[-_.\\s]*[a-z]{1,4}$", RegexOption.IGNORE_CASE)
+
+    /**
+     * [extractCode] 的缓存(2026-10-12)。
+     *
+     * <p>本方法被**逐条结果**调用:一次搜索上千条 × (matches 一次 + relevanceScore 一次),
+     * 而关键词在一次搜索内固定不变。不缓存的话每条结果都要跑一遍正则 + 归一化。
+     * 容量取 64:正常使用中"当前搜索词"只有 1~2 个,64 足够吸收连续换词的抖动。
+     */
+    private const val CODE_CACHE_CAPACITY = 64
+
+    private val codeCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /**
      * 归一化缓存(2026-10-08 搜索准确度/性能改造)。
      *
      * <p>存在理由:搜索页里 {@link #relevanceScore} 每条结果至少被调用两次(过滤一次、排序一次),
@@ -151,21 +173,38 @@ object SearchSettings {
      * <p>为什么必须看别名:JSON 型源的列表接口把副标题/英文名放在 vod_sub / vod_en,
      * 客户端此前只按 name 过滤,于是"源站能搜到、客户端判不匹配"的结果被整批丢掉。
      * 别名命中给到的分数略低于标题命中(见 [relevanceScore]),排序上仍让标题匹配优先。
+     *
+     * <p>⚠️ 2026-10-12:**番号查询走宽松匹配**(见 [matchesCode])。
+     * 原实现要求整串查询完整出现在标题里,于是 `ADN-811-RM` 只能命中标题里恰好也带
+     * `-RM` 的源 —— 表现为"同一个番号时好时坏"(真机日志 `hit=0`,源答话了但全被滤掉)。
+     * 番号的主体是"字母块+数字块",其后的 `-RM/-C/-UC` 是**版本后缀**,不该参与匹配。
      */
-    fun matches(name: String?, alias: String?, keyword: String?, mode: MatchMode): Boolean = when (mode) {
-        MatchMode.All -> true
-        MatchMode.Smart -> {
-            val k = normalizeCached(keyword)
-            k.isNotEmpty() && (normalizeCached(name).contains(k) || aliasesContain(alias, k) || auxContains(name, k))
-        }
-        // 精准文本仍要求全标题相等；但番号查询的“精准”应命中标题开头完整的番号 token，
-        // 例如搜 MIAA-195 要能命中“ MIAA-195 + 标题”，不能要求整条影片标题只剩番号。
+    fun matches(name: String?, alias: String?, keyword: String?, mode: MatchMode): Boolean {
+        // "全部"模式不过滤:番号判据也不能拦(那是用户显式要求的"都给我")
+        if (mode == MatchMode.All) return true
+        // 番号查询:**只**走番号语义(2026-10-12)。
         //
-        // ⚠️ 别名在精准模式下用**相等**而非包含（aliasEquals,不是 aliasesContain）：
-        // 「精准」的用户契约是"就是这部片子",别名写成「三体的异世界」也命中「三体」的话,
-        // 精准模式实际退化成了智能模式,开了等于没开。
-        MatchMode.Exact -> isExactMatch(name, keyword) || hasExactNumberedCodePrefix(name, keyword) ||
-            aliasEquals(alias, normalizeCached(keyword))
+        // ⚠️ 必须**短路**,不能"番号不中再落回通用包含" —— 否则 `ADN-81` 会经由
+        // Smart 的 `normalize(name).contains(k)` 命中 `ADN-811`(裸子串包含),
+        // 短号误命中长号的老问题原样回来。番号有明确边界语义,就该用它自己的判据。
+        if (extractCode(keyword).isNotEmpty()) {
+            return matchesCode(name, alias, keyword)
+        }
+        return when (mode) {
+            MatchMode.All -> true
+            MatchMode.Smart -> {
+                val k = normalizeCached(keyword)
+                k.isNotEmpty() && (normalizeCached(name).contains(k) || aliasesContain(alias, k) || auxContains(name, k))
+            }
+            // 精准文本仍要求全标题相等；但番号查询的“精准”应命中标题开头完整的番号 token，
+            // 例如搜 MIAA-195 要能命中“ MIAA-195 + 标题”，不能要求整条影片标题只剩番号。
+            //
+            // ⚠️ 别名在精准模式下用**相等**而非包含（aliasEquals,不是 aliasesContain）：
+            // 「精准」的用户契约是"就是这部片子",别名写成「三体的异世界」也命中「三体」的话,
+            // 精准模式实际退化成了智能模式,开了等于没开。
+            MatchMode.Exact -> isExactMatch(name, keyword) || hasExactNumberedCodePrefix(name, keyword) ||
+                aliasEquals(alias, normalizeCached(keyword))
+        }
     }
 
     /** 别名里是否有任一条归一化后**完全等于**关键词(别名按 {@code |} 分隔,口径同 AbsJson.joinAliases) */
@@ -204,6 +243,113 @@ object SearchSettings {
     }
 
     /**
+     * 从查询里抽出**番号主体**:去掉尾部的版本后缀后归一化,如:
+     * ```
+     * ADN-811-RM      -> adn811   (尾部 RM 是版本标记,去掉)
+     * ADN811          -> adn811
+     * MIAA-195        -> miaa195
+     * FC2-PPV-4925855 -> fc24925855 (尾部 PPV 是版本标记,去掉)
+     * ```
+     * 抽不出(纯中文 / 无数字)⇒ 空串。
+     *
+     * <p>## 为什么需要它(2026-10-12 真机反馈)
+     * 用户搜 `ADN-811-RM` 时**时好时坏**。根因:原匹配要求整串
+     * `adn811rm` **完整出现**在归一化标题里,而源站标题常常只写 `ADN-811`(不带 `-RM`)——
+     * 于是"标题恰好带 -RM 的源命中、不带的全被滤掉",表现为随机。
+     *
+     * <p>真机日志证据:`echo-searchplan ... hit=0 empty=23` ——
+     * 源站**答话了**,但客户端把结果全判为不匹配。
+     *
+     * <p>## 算法:剥尾部版本标记,而不是"取前两段"
+     * 先试过"取第一段字母+数字"的写法,但它对 `FC2-PPV-4925855` 这类
+     * "字母块里带数字、且中间夹版本标记"的番号会切错。改为**从尾部剥**:
+     * 反复去掉结尾的短字母标记(1~4 个字母,如 `RM`/`C`/`UC`/`PPV`),剩下的就是番号主体。
+     * 这样"番号在前、版本标记在后"的通用形态都能正确处理。
+     *
+     * <p>⚠️ 带缓存:本方法在 [matches] 与 [relevanceScore] 里被**逐条结果**调用
+     * (一次搜索上千条 × 2),而关键词在一次搜索内是固定的。缓存把重复的正则与
+     * 归一化开销压到一次。
+     */
+    fun extractCode(keyword: String?): String {
+        val raw = keyword?.trim().orEmpty()
+        if (raw.isEmpty()) return ""
+        codeCache[raw]?.let { return it }
+        val result = extractCodeUncached(raw)
+        if (codeCache.size >= CODE_CACHE_CAPACITY) codeCache.clear()
+        codeCache[raw] = result
+        return result
+    }
+
+    private fun extractCodeUncached(raw: String): String {
+        // 必须在 ASCII 字母数字与分隔符的范围内,否则不是番号查询
+        if (!NUMBERED_CODE_PATTERN.matches(raw)) return ""
+        // 反复剥掉结尾的短字母版本标记,但**只在剥完仍同时含字母与数字时才接受** ——
+        // 否则说明剥过头了(如纯字母串 "thematrix" 会被一路剥空)。
+        var body = raw
+        var guard = 0
+        while (guard++ < 4) {
+            val m = TRAILING_VERSION_TAG.find(body) ?: break
+            if (m.range.first == 0) break
+            val candidate = body.substring(0, m.range.first).trimEnd('-', '_', '.', ' ')
+            if (!hasLetterAndDigit(candidate)) break
+            body = candidate
+        }
+        val code = normalizeCached(body)
+        if (!hasLetterAndDigit(code)) return ""
+        return code
+    }
+
+    /** 同时含 ASCII 字母与数字(番号的必要条件) */
+    private fun hasLetterAndDigit(s: String): Boolean =
+        s.any { it.isDigit() } && s.any { it in 'a'..'z' || it in 'A'..'Z' }
+
+    /**
+     * **番号的宽松匹配**(2026-10-12):查询抽出的番号主体出现在标题里即算命中。
+     *
+     * <p>与 [hasExactNumberedCodePrefix] 的区别(后者只服务"精准模式",要求番号在**标题开头**):
+     * 本方法只要求**包含**,因为番号常出现在标题中段
+     * (如 `[Reducing Mosaic] ADN-811 I Want You To Love Me`)。
+     *
+     * <p>⚠️ 仍严禁短号误命中长号:`ADN-81` **不得**命中 `ADN-811`。
+     * 做法是在归一化标题里找番号主体,并检查**其后不能紧跟数字**
+     * (紧跟数字说明命中的是更长番号)。
+     *
+     * <p>⚠️ 刻意**不**对标题调 [extractCode]:标题是"番号 + 片名"的长串,
+     * 抽出来的会是"番号+片名"而不是番号本身,比对必然失败(白跑一次正则)。
+     * 标题侧只做"边界检查的包含"。
+     */
+    fun matchesCode(name: String?, alias: String?, keyword: String?): Boolean {
+        val code = extractCode(keyword)
+        if (code.isEmpty()) return false
+        return containsCode(normalizeCached(name), code) || containsCode(normalizeCached(alias), code)
+    }
+
+    /**
+     * 归一化文本里是否**以番号为主体**地包含 [code](避免 `adn81` 命中 `adn811`)。
+     *
+     * <p>边界规则:
+     * <ul>
+     *   <li>命中位置**之前**若仍是字母数字,说明是更长番号的一部分(如 `xadn811`)⇒ 不算;</li>
+     *   <li>命中位置**之后**若仍是数字,说明是更长番号(如 `adn8112`)⇒ 不算;</li>
+     *   <li>之后是字母则**可以**(如 `adn811rm`、`adn811title`)—— 那是版本后缀或片名。</li>
+     * </ul>
+     */
+    private fun containsCode(normalizedText: String, code: String): Boolean {
+        if (normalizedText.isEmpty()) return false
+        var from = 0
+        while (true) {
+            val idx = normalizedText.indexOf(code, from)
+            if (idx < 0) return false
+            val before = idx - 1
+            val after = idx + code.length
+            val beforeOk = before < 0 || !normalizedText[before].isLetterOrDigit()
+            val afterOk = after >= normalizedText.length || !normalizedText[after].isDigit()
+            if (beforeOk && afterOk) return true
+            from = idx + 1
+        }
+    }
+
+    /**
      * 结果相关度(越高越贴合),用于排序让最佳匹配浮到最前:
      * 5=归一化相等;4=以关键词开头;3=包含关键词;2=多词关键词的每个词都出现;
      * 1=别名完全等于关键词;0=不匹配。
@@ -229,6 +375,14 @@ object SearchSettings {
         val n = normalizeCached(name)
         val k = normalizeCached(keyword)
         if (k.isEmpty()) return 0
+        // 番号查询:走**宽松**打分(2026-10-12)。见 [matchesCode] ——
+        // 番号主体相等即高相关,且**不套**"非正片降权"(用户搜番号就是要全部版本,
+        // 把带版本后缀的条目压到 2 分会让它们沉底,与"搜得全面"的诉求相反)。
+        val code = extractCode(keyword)
+        if (code.isNotEmpty() && containsCode(n, code)) {
+            // 标题以番号开头更贴合(番号片标题普遍是"番号 + 标题")
+            return if (n.startsWith(code)) 4 else 3
+        }
         var base = if (n.isEmpty()) {
             aliasScore(alias, k)
         } else when {

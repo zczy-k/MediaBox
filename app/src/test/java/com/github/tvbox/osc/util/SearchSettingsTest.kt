@@ -55,6 +55,87 @@ class SearchSettingsTest {
         assertTrue(SearchSettings.matches(null, "庆余年", SearchSettings.MatchMode.All))
     }
 
+    // ==================== 番号宽松匹配(2026-10-12 真机反馈) ====================
+
+    /**
+     * ⚠️ 真机回归:用户搜 `ADN-811-RM` 时**时好时坏**。
+     *
+     * <p>根因:原匹配要求整串 `adn811rm` 完整出现在标题里,而源站标题常常只写
+     * `ADN-811`(不带 `-RM`)⇒ 只有标题恰好带 -RM 的源命中。
+     * 真机日志证据:`echo-searchplan ... hit=0 empty=23`(源答话了,但全被判不匹配)。
+     *
+     * <p>修法:抽出番号**主体**(字母块+数字块)比对,版本后缀不参与。
+     */
+    @Test
+    fun codeMatch_ignoresVersionSuffix() {
+        val m = SearchSettings.MatchMode.Smart
+        // 查询带版本后缀,标题不带 —— 必须命中
+        assertTrue(SearchSettings.matches("ADN-811 I Want You To Love Me", null, "ADN-811-RM", m))
+        assertTrue(SearchSettings.matches("ADN-811 I Want You To Love Me", null, "ADN811", m))
+        assertTrue(SearchSettings.matches("ADN-811 I Want You To Love Me", null, "adn-811", m))
+        assertTrue(SearchSettings.matches("ADN-811 I Want You To Love Me", null, "ADN811RM", m))
+        // 番号出现在标题中段(带前置描述)也要命中
+        assertTrue(
+            SearchSettings.matches("[Reducing Mosaic] ADN-811 xxx", null, "ADN-811-RM", m),
+        )
+    }
+
+    @Test
+    fun codeMatch_uppercaseLowercaseEquivalent() {
+        val m = SearchSettings.MatchMode.Smart
+        assertTrue(SearchSettings.matches("adn-811 title", null, "ADN-811", m))
+        assertTrue(SearchSettings.matches("ADN-811 title", null, "adn811", m))
+        assertTrue(SearchSettings.matches("Adn-811 title", null, "ADN-811", m))
+    }
+
+    @Test
+    fun codeMatch_neverMatchesShorterOrLongerCode() {
+        val m = SearchSettings.MatchMode.Smart
+        // 短号不得命中长号
+        assertFalse(SearchSettings.matches("ADN-811 title", null, "ADN-81", m))
+        // 长号不得命中短号(反向)
+        assertFalse(SearchSettings.matches("ADN-81 title", null, "ADN-811", m))
+        // 数字后仍跟数字 ⇒ 是更长的番号
+        assertFalse(SearchSettings.matches("ADN-8112 title", null, "ADN-811", m))
+    }
+
+    @Test
+    fun codeMatch_doesNotAffectPlainChineseQuery() {
+        val m = SearchSettings.MatchMode.Smart
+        // 中文查询走原路径:不含关键词仍被滤掉
+        assertFalse(SearchSettings.matches("琅琊榜", null, "庆余年", m))
+        assertTrue(SearchSettings.matches("庆余年 第二季", null, "庆余年", m))
+    }
+
+    @Test
+    fun extractCode_pullsMainBodyOnly() {
+        assertEquals("adn811", SearchSettings.extractCode("ADN-811"))
+        assertEquals("adn811", SearchSettings.extractCode("ADN811"))
+        assertEquals("adn811", SearchSettings.extractCode("ADN-811-RM"))
+        assertEquals("adn811", SearchSettings.extractCode("adn-811"))
+        assertEquals("miaa195", SearchSettings.extractCode("MIAA-195"))
+        // 纯中文 / 纯数字 / 纯字母(无数字)都不是番号
+        assertEquals("", SearchSettings.extractCode("庆余年"))
+        assertEquals("", SearchSettings.extractCode("12345"))
+        assertEquals("", SearchSettings.extractCode("thematrix"))
+        assertEquals("", SearchSettings.extractCode(""))
+        assertEquals("", SearchSettings.extractCode(null))
+    }
+
+    @Test
+    fun codeMatch_worksInExactModeToo() {
+        // 番号查询在精准模式下同样宽松:用户要的是"这个番号",不是"这个带后缀的整串"
+        val exact = SearchSettings.MatchMode.Exact
+        assertTrue(SearchSettings.matches("ADN-811 标题", null, "ADN-811-RM", exact))
+    }
+
+    @Test
+    fun codeMatch_scoreNotPenalizedByVersionSuffix() {
+        // 番号命中必须能排到前面,不能因为 note 里有"无码"之类被压到 2 分
+        val s = SearchSettings.relevanceScore("ADN-811 标题", null, "ADN-811-RM", "无码")
+        assertTrue("番号命中不该被非正片降权压到 2 分以下,实际 $s", s >= 3)
+    }
+
     @Test
     fun exactMode_matchesCompleteNumberPrefixInsideLongTitle() {
         val exact = SearchSettings.MatchMode.Exact
