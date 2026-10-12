@@ -13,6 +13,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -22,6 +23,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -34,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -67,6 +70,7 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
     val hasMore by vm.hasMore.collectAsStateWithLifecycle()
     val searchedCount by vm.searchedCount.collectAsStateWithLifecycle()
     val settledCount by vm.settledCount.collectAsStateWithLifecycle()
+    val timeoutCount by vm.timeoutCount.collectAsStateWithLifecycle()
     val totalCount by vm.totalCount.collectAsStateWithLifecycle()
     val searchableCount by vm.searchableCount.collectAsStateWithLifecycle()
     val hotSearch by vm.hotSearch.collectAsStateWithLifecycle()
@@ -75,6 +79,8 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
     var selectedSource by remember { mutableStateOf<String?>(null) }
     var history by remember { mutableStateOf(KV.get(HawkConfig.SEARCH_HISTORY, ArrayList<String>())) }
     val searchedTitle by vm.searchedTitle.collectAsStateWithLifecycle()
+    val pinyinNotice by vm.pinyinNotice.collectAsStateWithLifecycle()
+    val pinyinUnresolved by vm.pinyinUnresolved.collectAsStateWithLifecycle()
     val matchMode by vm.matchMode.collectAsStateWithLifecycle()
     val sitesEmpty by vm.sitesEmpty.collectAsStateWithLifecycle()
     val vodMenu = rememberVodCardMenuState()
@@ -166,7 +172,12 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
     ) { topPad, _ ->
         if (results.isEmpty() && !running && sitesEmpty) {
             SearchEmptyBox(topPad = topPad, text = stringResource(R.string.search_no_site))
-        } else if (results.isEmpty() && !running) {
+        } else if (results.isEmpty() && !running && pinyinUnresolved == null) {
+            // ⚠️ `pinyinUnresolved == null` 这个条件是必须的:拼音解析失败时
+            // results 为空、running 也为 false,若不排除就会落进**空闲页**(历史/热搜),
+            // 于是"「qjyf」暂无法识别"的说明**根本不会渲染** —— 用户看到的是一堆
+            // 与本次输入无关的历史记录,完全不知道为什么没结果。
+            // 排除后它落到下面的结果区,由 SearchResultsContent 的空态显示原因。
             SearchIdleContent(
                 history = history,
                 hotSearch = hotSearch,
@@ -198,6 +209,9 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
                 settledCount = settledCount,
                 totalCount = totalCount,
                 searchableSources = searchableCount,
+                timeoutCount = timeoutCount,
+                pinyinNotice = pinyinNotice,
+                pinyinUnresolved = pinyinUnresolved,
                 onLoadMore = { vm.loadNextBatch() },
                 onSearchAll = { vm.searchAllRemaining() },
                 onOpenSourceSettings = { showSearchSettings = true },
@@ -270,6 +284,9 @@ private fun SearchResultsContent(
     settledCount: Int,
     totalCount: Int,
     searchableSources: Int,
+    timeoutCount: Int = 0,
+    pinyinNotice: String? = null,
+    pinyinUnresolved: String? = null,
     onLoadMore: () -> Unit,
     onSearchAll: () -> Unit,
     onOpenSourceSettings: () -> Unit,
@@ -282,18 +299,21 @@ private fun SearchResultsContent(
         // 2026-10-10:空态给出"终态构成"。Empty(无此片)与 Timeout/Failed(源没答话)含义不同,
         // 分开计数;超时占比高时补一句网络提示 —— 让"搜不到"可自助定性,不新增任何探测请求。
         val emptyCount = results.count { it.state == SearchViewModel.ResultState.Empty }
-        val timeoutCount = results.count { it.state == SearchViewModel.ResultState.Timeout }
+        // ⚠️ 刻意**不叫** timeoutCount:本函数有个同名入参(实时计数,给底部进度条用)。
+        // 这里数的是"已结算结果里的超时数",是另一个量 —— 同名会把入参遮蔽掉,
+        // 后来的人极易误读成"底部那个计数在这里被重算了"。
+        val timeoutSettled = results.count { it.state == SearchViewModel.ResultState.Timeout }
         val failedCount = results.count { it.state == SearchViewModel.ResultState.Failed }
-        val settled = emptyCount + timeoutCount + failedCount
+        val settled = emptyCount + timeoutSettled + failedCount
         val emptyLabel = if (emptyCount > 0) stringResource(R.string.search_stats_empty, emptyCount) else null
-        val timeoutLabel = if (timeoutCount > 0) stringResource(R.string.search_stats_timeout, timeoutCount) else null
+        val timeoutLabel = if (timeoutSettled > 0) stringResource(R.string.search_stats_timeout, timeoutSettled) else null
         val failedLabel = if (failedCount > 0) stringResource(R.string.search_stats_failed, failedCount) else null
         val buckets = listOfNotNull(emptyLabel, timeoutLabel, failedLabel).joinToString(" · ")
         val statsText = if (settled <= 0 || buckets.isEmpty()) {
             null
         } else {
             val line = stringResource(R.string.search_stats_line, settled, buckets)
-            if (timeoutCount >= 5 && timeoutCount * 5 >= settled * 4) {
+            if (timeoutSettled >= 5 && timeoutSettled * 5 >= settled * 4) {
                 line + "\n" + stringResource(R.string.search_stats_network_hint)
             } else {
                 line
@@ -301,17 +321,49 @@ private fun SearchResultsContent(
         }
         SearchEmptyBox(
             topPad = topPad,
-            text = if (matchMode == SearchSettings.MatchMode.Exact) {
-                stringResource(R.string.search_no_exact_result, searchedTitle)
-            } else {
-                stringResource(R.string.search_no_result, searchedTitle)
+            // 拼音查询解析不到本地索引时,空态必须**说清原因**:
+            // 否则用户敲 qjyf 看到"暂无搜索结果",只会以为这部片全库都没有 ——
+            // 而真相是"本地索引还没积累到它",先搜一次中文片名即可。
+            text = when {
+                // 参数是 val,智能转换直接可用(不需要 !!)
+                pinyinUnresolved != null ->
+                    stringResource(R.string.search_pinyin_no_index_title, pinyinUnresolved)
+                matchMode == SearchSettings.MatchMode.Exact ->
+                    stringResource(R.string.search_no_exact_result, searchedTitle)
+                else -> stringResource(R.string.search_no_result, searchedTitle)
             },
-            statsText = statsText,
+            statsText = if (pinyinUnresolved != null) {
+                stringResource(R.string.search_pinyin_no_index)
+            } else {
+                statsText
+            },
         )
         return
     }
     val railState = rememberLazyListState()
     val railResultState = rememberLazyListState()
+    Column(modifier = Modifier.fillMaxSize()) {
+    // 拼音查询解析成功时明示"已按某个中文片名搜索"(2026-10-11)。
+    // 为什么必要:用户敲 qjyf、结果里却全是《千钧一发》之类的中文名,不解释会以为搜错了。
+    // 放在结果区之上而不是塞进两个子组件 —— 两种布局(竖排/横排)都要显示,
+    // 包一层就只写一次,避免又出现"一个布局有、另一个没有"的不一致
+    // (同类问题本轮已在 timeoutCount 上踩过一次)。
+    pinyinNotice?.let { resolved ->
+        Text(
+            text = stringResource(R.string.search_pinyin_resolved, resolved),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, top = topPad + 8.dp),
+        )
+    }
+    // ⚠️ 提示条已经把内容顶到 top bar 之下 ⇒ 子组件**不能再加一次 topPad**,
+    // 否则拼音搜索时顶部会多出约 2×topPad 的空白(提示条一次 + 列表 contentPadding 一次)。
+    // 这正是"包一层"带来的连带账,必须显式还掉。
+    val childTopPad = if (pinyinNotice != null) 0.dp else topPad
     AnimatedContent(
         targetState = resultLayout,
         transitionSpec = {
@@ -333,7 +385,7 @@ private fun SearchResultsContent(
                 selectedSource = selectedSource,
                 onSelectSource = onSelectSource,
                 searchedTitle = searchedTitle,
-                topPad = topPad,
+                topPad = childTopPad,
                 railState = railState,
                 listState = railResultState,
                 hasMore = hasMore,
@@ -341,6 +393,7 @@ private fun SearchResultsContent(
                 settledCount = settledCount,
                 totalCount = totalCount,
                 searchableSources = searchableSources,
+                timeoutCount = timeoutCount,
                 onLoadMore = onLoadMore,
                 onSearchAll = onSearchAll,
                 onOpenSourceSettings = onOpenSourceSettings,
@@ -354,12 +407,13 @@ private fun SearchResultsContent(
                 selectedSource = selectedSource,
                 onSelectSource = onSelectSource,
                 listState = listState,
-                topPad = topPad,
+                topPad = childTopPad,
                 hasMore = hasMore,
                 searchedCount = searchedCount,
                 settledCount = settledCount,
                 totalCount = totalCount,
                 searchableSources = searchableSources,
+                timeoutCount = timeoutCount,
                 onLoadMore = onLoadMore,
                 onSearchAll = onSearchAll,
                 onOpenSourceSettings = onOpenSourceSettings,
@@ -367,5 +421,6 @@ private fun SearchResultsContent(
                 onCardLongClick = onCardLongClick,
             )
         }
+    }
     }
 }

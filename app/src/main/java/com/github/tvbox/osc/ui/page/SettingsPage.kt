@@ -64,6 +64,7 @@ import com.github.tvbox.osc.util.HawkConfig
 import com.github.tvbox.osc.util.MusicSettings
 import com.github.tvbox.osc.util.OkGoHelper
 import com.github.tvbox.osc.util.SourceHealthMemory
+import com.github.tvbox.osc.util.TitleIndexMemory
 import com.github.tvbox.osc.util.KV
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -154,6 +155,10 @@ class SettingsViewModel : ViewModel() {
         viewModelScope.launch {
             val text = withContext(Dispatchers.IO) {
                 FileUtils.clearCache()
+                FileUtils.clearSpiderCacheFiles()
+                // 拼音索引也是"可重建的缓存"(2026-10-11):它由搜索/历史/收藏在使用中重新积累。
+                // 清缓存却留着索引会让用户困惑 —— 他期望"清干净"。
+                TitleIndexMemory.clear()
                 FileUtils.formatCacheSize(FileUtils.getCacheSize())
             }
             applyCacheSizeText(text)

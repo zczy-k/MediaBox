@@ -443,6 +443,34 @@ public class FileUtils {
         clearJsModuleCache();
     }
 
+    /** 爬虫 jar 目录保留上限:文件名 = MD5(jarUrl),同 URL 不累积,但订阅更替会只增不减。 */
+    private static final int CSP_JAR_MAX_KEEP = 20;
+
+    /** 按修改时间保留最近的 jar,其余删除(启动后台 + 手动清理共用)。 */
+    public static void pruneSpiderJarCache() {
+        pruneSpiderJarCache(CSP_JAR_MAX_KEEP);
+    }
+
+    static void pruneSpiderJarCache(int maxKeep) {
+        if (maxKeep < 1) return;
+        try {
+            File dir = new File(getFilePath() + "/csp/");
+            File[] files = dir.listFiles();
+            if (files == null || files.length <= maxKeep) return;
+            Arrays.sort(files, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
+            for (int i = maxKeep; i < files.length; i++) {
+                try {
+                    if (files[i].isFile()) files[i].delete();
+                } catch (Exception e) {
+                    LOG.e("FileUtils", e);
+                }
+            }
+            LOG.i("clearCache: pruned csp jars keep=" + maxKeep + " total=" + files.length);
+        } catch (Exception e) {
+            LOG.e("FileUtils", e);
+        }
+    }
+
     private static void clearJsModuleCache() {
         File externalCacheDir = new File(getExternalCachePath());
         File[] files = externalCacheDir.listFiles();

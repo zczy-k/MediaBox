@@ -172,6 +172,12 @@
          原先只有一个"已搜索 x/y",数字在批次启动时就 +N,用户会以为"搜完了这么多",
          实际其中几十个还转着圈 —— 与站点栏里几十个源一起闪的观感一致,像卡死。 -->
     <string name="search_progress_settled">已搜 %1$d/%2$d 源</string>
+    <string name="search_progress_timeout">%1$d 源超时</string>
+    <!-- 2026-10-11:拼音搜索。用户敲拼音时明示"已按某个中文片名搜索" ——
+         否则结果里全是别的名字会让人以为搜错了。 -->
+    <string name="search_pinyin_resolved">已按「%1$s」搜索</string>
+    <string name="search_pinyin_no_index">本地还没有这个拼音的记录，先搜一次中文片名即可建立</string>
+    <string name="search_pinyin_no_index_title">「%1$s」暂无法识别</string>
     <string name="search_source_failed">该来源请求失败</string>
     <string name="search_source_timeout">该来源超时未响应</string>
     <string name="search_card_unopenable">该来源无法直接打开,请换个来源试试</string>
@@ -314,6 +320,7 @@
     <string name="collect_clear_message">将删除全部收藏，此操作不可恢复</string>
     <string name="collect_uncollect_message">取消收藏「%1$s」？</string>
     <string name="collect_delete_selected_message">确定取消收藏选中的 %1$d 部影片吗？</string>
+    <string name="collect_many_hint">收藏较多，清理不看的可提升加载速度</string>
 
     <!-- 主题:取色 -->
     <string name="music_episodes">音乐选集</string>
@@ -404,6 +411,9 @@
     <string name="detail_order_desc">倒序</string>
     <string name="detail_switch_source">换源</string>
     <string name="detail_finding_source">寻找片源中…</string>
+    <string name="detail_cross_hint">%1$s 上次观看实测为 %2$s</string>
+    <string name="detail_cross_hint_go">去看看</string>
+    <string name="detail_cross_hint_dismiss">关掉</string>
     <string name="detail_recommend">相关推荐</string>
 
     <!-- 历史 -->

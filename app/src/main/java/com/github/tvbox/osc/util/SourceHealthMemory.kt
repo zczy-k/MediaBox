@@ -206,24 +206,36 @@ object SourceHealthMemory {
     }
 
     /**
-     * 源**给出了答案**(搜索有命中或无命中)⇒ 连续超时计数归零(规则 2 的重置入口)。
+     * 源**给出了答案**(搜索有命中或无命中)⇒ 连续超时计数归零(规则 2 的重置入口),
+     * 同时**采样本次耗时**(2026-10-11,供"慢源降权"用)。
      *
      * <p>不做网络/开关之外的任何判断:能走到这里就说明该源这一轮答话了,这就是"它还活着"的证据。
      * 与 [recordFail] 一样**合并落盘**,不为一次成功单独写盘。
+     *
+     * @param elapsedMs 本次答话耗时(ms);≤0 表示未知(例如重试轮无计时),不采样。
      */
     @JvmStatic
-    fun recordAnswered(sourceKey: String?) {
+    @JvmOverloads
+    fun recordAnswered(sourceKey: String?, elapsedMs: Long = -1L) {
         if (!isEnabled()) return
         val key = sourceKey?.trim().orEmpty()
         if (key.isEmpty()) return
+        val t = now()
         synchronized(lock) {
             val bucket = load()
-            val before = bucket.health[key] ?: return
-            val after = SourceHealthPolicy.recordAnswered(before)
-            if (after === before) return
+            // ⚠️ 此前是 `?: return` —— 那会让**从未失败过**的源永远不被采样,
+            // 而"慢但一直答话"的源恰恰最可能从没失败过(它不超时、不报错)。
+            // 结果是耗时学习只覆盖了已经出过问题的源,治不到真正的病根。
+            // 现在缺条目时按空状态建立,让采样对所有源都生效。
+            val before = bucket.health[key] ?: SourceHealthState()
+            val after = SourceHealthPolicy.recordAnswered(before, t, elapsedMs)
+            if (after == before) return
             bucket.health[key] = after
             dirty = true
-            LOG.i("echo-srcban answered source=" + key + " streak=0")
+            LOG.i(
+                "echo-srcban answered source=" + key + " streak=0" +
+                    " elapsed=" + (if (elapsedMs > 0) elapsedMs.toString() else "?")
+            )
         }
         scheduleFlush()
     }
@@ -427,6 +439,9 @@ object SourceHealthMemory {
                         // optInt 对缺失键返回 0 ⇒ 加了字段的旧台账读出来是"无连续超时",向后兼容,
                         // 不需要任何迁移(与 banCount 当初加进来时同款)
                         timeoutStreak = obj.optInt("timeoutStreak"),
+                        // 耗时采样:旧台账无此键 ⇒ optLong 返回 0 = "未知",不参与降权。同样零迁移。
+                        lastElapsedMs = obj.optLong("le"),
+                        lastElapsedAt = obj.optLong("lea"),
                     )
                 }
             }
@@ -457,8 +472,10 @@ object SourceHealthMemory {
         for ((key, state) in bucket.health) {
             // 全零条目不落盘(台账瘦身)。⚠️ timeoutStreak 也要参与判空:连续超时计数非零时
             // 该源必须被持久化,否则重启后计数丢失、要重新超时两次才封 —— 白白多等一轮。
+            // ⚠️ 耗时采样(le)同样参与判空:只采样了耗时、其余全零的条目必须落盘,
+            // 否则"慢源降权"在每次重启后归零,永远学不到东西。
             if (state.fails.isEmpty() && state.banCount == 0 && state.bannedUntil == 0L &&
-                !state.manualLocked && state.timeoutStreak == 0
+                !state.manualLocked && state.timeoutStreak == 0 && state.lastElapsedMs <= 0
             ) {
                 continue
             }
@@ -472,6 +489,12 @@ object SourceHealthMemory {
             obj.put("until", state.bannedUntil)
             obj.put("locked", state.manualLocked)
             obj.put("timeoutStreak", state.timeoutStreak)
+            // 耗时采样(2026-10-11)。键名取短:台账是每个源一条、逐条落盘的 JSON,
+            // 字段名长度会乘以源数量(数百源)。
+            if (state.lastElapsedMs > 0) {
+                obj.put("le", state.lastElapsedMs)
+                obj.put("lea", state.lastElapsedAt)
+            }
             healthJson.put(key, obj)
         }
         val coverageJson = JSONObject()

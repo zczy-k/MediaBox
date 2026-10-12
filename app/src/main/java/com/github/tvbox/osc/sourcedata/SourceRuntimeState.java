@@ -38,4 +38,19 @@ public final class SourceRuntimeState {
         }
         extendCache.clear();
     }
+
+    /**
+     * extend 是否**已是热的**(不需要再为它花一次网络往返)。
+     *
+     * <p>给"迷你只读通道"的准入过滤用(见 `player/MiniProbeGate`):type 4 的 extend 若是冷缓存,
+     * 光把它解析出来就要一次请求 + 可能阻塞在 EXTEND_POOL 上 —— 这种源直接不探更划算。
+     *
+     * <p>口径与 {@code SourceHelper.getFixUrl} 完全对齐:空 / 非 http 的 extend 会被原样返回、
+     * 根本不联网,因此都算"热"。
+     */
+    public static boolean isExtendWarm(String extend) {
+        if (extend == null || extend.isEmpty()) return true;
+        if (!extend.startsWith("http")) return true;
+        return extendCache.containsKey(com.github.tvbox.osc.util.MD5.string2MD5(extend));
+    }
 }

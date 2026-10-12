@@ -81,6 +81,83 @@ object VideoQualityMemory {
         }
     }
 
+    /**
+     * 同一 站点|片 下所有线路中**实测最清晰**的一条(跨源提示用,零网络)。
+     *
+     * <p>只认 [VideoQualityPolicy.Confidence.MEASURED] 的实测值;键前缀精确到 `站点|片id|`,
+     * 不同站点/片不会串。返回的 flag 为原线路 flag,便于调用方定位。
+     */
+    @JvmStatic
+    fun lookupBest(siteKey: String, vodId: String): VideoQualityPolicy.Variant? {
+        if (siteKey.isEmpty() || vodId.isEmpty()) return null
+        return try {
+            val prefix = keyOf(siteKey, vodId, "")
+            val all = loadAll()
+            var best: VideoQualityPolicy.Variant? = null
+            val keys = all.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                if (!key.startsWith(prefix)) continue
+                val v = decode(all.optString(key)) ?: continue
+                if (v.confidence != VideoQualityPolicy.Confidence.MEASURED) continue
+                val flag = key.substring(prefix.length)
+                val candidate = v.copy(flag = flag)
+                if (best == null || VideoQualityPolicy.sharpness(candidate) > VideoQualityPolicy.sharpness(best)) {
+                    best = candidate
+                }
+            }
+            best
+        } catch (t: Throwable) {
+            null
+        }
+    }
+
+    /**
+     * 批量取多个 `站点|片` 的最佳实测值,**只解析一次记忆表**。
+     *
+     * <p>为什么需要它:[lookupBest] 每次都会 `loadAll()` 全表解析;跨源提示要在候选列表
+     * (可达几十条)上逐源查询,逐个调用就是几十次 JSON 解析。这里一次解析、多键复用。
+     *
+     * @param pairs 站点 key 与片 id 的组合;重复键自动去重
+     * @return 与入参顺序无关的 map:键为 `站点|片`,值为该片最佳实测(无实测则不含该键)
+     */
+    @JvmStatic
+    fun lookupBestBatch(pairs: List<Pair<String, String>>): Map<String, VideoQualityPolicy.Variant> {
+        if (pairs.isEmpty()) return emptyMap()
+        return try {
+            val all = loadAll()
+            if (all.length() == 0) return emptyMap()
+            val out = HashMap<String, VideoQualityPolicy.Variant>()
+            val keys = all.keys()
+            val wanted = HashMap<String, String>() // 前缀 -> 站点|片
+            pairs.forEach { (site, vod) ->
+                if (site.isNotEmpty() && vod.isNotEmpty()) {
+                    wanted[keyOf(site, vod, "")] = "$site|$vod"
+                }
+            }
+            while (keys.hasNext()) {
+                val key = keys.next()
+                // 前缀匹配:键形如 站点|片id|flag
+                val cut = key.lastIndexOf('|')
+                if (cut <= 0) continue
+                val prefix = key.substring(0, cut + 1)
+                if (!wanted.containsKey(prefix)) continue
+                val v = decode(all.optString(key)) ?: continue
+                if (v.confidence != VideoQualityPolicy.Confidence.MEASURED) continue
+                val flag = key.substring(prefix.length)
+                val candidate = v.copy(flag = flag)
+                val groupKey = wanted[prefix]!!
+                val prev = out[groupKey]
+                if (prev == null || VideoQualityPolicy.sharpness(candidate) > VideoQualityPolicy.sharpness(prev)) {
+                    out[groupKey] = candidate
+                }
+            }
+            out
+        } catch (t: Throwable) {
+            emptyMap()
+        }
+    }
+
     private fun encode(v: VideoQualityPolicy.Variant, at: Long): String =
         "${v.width},${v.height},${v.bitrate},${v.confidence.ordinal},$at"
 

@@ -228,6 +228,7 @@ internal fun RailResults(
     settledCount: Int,
     totalCount: Int,
     searchableSources: Int,
+    timeoutCount: Int = 0,
     onLoadMore: () -> Unit,
     onSearchAll: () -> Unit,
     onOpenSourceSettings: () -> Unit,
@@ -290,6 +291,10 @@ internal fun RailResults(
                         year = v.year,
                         area = v.area?.trim().orEmpty(),
                         type = v.type?.trim().orEmpty(),
+                        // 有码/无码/中字这类**版本标注只存在 note 里**,标题完全相同 ——
+                        // 不参与身份判定就会把两个内容不同的版本并成一张卡
+                        // (真机事故:一张缩略图 + "2 个源",而另一个版本点不到)。
+                        noteKey = SearchDedupPolicy.normalizeNote(v.note),
                     )
                 }
                 .map { g ->
@@ -372,6 +377,7 @@ internal fun RailResults(
                 settledCount = settledCount,
                 totalCount = totalCount,
                 searchableSources = searchableSources,
+                timeoutCount = timeoutCount,
                 onLoadMore = onLoadMore,
                 onSearchAll = onSearchAll,
                 onOpenSourceSettings = onOpenSourceSettings,
@@ -430,6 +436,10 @@ internal fun RailResults(
             settledCount = settledCount,
             totalCount = totalCount,
             searchableSources = searchableSources,
+            // ⚠️ 必须与横排视图(L369)一致传 timeoutCount。此前这里漏传 ⇒ 同一个常驻底栏
+            // 在"横排"下会显示"· N 个源超时"、切到"竖排"却消失 —— 用户看到的是
+            // "换个布局超时提示就没了",而超时率 75~83% 恰恰是最该被看见的信息。
+            timeoutCount = timeoutCount,
             onLoadMore = onLoadMore,
             onSearchAll = onSearchAll,
             onOpenSourceSettings = onOpenSourceSettings,
@@ -621,6 +631,8 @@ internal fun SearchLoadMoreFooter(
     settledCount: Int,
     totalCount: Int,
     searchableSources: Int = 0,
+    /** 本轮已超时的源数;>0 且搜索中时在进度后补一句,把"源慢"与"搜索坏了"分开 */
+    timeoutCount: Int = 0,
     onLoadMore: () -> Unit,
     onSearchAll: (() -> Unit)? = null,
     onOpenSourceSettings: (() -> Unit)? = null,
@@ -640,8 +652,15 @@ internal fun SearchLoadMoreFooter(
             Text(
                 text = when {
                     !hasMore -> stringResource(R.string.search_all_sources_done, totalCount)
-                    // 搜索中:数字与站点栏里不再转圈的源数一致
-                    running -> stringResource(R.string.search_progress_settled, settledCount, totalCount)
+                    // 搜索中:数字与站点栏里不再转圈的源数一致;有超时就补一句说明是源慢
+                    running -> {
+                        val base = stringResource(R.string.search_progress_settled, settledCount, totalCount)
+                        if (timeoutCount > 0) {
+                            base + " · " + stringResource(R.string.search_progress_timeout, timeoutCount)
+                        } else {
+                            base
+                        }
+                    }
                     else -> stringResource(R.string.search_progress, searchedCount, totalCount)
                 },
                 style = MaterialTheme.typography.bodySmall,

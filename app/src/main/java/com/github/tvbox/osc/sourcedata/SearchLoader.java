@@ -15,8 +15,6 @@ import com.lzy.okgo.callback.AbsCallback;
 import com.lzy.okgo.model.Response;
 import com.lzy.okgo.request.GetRequest;
 
-import java.io.UnsupportedEncodingException;
-import java.net.URLEncoder;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -154,16 +152,19 @@ final class SearchLoader {
             public void run() {
         String extend=sourceBean.getExt();
         extend=SourceHelper.getFixUrlDirect(extendCache, gson, extend);
-        String queryWd = searchWd;
-        try {
-            queryWd=URLEncoder.encode(queryWd, "UTF-8");
-        } catch (UnsupportedEncodingException e) {
-            LOG.e("SourceViewModel", e);
-        }
-
+        // ⚠️ **不要**在这里手工 URLEncoder.encode。
+        //
+        // 原实现是 `queryWd = URLEncoder.encode(queryWd, "UTF-8")` 之后再 `.params("wd", queryWd)`。
+        // 而 OkGo 的 `params()` 本身就负责 URL 编码(这正是它存在的意义)⇒ 二次编码:
+        // 搜「三体」会先变成 `%E4%B8%89%E4%BD%93`,再被编码成 `%25E4%25B8%2589%25E4%25BD%2593`,
+        // 源站收到的是字面量 "%E4%B8%89%E4%BD%93" 而不是「三体」—— 中文关键词必然搜不到。
+        //
+        // 判据:同为 `wd=` 的 type 0/1 分支(searchFromApi)传的是**原文**,三条路径用同一个
+        // `params()` 机制却只有这一条预编码 —— 二者必有一错,而「params 会编码」是确定的事实,
+        // 所以错的是这里的预编码。改回原文即与其它两条路径口径一致。
         GetRequest<String> request = SourceHelper.siteGet(sourceBean)
                 .tag(requestTag)
-                .params("wd", queryWd)
+                .params("wd", searchWd)
                 .params("ac" ,"detail")
                 .params("quick" ,"false");
         // 当 extend 不为空且非空字符串时添加参数

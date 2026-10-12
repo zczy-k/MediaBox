@@ -31,6 +31,15 @@ class DiagLogPrefixTest {
         "echo-line-heights", // 线路画质读取侧
         "echo-unavailable",  // 无资源标记
         "echo-quality",      // 画质优选决策 + 写入侧键
+        // ↓ 2026-10-11:跨源画质提示 + 迷你只读探测(P1)。
+        //   这三个前缀此前**只登记进了 LOG、没进本表** —— 于是本测试这道闸门对它们形同虚设:
+        //   将来谁把 LOG 里的登记删掉,测试照样是绿的,而真机上 xhint-* 会静默消失。
+        //   本表存在的意义就是守住这类前缀,新前缀必须同时进两处。
+        "xhint",             // 闸门跳过原因(类型/封禁/冷却/额度/预算)
+        "xhint-skip",        // 同上(闸门 Decision 的 reason 自带前缀)
+        "xhint-probe",       // 探测结果(no-detail / no-flag / no-url / no-size / ok)
+        // ↓ 2026-10-11:拼音搜索(本地标题索引积累与解析)
+        "echo-pinyin",       // 索引写入/解析结果
     )
 
     @Test

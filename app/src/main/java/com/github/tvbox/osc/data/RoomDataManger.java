@@ -15,6 +15,7 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.reflect.TypeToken;
 
 import com.github.tvbox.osc.util.KV;
+import com.github.tvbox.osc.util.TitleIndexMemory;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -76,6 +77,11 @@ public class RoomDataManger {
         record.updateTime = System.currentTimeMillis();
         record.dataJson = getVodInfoGson().toJson(vodInfo);
         dao.insert(record);
+        // 观看历史的片名回写**本地拼音索引**(2026-10-11):用户真正看过/在看的片名,
+        // 是"他关心什么"的最强证据,理应能被拼音搜到。索引只在有汉字时才建条目,
+        // 纯英文片名会被内部跳过(用户直接敲英文即可命中)。
+        // 放在**无痕拦截之后** —— 无痕模式下连历史都不写,更不该留索引痕迹。
+        TitleIndexMemory.record(java.util.Collections.singletonList(vodInfo.name));
     }
 
     public static VodInfo getVodInfo(String sourceKey, String vodId) {
@@ -151,6 +157,10 @@ public class RoomDataManger {
         record.name = vodInfo.name;
         record.pic = vodInfo.pic;
         AppDataManager.get().getVodCollectDao().insert(record);
+        // 收藏的片名同样回写本地拼音索引(2026-10-11):收藏是用户**主动表达**的兴趣,
+        // 优先级不低于搜索命中。收藏不受无痕模式影响(见 insertVodRecord 的注释),
+        // 所以这里也不必判无痕。
+        TitleIndexMemory.record(java.util.Collections.singletonList(vodInfo.name));
     }
 
     public static void deleteVodCollect(int id) {

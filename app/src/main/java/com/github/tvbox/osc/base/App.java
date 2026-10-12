@@ -84,6 +84,8 @@ public class App extends Application {
         new Thread(() -> {
             FileUtils.purgeExoCacheIfPending();
             FileUtils.cleanPlayerCache();
+            // 爬虫 jar 只增不减(文件名 = MD5(url)):保留最近 20 个,封住上界。
+            FileUtils.pruneSpiderJarCache();
             // 字幕落盘目录(内部 cacheDir/zimu/ 与导入副本 subtitle_*)是全 App **唯一无上限**的缓存:
             // 文件名取服务端下发的名字、不会互相覆盖,原本没有任何删除逻辑 ⇒ "看片越多占用越大"。
             // 按 LRU 裁剪到 SubtitleCacheJanitor.MAX_FILES 条,封住上界。

@@ -3,6 +3,7 @@ package com.github.tvbox.osc.ui.components
 import android.content.Context
 import coil3.ImageLoader
 import coil3.SingletonImageLoader
+import coil3.request.CachePolicy
 import coil3.request.crossfade
 import com.github.tvbox.osc.util.LOG
 import com.google.gson.Gson
@@ -21,11 +22,16 @@ object VodImages {
 
     fun init(context: Context) {
         picCacheDir = File(context.cacheDir, "pic_http_cache")
+        // 海报只留一层磁盘缓存(OkHttp 250MB):Coil 自带的磁盘缓存默认会另存一份,
+        // 此处全局禁用它的磁盘写读,网络层统一走 picClient 的 OkHttp 缓存。
+        // 用 CachePolicy(请求级默认策略)而非 Builder.diskCache(null):前者是 Coil 3 公开稳定的请求 API,
+        // 后者依赖 Builder 具体签名,版本差异易编译失败。内存缓存保留,划屏流畅度不受影响。
         SingletonImageLoader.setSafe { appContext ->
             ImageLoader.Builder(appContext)
                 .components {
                     add(com.github.tvbox.osc.util.CoilBridge.okhttpFetcher { picClient() })
                 }
+                .diskCachePolicy(CachePolicy.DISABLED)
                 .crossfade(true)
                 .build()
         }

@@ -72,9 +72,7 @@ chaquopy {
             install("requests")
             // jsonpath 0.54 只有 py2 源码包、无 wheel,本地移植后以 wheel 安装(见 wheels/README.md)
             install(file("wheels/jsonpath-0.54-py3-none-any.whl").absolutePath)
-            install("cachetools")
             install("pycryptodome")
-            install("beautifulsoup4")
         }
     }
     sourceSets {

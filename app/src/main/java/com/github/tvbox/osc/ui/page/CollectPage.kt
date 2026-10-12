@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -83,6 +84,11 @@ import org.greenrobot.eventbus.ThreadMode
 class CollectViewModel : ViewModel() {
     val loading = MutableStateFlow(true)
     val items = MutableStateFlow<List<VodCollect>>(emptyList())
+
+    companion object {
+        /** 收藏过多弱提示阈值:只提示不删(删用户收藏是红线)。 */
+        const val COLLECT_MANY_HINT_THRESHOLD = 500
+    }
 
     /** 收藏页栅格列数(设置页「收藏页布局」;默认 3) */
     val columns = MutableStateFlow(KV.get(HawkConfig.COLLECT_COLUMNS, 3))
@@ -316,6 +322,17 @@ fun CollectPage(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             verticalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
+                            // 收藏无上限(用户亲手点的,不自动删):条数过多只弱提示,不拦不删
+                            if (list.size > CollectViewModel.COLLECT_MANY_HINT_THRESHOLD) {
+                                item(span = { GridItemSpan(maxLineSpan) }) {
+                                    Text(
+                                        text = stringResource(R.string.collect_many_hint),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(bottom = 4.dp),
+                                    )
+                                }
+                            }
                             items(list, key = { it.id }) { item ->
                                 val toggle = {
                                     selected = if (item.id in selected) selected - item.id else selected + item.id

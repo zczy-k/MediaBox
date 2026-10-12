@@ -401,6 +401,74 @@ class SourceHealthPolicyTest {
         assertFalse(SourceHealthPolicy.shouldDefer(f, t0))
     }
 
+    // ---------- 慢源降权(2026-10-11:能答话但很慢也要让位) ----------
+
+    @Test
+    fun shouldDefer_trueForSlowAnswerWithinWindow() {
+        // 真机背景:超时率 75~83%,而中间那批"5~7s 才答话"的源此前完全没被记录,
+        // 却每轮都占着首轮并发额度 —— 这正是"首条结果 ≈8s"的成因之一。
+        val s = SourceHealthPolicy.recordAnswered(
+            SourceHealthState(), now = t0, elapsedMs = SourceHealthPolicy.SLOW_ANSWER_MS,
+        )
+        assertEquals(SourceHealthPolicy.SLOW_ANSWER_MS, s.lastElapsedMs)
+        assertTrue(SourceHealthPolicy.shouldDefer(s, t0))
+        assertTrue(SourceHealthPolicy.shouldDefer(s, t0 + SourceHealthPolicy.DEFER_MS - 1))
+        // 过了窗口恢复正常:速度会变,降权只覆盖"同一次使用会话"
+        assertFalse(SourceHealthPolicy.shouldDefer(s, t0 + SourceHealthPolicy.DEFER_MS))
+    }
+
+    @Test
+    fun shouldDefer_falseForFastAnswer() {
+        val s = SourceHealthPolicy.recordAnswered(SourceHealthState(), now = t0, elapsedMs = 1_200L)
+        assertFalse("快源绝不能被降权", SourceHealthPolicy.shouldDefer(s, t0))
+    }
+
+    @Test
+    fun shouldDefer_falseForSlowAnswerJustBelowThreshold() {
+        val s = SourceHealthPolicy.recordAnswered(
+            SourceHealthState(), now = t0, elapsedMs = SourceHealthPolicy.SLOW_ANSWER_MS - 1,
+        )
+        assertFalse(SourceHealthPolicy.shouldDefer(s, t0))
+    }
+
+    @Test
+    fun shouldDefer_ignoresUnknownElapsed() {
+        // elapsedMs ≤ 0 = 未知(例如重试轮无计时)⇒ 不采样、不降权
+        val s = SourceHealthPolicy.recordAnswered(SourceHealthState(), now = t0, elapsedMs = -1L)
+        assertEquals(0L, s.lastElapsedMs)
+        assertFalse(SourceHealthPolicy.shouldDefer(s, t0))
+    }
+
+    @Test
+    fun shouldDefer_slowSampleStillResetsStreak() {
+        // 采样耗时不能把"归零连续超时"这件事吞掉 —— 两件事必须同时生效
+        var s = SourceHealthPolicy.recordFail(
+            SourceHealthState(), SourceFailKind.SEARCH_TIMEOUT, SourceHealthPolicy.contentKey("电影A"), t0,
+            suppressTimeoutBan = true,
+        )
+        assertEquals(1, s.timeoutStreak)
+        s = SourceHealthPolicy.recordAnswered(s, now = t0 + 1, elapsedMs = 900L)
+        assertEquals(0, s.timeoutStreak)
+        assertEquals(900L, s.lastElapsedMs)
+    }
+
+    @Test
+    fun shouldDefer_slowAnswerProtectedFromClockRollback() {
+        // 用户改时间(采样时刻在未来)不能让源**永久**降权
+        val s = SourceHealthPolicy.recordAnswered(
+            SourceHealthState(), now = t0 + hour, elapsedMs = SourceHealthPolicy.SLOW_ANSWER_MS,
+        )
+        assertFalse(SourceHealthPolicy.shouldDefer(s, t0))
+    }
+
+    @Test
+    fun shouldDefer_slowSampleIsMutuallyExclusiveWithBlocked() {
+        val blocked = SourceHealthPolicy.recordAnswered(
+            SourceHealthState(manualLocked = true), now = t0, elapsedMs = SourceHealthPolicy.SLOW_ANSWER_MS,
+        )
+        assertFalse(SourceHealthPolicy.shouldDefer(blocked, t0))
+    }
+
     // ---------- 内容键归一化 ----------
 
     @Test

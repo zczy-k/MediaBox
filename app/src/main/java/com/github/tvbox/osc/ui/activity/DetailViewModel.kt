@@ -21,8 +21,11 @@ import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.bean.VodInfo
 import com.github.tvbox.osc.data.RoomDataManger
 import com.github.tvbox.osc.event.RefreshEvent
+import com.github.tvbox.osc.player.CrossSourceHintPolicy
 import com.github.tvbox.osc.player.DeviceCapability
 import com.github.tvbox.osc.player.LineQualitySelector
+import com.github.tvbox.osc.player.MiniProbeBudget
+import com.github.tvbox.osc.player.MiniProbeGate
 import com.github.tvbox.osc.player.PlaybackSession
 import com.github.tvbox.osc.player.QualityGovernor
 import com.github.tvbox.osc.player.VideoQualityMemory
@@ -35,10 +38,13 @@ import com.github.tvbox.osc.util.LOG
 import com.github.tvbox.osc.util.OkGoHelper
 import com.github.tvbox.osc.util.SearchHelper
 import com.github.tvbox.osc.util.SourceHealthFilter
+import com.github.tvbox.osc.util.SourceHealthMemory
 import com.github.tvbox.osc.util.TrailerPolicy
 import com.github.tvbox.osc.util.SourceIdentityMask
 import com.github.tvbox.osc.util.TitleMatcher
 import com.github.tvbox.osc.sourcedata.SourceViewModel
+import com.github.tvbox.osc.sourcedata.SourceRuntimeState
+import com.github.tvbox.osc.sourcedata.MiniProbeReader
 import com.github.tvbox.osc.sourcedata.observeAsFlow
 import com.lzy.okgo.OkGo
 import kotlinx.coroutines.CompletableDeferred
@@ -52,6 +58,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -173,6 +180,88 @@ class DetailViewModel : ViewModel() {
      * 反复扫既浪费又会触发源站风控。换片自然失效(键不同)。
      */
     private var sourceSweepDoneKey = ""
+
+    /** 当前片当前源是否已收敛(sweep 已出 verdict、不会再自动升档)。跨源提示只在收敛后出场。 */
+    private var sourceConverged = false
+
+    /** 跨源提示的一次性闩(键 = 站点|片id):用户关掉或点过之后,本会话同片不再弹。 */
+    private var crossHintDismissedKey = ""
+
+    /**
+     * 跨源提示:对端有实测记忆、且明显优于当前源时给出的一行。
+     *
+     * <p>只存 [sourceKey]/[video] 凭据与实测 S;标签由 UI 按下标匿名生成,绝不带站名。
+     */
+    data class CrossSourceHint(val sourceKey: String, val label: String)
+
+    val crossSourceHint = MutableStateFlow<CrossSourceHint?>(null)
+
+    /**
+     * 用户点"去看看"或"关掉"时调用:**本片**本会话不再提示。
+     *
+     * <p>闩按片(searchTitle)而非按源:换源后新源就是当前源,若闩只绑源 key,刚换过去的片
+     * 会被旧源的记忆"弹回来",形成抖动。按片闩掉后整部片本会话安静。
+     */
+    fun dismissCrossSourceHint() {
+        crossHintDismissedKey = searchTitle.ifEmpty { vodName }.ifEmpty { vodId }
+        crossSourceHint.value = null
+    }
+
+    /**
+     * 重算跨源提示。纯本地查询(记忆表 + 候选列表),零网络、零线程池。
+     *
+     * <p>仅在源内已收敛([sourceConverged])后才可能出场;正在换源链上或本片已闩掉则清空。
+     */
+    private fun refreshCrossSourceHint() {
+        val info = vodInfo
+        val titleKey = searchTitle.ifEmpty { vodName }.ifEmpty { vodId }
+        if (info == null || !sourceConverged || crossHintDismissedKey == titleKey ||
+            fallbackActive || fallbackLoadingCandidate
+        ) {
+            crossSourceHint.value = null
+            return
+        }
+        val mode = DeviceCapability.QualityMode.current()
+        val qualityFirst = mode == DeviceCapability.QualityMode.QUALITY_FIRST
+        val currentFlag = info.playFlag.orEmpty()
+        val current = VideoQualityMemory.lookupAll(sourceKey, vodId, listOf(currentFlag)).firstOrNull()
+        // 在候选里找"实测最清晰"的一条;候选按 sourceKey 逐个查询,保持零网络
+        // 候选可达几十条:一次批量查询(单次全表解析),避免逐源 lookupBest 的 N 次 JSON 解析
+        //
+        // ⚠️ 过滤口径必须与 publishSourceChips **完全一致**(排除当前源 + 已用过的源)。
+        // 否则会出现"提示命中了已用源"的情形:那个源不在 chips 里 ⇒ UI 的
+        // `hintIndex >= 0` 判定为假 ⇒ 提示渲染不出来;而 crossSourceHint 又是非 null ⇒
+        // 调用点 `if (crossSourceHint.value == null) runMiniProbe...` 永远不成立 ⇒
+        // **迷你探测被一个看不见的提示彻底堵死**。
+        val candidates = synchronized(fallbackCandidates) { fallbackCandidates.toList() }
+            .mapNotNull { video ->
+                val k = video.sourceKey.orEmpty()
+                val id = video.id.orEmpty()
+                if (k.isEmpty() || id.isEmpty()) null else k to id
+            }
+            .filter { (k, _) -> k != sourceKey && !usedSourceKeys.contains(k) }
+            .distinct()
+        val bestByTitle = VideoQualityMemory.lookupBestBatch(candidates)
+        var bestHint: CrossSourceHint? = null
+        var bestS = -1
+        var bestVariant: VideoQualityPolicy.Variant? = null
+        candidates.forEach { (candKey, candId) ->
+            val cand = bestByTitle["$candKey|$candId"] ?: return@forEach
+            val s = VideoQualityPolicy.sharpness(cand)
+            if (s > bestS) {
+                bestS = s
+                bestVariant = cand
+                bestHint = CrossSourceHint(candKey, LineLabelPolicy.qualitySuffix(cand.height))
+            }
+        }
+        val show = CrossSourceHintPolicy.shouldHint(
+            current = current,
+            candidate = bestVariant,
+            qualityFirst = qualityFirst,
+            sourceConverged = true,
+        )
+        crossSourceHint.value = if (show) bestHint else null
+    }
 
     private var vodName = ""
     private var vodPicture = ""
@@ -831,8 +920,20 @@ class DetailViewModel : ViewModel() {
                     " target=" + (best?.flag ?: "none") +
                     " verdict=" + (reject ?: "switch")
             )
-            if (best == null || reject != null) return@launch
-            if (best.flag.isEmpty() || best.flag == currentFlag) return@launch
+            // 源内收敛:verdict 非 switch ⇒ 本源不会再自动升档 ⇒ 允许跨源提示出场
+            if (best == null || reject != null) {
+                sourceConverged = true
+                refreshCrossSourceHint()
+                // 提示要有数据才出得来:对端没记忆时按闸门去探一次(默认不发请求,见其 KDoc)
+                if (crossSourceHint.value == null) runMiniProbeForCrossSource()
+                return@launch
+            }
+            if (best.flag.isEmpty() || best.flag == currentFlag) {
+                sourceConverged = true
+                refreshCrossSourceHint()
+                if (crossSourceHint.value == null) runMiniProbeForCrossSource()
+                return@launch
+            }
             switchLineForQuality(best.flag)
         }
     }
@@ -908,6 +1009,13 @@ class DetailViewModel : ViewModel() {
         qualityProbeJob?.cancel()
         qualityProbeJob = null
         lineQualityHeights.value = emptyMap()
+        // 换片/换源:源内收敛结论与跨源提示都属于上一个会话,必须清零,否则会串到新片
+        sourceConverged = false
+        crossSourceHint.value = null
+        miniProbeJob?.cancel()
+        miniProbeJob = null
+        miniProbeDoneTitles.clear()
+        miniProbeNegativeAt.clear()
         collected.value = RoomDataManger.isVodCollect(sourceKey, vodId)
         val sourceBean = ApiConfig.get().getSource(sourceKey)
         if (DetailResponseGuard.isUnloadableTarget(
@@ -1442,6 +1550,7 @@ class DetailViewModel : ViewModel() {
                 sortFallbackCandidatesByCompleteness()
                 maybeCorrectCompleteness()
                 publishSourceChips()
+                refreshCrossSourceHint()
                 if (shouldAutoTakeOver()) loadNextFallbackCandidate()
             }
             val related = videos.filter {
@@ -1971,12 +2080,16 @@ class DetailViewModel : ViewModel() {
             vodPicture = video.pic ?: vodPicture
             publishHeader()
             publishSourceChips()
+            // 取走这个候选后它就被记入 usedSourceKeys、从 chips 里消失 —— 必须同步重算提示,
+            // 否则会留下一条指向"已不在 chips 里"的源、UI 渲染不出来却非 null 的僵尸提示
+            refreshCrossSourceHint()
             scheduleDetailTimeout()
             // 传 field 而不是捕获一次:候选站与发起请求同属一代(这一代由 loadDetail 或 rollback 定下)
             loadDetailInternal(video.id.orEmpty(), video.sourceKey.orEmpty(), detailRequestToken)
             return true
         }
         publishSourceChips()
+        refreshCrossSourceHint()
         if (!sourcesSearching.value) {
             finishFallbackWithoutResult()
             return false
@@ -2119,6 +2232,9 @@ class DetailViewModel : ViewModel() {
         fallbackLoadingCandidate = false
         detailTimeoutScheduled = false
         searchProgress.value = null
+        // 换源/重扫:新源尚未有收敛结论,跨源提示也必须先撤下,否则会拿着上一个源的结论弹提示
+        sourceConverged = false
+        crossSourceHint.value = null
         pendingCompletenessSkip = false
         completenessCorrected = false
         cancelDetailTimeout()
@@ -2127,6 +2243,11 @@ class DetailViewModel : ViewModel() {
             synchronized(fallbackCandidates) { fallbackCandidates.clear() }
             candidateKeys.clear()
         }
+        // 换片/换源:迷你探测的"每片一次"、窗口与冷却都要清零,否则旧片的探完就会带给新片
+        miniProbeJob?.cancel()
+        miniProbeJob = null
+        miniProbeDoneTitles.clear()
+        miniProbeNegativeAt.clear()
         publishSourceChips()
     }
 
@@ -2134,6 +2255,13 @@ class DetailViewModel : ViewModel() {
         cancelDetailTimeout()
         qualityProbeJob?.cancel()
         qualityProbeJob = null
+        // ⚠️ 迷你探测是**独立** Job(见 runMiniProbeForCrossSource),必须单独撤 ——
+        // 否则页面销毁后它还在后台跑网络请求,而 BoundedCall 是阻塞调用、cancel 打断不了,
+        // 只能靠这里的取消 + 协程内的 isActive 自检共同兜住。
+        miniProbeJob?.cancel()
+        miniProbeJob = null
+        miniProbeDoneTitles.clear()
+        miniProbeNegativeAt.clear()
         cancelSourceSearchRequests(pendingSearchDone.keys.toList())
         pendingSearchDone.clear()
         OkGo.getInstance().cancelTag("detail")
@@ -2219,6 +2347,172 @@ class DetailViewModel : ViewModel() {
             publishLineQualityHeights()
         }
     }
+
+    /**
+     * 迷你只读探测(P1):为**跨源提示**提前取一次对端画质。
+     *
+     * <p>## 与源内 sweep 的分工
+     * 源内 sweep 只认当前源;跨源要提前知道对端,只能真去问一次对端。
+     * 但这是**额外网络请求** —— 在实测源超时率 75~83% 的环境里,无脑发就是纯负收益。
+     * 所以这里一切以"不发"为默认:先过 [MiniProbeGate](类型闸)与 [MiniProbeBudget](预算闸),
+     * 任何一条不过就直接返回。
+     *
+     * <p>## 安全边界
+     * <ul>
+     *   <li>**绝不投递 UI 通道**:取数走 [MiniProbeReader](独立哑通道),只把实测值写进画质记忆;</li>
+     *   <li>**绝不自动换源**:本方法一个 switch 都不调,提示由 [refreshCrossSourceHint] 独立决定;</li>
+     *   <li>每片每会话一次、串行走、失败进 30 分钟冷却。</li>
+     * </ul>
+     */
+    private fun runMiniProbeForCrossSource() {
+        if (!sourceConverged) return
+        val info = vodInfo ?: return
+        val titleKey = searchTitle.ifEmpty { vodName }
+        // 整体准入:流量节省 / 本片已探过。**刻意不含"网络是否富余"** ——
+        // 那个信号只存在于播放内核内部,详情页观测不到,硬编码一个 true 就是空闸门
+        // (理由见 MiniProbeBudget 的 KDoc)。
+        if (!MiniProbeBudget.canStart(
+                trafficSaver = DeviceCapability.trafficSaverOn(),
+                titleAlreadyProbed = miniProbeDoneTitles.contains(titleKey),
+            )
+        ) {
+            LOG.i("xhint-skip budget-gate")
+            return
+        }
+        // 已给出去提示就不必再探;已有提示时 refreshCrossSourceHint 已经能工作
+        val candidates = synchronized(fallbackCandidates) { fallbackCandidates.toList() }
+            .mapNotNull { v ->
+                val k = v.sourceKey.orEmpty()
+                val id = v.id.orEmpty()
+                if (k.isEmpty() || id.isEmpty()) null else Triple(k, id, v.name.orEmpty())
+            }
+            .distinctBy { it.first to it.second }
+        if (candidates.isEmpty()) return
+        miniProbeDoneTitles.add(titleKey)
+        val title = searchTitle.ifEmpty { info.name ?: vodName }
+        // 在**主线程**快照一份已用源集合:usedSourceKeys 是普通 HashSet,由主线程增删,
+        // 探测协程在 IO 上遍历它属于跨线程读 —— 快照一次既去掉这个竞争,也固定了这一轮的口径。
+        val usedSnapshot = HashSet(usedSourceKeys)
+        val curSourceKey = sourceKey
+        // ⚠️ 必须用**独立** Job:本方法是从 sweep 协程(qualityProbeJob)内部调用的,
+        // 若复用 qualityProbeJob 就会把正在运行的 sweep 自己取消掉。
+        miniProbeJob?.cancel()
+        miniProbeJob = viewModelScope.launch(Dispatchers.IO) {
+            var sentInWindow = 0
+            var windowStart = System.currentTimeMillis()
+            for ((candKey, candId, _) in candidates) {
+                val bean = ApiConfig.get().getSource(candKey) ?: continue
+                // ① 类型闸:探不到的类型一次请求都不发。
+                // "已用过"由闸门统一判定(含当前源)—— 不在循环里另判一次,
+                // 否则 alreadyUsed 恒为 false,那个分支就成了永远走不到的死代码。
+                val gate = MiniProbeGate.decide(
+                    sourceType = bean.type,
+                    indexSource = bean.isIndexSource,
+                    alreadyUsed = candKey == curSourceKey || usedSnapshot.contains(candKey),
+                    healthBlocked = SourceHealthMemory.isBlocked(candKey),
+                    extendWarm = SourceRuntimeState.isExtendWarm(bean.ext),
+                )
+                if (gate is MiniProbeGate.Decision.Skip) {
+                    LOG.i("xhint-skip " + gate.reason + " key=" + candKey)
+                    continue
+                }
+                // ② 负冷却:探过的失败源 30 分钟内不再试
+                val lastFail = miniProbeNegativeAt[candKey] ?: 0L
+                if (MiniProbeBudget.inNegativeCooldown(lastFail, System.currentTimeMillis())) {
+                    LOG.i("xhint-skip cooldown key=" + candKey)
+                    continue
+                }
+                // ③ 窗口额度:5 个 / 30 秒,串行铺开
+                if (System.currentTimeMillis() - windowStart > MiniProbeBudget.WINDOW_MS) {
+                    windowStart = System.currentTimeMillis()
+                    sentInWindow = 0
+                }
+                if (!MiniProbeBudget.hasWindowQuota(sentInWindow)) {
+                    LOG.i("xhint-skip quota-out")
+                    break
+                }
+                sentInWindow++
+                // ④ 取详情(只读,不进任何 UI 通道)
+                val flagHolder = arrayOf<String?>(null)
+                val video = try {
+                    MiniProbeReader.fetchVideo(bean, candId, title, MINI_PROBE_TIMEOUT_S, flagHolder)
+                } catch (t: Throwable) {
+                    null
+                }
+                // ⚠️ BoundedCall 是**阻塞**调用(不是挂起点),所以上面的 job.cancel() 打断不了它 ——
+                // 换片/换源后这一轮可能刚刚返回。必须在这里自检活跃性,否则会拿旧片的结果继续往下走,
+                // 甚至给新会话写进一条来源不明的记忆。
+                if (!isActive) return@launch
+                if (video == null) {
+                    miniProbeNegativeAt[candKey] = System.currentTimeMillis()
+                    LOG.i("xhint-probe no-detail key=" + candKey)
+                    continue
+                }
+                val flag = flagHolder[0]
+                // ⚠️ flag 为空 ⇒ **不探也不写**:记忆键是 `站点|片|flag`,编一个 "线路1" 出来会污染
+                // 那个源真实线路的键空间(等它真的被播放时,实测值会与这条假键并存/互相覆盖)。
+                // 放在探测**之前**:拿不到 flag 就没有可用的写入键,先探一轮再丢弃纯属浪费带宽。
+                if (flag.isNullOrEmpty()) {
+                    miniProbeNegativeAt[candKey] = System.currentTimeMillis()
+                    LOG.i("xhint-probe no-flag key=" + candKey)
+                    continue
+                }
+                val target = firstPlayableUrl(video, flag)
+                if (target == null) {
+                    miniProbeNegativeAt[candKey] = System.currentTimeMillis()
+                    LOG.i("xhint-probe no-url key=" + candKey)
+                    continue
+                }
+                val measured = try {
+                    VideoQualityProbe().probe(target, probeHeaders(candKey))
+                } catch (t: Throwable) {
+                    null
+                }
+                if (measured == null || !measured.known) {
+                    miniProbeNegativeAt[candKey] = System.currentTimeMillis()
+                    LOG.i("xhint-probe no-size key=" + candKey)
+                    continue
+                }
+                // 只写记忆:不弹 UI、不换源
+                VideoQualityMemory.record(candKey, candId, measured.copy(flag = flag))
+                LOG.i(
+                    "xhint-probe ok key=" + candKey +
+                        " size=" + measured.width + "x" + measured.height +
+                        " flag=" + flag,
+                )
+                // 探到一个就够:拿到能撑起提示的数据即可,不必把所有源都问一遍
+                break
+            }
+            // 探测有了新记忆 ⇒ 重算提示(可能因此出现一条本来没有的提示)
+            withContext(Dispatchers.Main) { refreshCrossSourceHint() }
+        }
+    }
+
+    /** 从候选详情里取"该线路第一集"的播放地址(探测用,不参与播放决策) */
+    private fun firstPlayableUrl(video: Movie.Video, flag: String?): String? {
+        val infoList = video.urlBean?.infoList ?: return null
+        val chosen = infoList.firstOrNull { it?.flag == flag } ?: infoList.firstOrNull()
+        val first = chosen?.beanList?.firstOrNull()?.url
+        return first?.takeIf { it.startsWith("http") }
+    }
+
+    private var miniProbeDoneTitles = HashSet<String>()
+
+    /**
+     * 探测失败源的冷却表。
+     *
+     * <p>⚠️ 必须是并发容器:写入发生在 IO 协程里,而 [loadDetail]/[resetEngineState] 会在
+     * **主线程** clear 它。两者可能真正重叠 —— 探测线程常阻塞在 `BoundedCall`(网络)里,
+     * 此刻 `job.cancel()` 并不能把它停下。普通 HashMap 的并发 clear/put 会损坏内部结构
+     * (表现为取到 null、甚至死循环),这里不能省。
+     */
+    private val miniProbeNegativeAt = ConcurrentHashMap<String, Long>()
+
+    /** 迷你只读探测的独立协程(sweep 是 qualityProbeJob,两者生命周期必须分开) */
+    private var miniProbeJob: Job? = null
+
+    /** 迷你只读探测的单次请求超时(秒):与换源回退的 4s 同档,不给慢源拖时间 */
+    private val MINI_PROBE_TIMEOUT_S = 4L
 
     /**
      * 探测目标:地址 + **与播放同源的 header**。
@@ -2399,6 +2693,7 @@ class DetailViewModel : ViewModel() {
         // 标签本次会话永远刷不出来 —— 探测跑在独立作用域上,这是它唯一的回传途径。
         if (event.type == RefreshEvent.TYPE_LINE_QUALITY_MEASURED) {
             publishLineQualityHeights()
+            refreshCrossSourceHint()
             return
         }
         // 自适应画质(2026-10-10):播放中网络富余但记忆里没有更高实测档 → 补探测未测线路。

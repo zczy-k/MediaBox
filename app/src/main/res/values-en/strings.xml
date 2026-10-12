@@ -167,6 +167,10 @@
     <string name="search_progress">%1$d/%2$d sources searched</string>
     <string name="search_all_sources_done">All %1$d sources done</string>
     <string name="search_progress_settled">%1$d/%2$d sources searched</string>
+    <string name="search_progress_timeout">%1$d timed out</string>
+    <string name="search_pinyin_resolved">Searched as \"%1$s\"</string>
+    <string name="search_pinyin_no_index">No local record for this pinyin yet. Search a Chinese title once to build it.</string>
+    <string name="search_pinyin_no_index_title">Cannot recognize \"%1$s\"</string>
     <string name="search_source_failed">Source request failed</string>
     <string name="search_source_timeout">Source timed out</string>
     <string name="search_card_unopenable">This source cannot open it directly. Try another source</string>
@@ -307,6 +311,7 @@
     <string name="collect_clear_message">This will delete all favorites and cannot be undone</string>
     <string name="collect_uncollect_message">Remove “%1$s” from favorites?</string>
     <string name="collect_delete_selected_message">Remove %1$d selected favorites?</string>
+    <string name="collect_many_hint">Many favorites. Removing unwatched ones speeds up loading.</string>
 
     <!-- Theme: color picker -->
     <string name="music_episodes">Playlist</string>
@@ -397,6 +402,9 @@
     <string name="detail_order_desc">Descending</string>
     <string name="detail_switch_source">Switch source</string>
     <string name="detail_finding_source">Finding sources…</string>
+    <string name="detail_cross_hint">%1$s measured %2$s when you last watched</string>
+    <string name="detail_cross_hint_go">Go</string>
+    <string name="detail_cross_hint_dismiss">Dismiss</string>
     <string name="detail_recommend">Related</string>
 
     <!-- History -->

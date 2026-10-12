@@ -68,10 +68,20 @@ object SearchSettings {
      * 一次搜索几百源、每源十几条就是**上万次**归一化;而 {@link #normalize} 每次都新建 StringBuilder、
      * 跑两条正则 replace 再 lowercase。同一批结果里又有大量重复标题(不同源的同一部片子)。
      *
-     * <p>容量刻意保守(512):搜索页生命周期很短,一次搜索涉及的标题种类通常远小于这个数,
-     * 不需要更激进的淘汰策略;满了整体清空,不做 LRU 维护。
+     * <p>## 容量与淘汰(2026-10-11 调整)
+     * 容量 512 保持不变。但**淘汰策略从"满了整体清空"改为"淘汰约四分之一"**:
+     * 整体清空在真实搜索规模下会反复触发 —— 一次搜索涉及数千个不同标题(每源十几条 × 数百源),
+     * 于是"涨到 512 → 清空 → 再涨到 512 → 再清空"会来回十几次,每次清空后的下一批
+     * 全都要重新跑正则。淘汰四分之一既保住了缓存的主体,又不会让 map 无限增长。
+     *
+     * <p>⚠️ 仍用 [java.util.concurrent.ConcurrentHashMap] 而不是 LRU LinkedHashMap:
+     * 本方法是**每次匹配都会走的热路径**(单次搜索上万次调用),ConcurrentHashMap 的读是无锁的,
+     * 而 LRU 需要对每次 `get` 加锁(accessOrder 会改结构)—— 那是拿最热的路径去换最冷的收益。
      */
     private const val NORMALIZE_CACHE_CAPACITY = 512
+
+    /** 超容量时淘汰的比例(约 1/4);见 [normalizeCached] 的说明 */
+    private const val NORMALIZE_EVICT_FRACTION = 4
 
     private val normalizeCache = java.util.concurrent.ConcurrentHashMap<String, String>()
 
@@ -85,7 +95,20 @@ object SearchSettings {
         if (text.isNullOrEmpty()) return normalize(text)
         normalizeCache[text]?.let { return it }
         val normalized = normalize(text)
-        if (normalizeCache.size >= NORMALIZE_CACHE_CAPACITY) normalizeCache.clear()
+        if (normalizeCache.size >= NORMALIZE_CACHE_CAPACITY) {
+            // 淘汰约 1/4 而不是清空:见上方 KDoc。迭代器是弱一致的,
+            // 并发下可能少删或多删几个,都无害 —— 这里的正确性只要求"最终会缩小"。
+            val target = normalizeCache.size / NORMALIZE_EVICT_FRACTION
+            if (target > 0) {
+                val it = normalizeCache.keys.iterator()
+                var removed = 0
+                while (removed < target && it.hasNext()) {
+                    it.next()
+                    it.remove()
+                    removed++
+                }
+            }
+        }
         normalizeCache[text] = normalized
         return normalized
     }
@@ -290,7 +313,17 @@ object SearchSettings {
     private val INTENT_SEASON_S = Regex("(?<![A-Za-z0-9])S([0-9]{1,2})(?!\\d)", RegexOption.IGNORE_CASE)
     private val INTENT_CODE_TOKEN = Regex("(?i)[a-z]{2,6}-?\\d{2,5}")
 
-    private val intentCache = HashMap<String, QueryIntent>()
+    /**
+     * 查询意图缓存。
+     *
+     * <p>⚠️ 必须是并发容器。虽然 {@code SearchViewModel.onSearchResultEvent} 走
+     * {@code ThreadMode.MAIN}(主线程),但本函数是**公开工具方法**,且
+     * {@code SearchScreens} 在 Compose 组合期也会调它 —— 一旦将来有人把结果解析挪到
+     * IO 线程(或从后台预计算),普通 HashMap 的并发 put 会损坏内部结构(取到 null、
+     * 极端情况下死循环)。旁边的 [normalizeCache] 早已是 ConcurrentHashMap,
+     * 同一文件里两个同性质缓存不该一个有锁一个没有。
+     */
+    private val intentCache = java.util.concurrent.ConcurrentHashMap<String, QueryIntent>()
 
     /** 解析查询意图(带缓存;纯字符串分析,无副作用) */
     fun parseIntent(keyword: String?): QueryIntent {

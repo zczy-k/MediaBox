@@ -47,6 +47,29 @@ data class SourceHealthState(
     val bannedUntil: Long = 0L,
     val manualLocked: Boolean = false,
     val timeoutStreak: Int = 0,
+    /**
+     * 最近一次**答话**的耗时(ms);0 = 未知。
+     *
+     * <p>## 为什么需要它(2026-10-11)
+     * 此前降权只看"有没有超时"这一个**二值**信号 —— 而真机实测超时率 75~83%,
+     * 意味着绝大多数源"要么在 8s 内答话、要么超时",中间那批**能答话但很慢**
+     * (例如 5~7s 才回包)的源完全没有被记录。它们每轮都稳占首轮并发额度,
+     * 于是"首条结果 ≈8s"里的时间大量花在等这些慢源上。
+     *
+     * <p>记下耗时的意义:让"慢但能答话"的源也能被排到队尾(见 [shouldDefer]),
+     * 而**不是**被判死 —— 它们照搜,只是不再挤占首轮。这与既有"降权≠屏蔽"的口径一致。
+     *
+     * <p>只存**最近一次**而不是平均值:源速度随时间/网络变化很大,滑动平均会让
+     * "刚才明明很快"的源被历史拖住;而单次采样足够支撑"这一轮把它排后面"这个决策。
+     */
+    val lastElapsedMs: Long = 0L,
+    /**
+     * [lastElapsedMs] 的采样时刻(ms);0 = 无采样。
+     *
+     * <p>必须带时间戳,否则"慢"会变成**永久**标签:一次弱网采样之后,源就永远被降权了。
+     * 与超时降权同款窗口([DEFER_MS])—— 速度是会变的,降权只覆盖"同一次使用会话"。
+     */
+    val lastElapsedAt: Long = 0L,
 )
 
 /**
@@ -238,13 +261,42 @@ object SourceHealthPolicy {
      * <p>为什么这必须是独立入口:重置的触发点是"成功",而成功不会走 [recordFail]。
      * 把它塞进 [recordFail] 只会让口径变浑 —— "累计失败"和"清零"是两个方向的事。
      *
+     * @param elapsedMs 本次答话耗时(ms);≤0 表示未知,不采样(不覆盖既有采样)。
+     *                  见 [SourceHealthState.lastElapsedMs] 的说明。
      * @return 无变化时返回原对象,调用方可据此跳过落盘
      */
-    fun recordAnswered(state: SourceHealthState): SourceHealthState =
-        if (state.timeoutStreak == 0) state else state.copy(timeoutStreak = 0)
+    fun recordAnswered(state: SourceHealthState, now: Long = 0L, elapsedMs: Long = -1L): SourceHealthState {
+        val sampled = if (elapsedMs > 0 && now > 0) {
+            state.copy(lastElapsedMs = elapsedMs, lastElapsedAt = now)
+        } else {
+            state
+        }
+        return if (sampled.timeoutStreak == 0) sampled else sampled.copy(timeoutStreak = 0)
+    }
+
+    /**
+     * 「慢源」阈值(ms):答话耗时超过它即视为慢源,参与降权(2026-10-11)。
+     *
+     * <p>取值依据:单站搜索超时是 [SEARCH_TIMEOUT_MS] = 8s。取 **5s** ——
+     * 它是"8s 上限"与"正常源 1~2s"之间的保守分界:
+     * <ul>
+     *   <li>低于 5s 的源不降权:常规源多在 1~2s,5s 已经明显偏慢;</li>
+     *   <li>为什么不取 6~7s:那已经贴着超时线,而"贴着线答话"的源每一轮都会
+     *       把首屏拖到接近 8s —— 正是要治的现象;</li>
+     *   <li>为什么不取 3s:太激进会把"网络略抖但完全可用"的源也排到队尾,
+     *       而队列一旦被排空就会轮不到它,等于变相屏蔽。</li>
+     * </ul>
+     *
+     * <p>⚠️ 与超时降权**同款语义**:只降权、不屏蔽,且有 [DEFER_MS] 有效期。
+     */
+    const val SLOW_ANSWER_MS = 5_000L
 
     /**
      * 本轮的**降权**判据(规则 A):最近 [DEFER_MS] 内有搜索超时 ⇒ 排序时降到队尾。
+     *
+     * <p>2026-10-11 扩充:**答话但很慢**([lastElapsedMs] ≥ [SLOW_ANSWER_MS])同样降权。
+     * 此前只有"超时"这一个二值信号,而超时率 75~83% 意味着中间那批"5~7s 才答话"的源
+     * 完全没被记录,却每轮都占着首轮并发额度。
      *
      * <p>与"屏蔽"是两件事,别混:
      * <ul>
@@ -257,8 +309,18 @@ object SourceHealthPolicy {
         if (isBlocked(state, now)) return false
         val lastTimeout = state.fails.asSequence()
             .filter { it.kind == SourceFailKind.SEARCH_TIMEOUT }
-            .maxOfOrNull { it.at } ?: return false
-        return now - lastTimeout < DEFER_MS
+            .maxOfOrNull { it.at }
+        if (lastTimeout != null && now - lastTimeout < DEFER_MS) return true
+        // 慢源降权:采样在窗口内、且确实慢。
+        // ⚠️ 时钟回拨保护:lastElapsedAt > now 时 `now - at` 为负,天然 < DEFER_MS ⇒ 会误判成"新鲜"。
+        // 这里显式排除未来时间戳,避免用户改时间后所有源永久降权。
+        if (state.lastElapsedAt > 0 && state.lastElapsedAt <= now
+            && now - state.lastElapsedAt < DEFER_MS
+            && state.lastElapsedMs >= SLOW_ANSWER_MS
+        ) {
+            return true
+        }
+        return false
     }
 
     /** 按升级档位封禁:[SourceHealthState.banCount] 先自增,第 3 次起转永久 */

@@ -167,6 +167,10 @@
     <string name="search_progress">已搜 %1$d/%2$d 源</string>
     <string name="search_all_sources_done">已搜完全部 %1$d 源</string>
     <string name="search_progress_settled">已搜 %1$d/%2$d 源</string>
+    <string name="search_progress_timeout">%1$d 源逾時</string>
+    <string name="search_pinyin_resolved">已按「%1$s」搜尋</string>
+    <string name="search_pinyin_no_index">本地還沒有這個拼音的記錄，先搜一次中文片名即可建立</string>
+    <string name="search_pinyin_no_index_title">「%1$s」暫無法識別</string>
     <string name="search_source_failed">該來源請求失敗</string>
     <string name="search_source_timeout">該來源逾時未回應</string>
     <string name="search_card_unopenable">該來源無法直接開啟，請換個來源試試</string>
@@ -307,6 +311,7 @@
     <string name="collect_clear_message">將刪除全部收藏，此操作無法復原</string>
     <string name="collect_uncollect_message">取消收藏「%1$s」？</string>
     <string name="collect_delete_selected_message">確定取消收藏選中的 %1$d 部影片嗎？</string>
+    <string name="collect_many_hint">收藏較多，清理不看的可提升載入速度</string>
 
     <!-- 主題:取色 -->
     <string name="music_episodes">音樂選集</string>
@@ -397,6 +402,9 @@
     <string name="detail_order_desc">倒序</string>
     <string name="detail_switch_source">換源</string>
     <string name="detail_finding_source">尋找片源中…</string>
+    <string name="detail_cross_hint">%1$s 上次觀看實測為 %2$s</string>
+    <string name="detail_cross_hint_go">去看看</string>
+    <string name="detail_cross_hint_dismiss">關掉</string>
     <string name="detail_recommend">相關推薦</string>
 
     <!-- 歷史 -->

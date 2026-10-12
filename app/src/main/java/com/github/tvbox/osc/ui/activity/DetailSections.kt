@@ -17,6 +17,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -74,6 +75,7 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int) {
     @Suppress("UNUSED_EXPRESSION") revision
     val sourceChips by vm.sourceChips.collectAsStateWithLifecycle()
     val sourcesSearching by vm.sourcesSearching.collectAsStateWithLifecycle()
+    val crossHint by vm.crossSourceHint.collectAsStateWithLifecycle()
     // 搜索中且还没有候选时,整行不渲染 —— 过去这里会先画出标题 + 空的换源行,
     // 正是截图里"暂无片源下面挂着一个孤零零的换源"的成因。
     if (sourceChips.isEmpty()) return
@@ -108,6 +110,40 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int) {
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            }
+        }
+        crossHint?.let { hint ->
+            // 只说"对端实测画质"这一事实,不带站名;匿名序号由 sourceLabelFor 按 chip 下标给出
+            val hintIndex = sourceChips.indexOfFirst { it.key == hint.sourceKey }
+            if (hintIndex >= 0) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 8.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = stringResource(
+                            R.string.detail_cross_hint,
+                            vm.sourceLabelFor(hintIndex),
+                            hint.label,
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    // 去看看 = 与点 chip 同一条换源链;关掉 = 本片本会话不再提示
+                    TextButton(onClick = {
+                        // 先闩掉本片(键=当前源|片),再换源:换源后新源已在播,不应再对同片弹提示
+                        vm.dismissCrossSourceHint()
+                        vm.candidateForKey(hint.sourceKey)?.let { vm.switchSource(it) }
+                    }) {
+                        Text(stringResource(R.string.detail_cross_hint_go))
+                    }
+                    TextButton(onClick = { vm.dismissCrossSourceHint() }) {
+                        Text(stringResource(R.string.detail_cross_hint_dismiss))
+                    }
+                }
             }
         }
         LazyRow(
