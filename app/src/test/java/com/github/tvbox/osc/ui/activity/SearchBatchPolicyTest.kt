@@ -3,6 +3,7 @@ package com.github.tvbox.osc.ui.activity
 import com.github.tvbox.osc.bean.SourceBean
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -153,5 +154,61 @@ class SearchBatchPolicyTest {
         assertEquals(0, SearchBatchPolicy.batchSizeFor(emptyList(), isFirstRound = false))
         // 首轮上限必须小于后续批,否则"快速首轮"没有意义(退化成普通分批)
         assertTrue(SearchBatchPolicy.FAST_ROUND_SOURCE_LIMIT < SearchBatchPolicy.DEFAULT_BATCH_SIZE)
+    }
+
+    // ---------- 换源链的"降权垫底"(2026-10-13) ----------
+
+    /**
+     * 换源链此前**只滤封禁、不读降权**,于是同一个慢源在搜索页被排到队尾、
+     * 在换源链里却照旧占着前几批的并发额度。本组用例锁住它的两条硬约束:
+     * ① 降权源垫底且保持原有相对顺序;② **元素一个不少**。
+     *
+     * <p>②是重点:调用方先 `take(上限)` 再降权,若这里把源剔掉,就从"降权"变成了"屏蔽" ——
+     * 正是《源与线路的权重模型》第 2 节警告的"没有安全网的事实封禁"。
+     */
+    @Test
+    fun penalizedLastMovesToTailAndDropsNothing() {
+        val sources = listOf(
+            source("a", quick = true),
+            source("dead", quick = true),
+            source("b", quick = true),
+            source("dead2", quick = true),
+            source("c", quick = true),
+        )
+        val ordered = SearchBatchPolicy.penalizedLast(sources, setOf("dead", "dead2"))
+        // 健康的保持原相对顺序在前,降权的按原相对顺序垫底
+        assertEquals(listOf("a", "b", "c", "dead", "dead2"), ordered.map { it.key })
+        // 一个都不能少(降权 ≠ 屏蔽)
+        assertEquals(sources.size, ordered.size)
+        assertEquals(sources.map { it.key }.toSet(), ordered.map { it.key }.toSet())
+    }
+
+    @Test
+    fun penalizedLastIsNoOpWithoutPenalizedSources() {
+        val sources = listOf(source("a", quick = true), source("b", quick = true))
+        // 没有降权源(或台账里只剩已不存在的 key)⇒ 原样返回,连重排都省掉
+        assertSame(sources, SearchBatchPolicy.penalizedLast(sources, emptySet()))
+        assertSame(sources, SearchBatchPolicy.penalizedLast(sources, setOf("已经不存在的源")))
+    }
+
+    @Test
+    fun penalizedLastKeepsDegenerateInputsIntact() {
+        val one = listOf(source("only", quick = true))
+        assertSame(one, SearchBatchPolicy.penalizedLast(one, setOf("only")))
+        val empty = emptyList<SourceBean>()
+        assertSame(empty, SearchBatchPolicy.penalizedLast(empty, setOf("x")))
+    }
+
+    @Test
+    fun penalizedLastIsStableWhenEverythingIsPenalized() {
+        // 全部被降权 ⇒ 顺序必须与入参完全一致。否则"整池都慢"时会把原调度优先级彻底打乱,
+        // 反而比不降权更差(比如把首页源排到了最后)。
+        val sources = listOf(
+            source("s1", quick = true),
+            source("s2", quick = true),
+            source("s3", quick = true),
+        )
+        val ordered = SearchBatchPolicy.penalizedLast(sources, setOf("s1", "s2", "s3"))
+        assertEquals(listOf("s1", "s2", "s3"), ordered.map { it.key })
     }
 }

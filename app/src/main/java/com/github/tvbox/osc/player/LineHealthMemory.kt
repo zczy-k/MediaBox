@@ -87,6 +87,33 @@ object LineHealthMemory {
         }
     }
 
+    /**
+     * 这条线路此刻是否**可疑**(近期连续失败,且之后没有成功过)。
+     *
+     * <p>## 为什么在 [orderScores] 之外还要一个"是/否"入口(2026-10-13)
+     * [orderScores] 回答的是"排序该往前还是往后",而**切换决策**要回答的是另一个问题:
+     * "这条线现在能不能试着切过去"。两者不能互相替代 —— 实测画质最优 ≠ 能播:
+     * 一条刚连续失败两次的线路,即使它实测/标称清晰度最高,切过去大概率还是失败,
+     * 用户要多等一次起播超时。
+     *
+     * <p>所以源内扫描([DetailViewModel.sweepSourceLinesForQuality])与起播前预检
+     * ([DetailViewModel.applyFirstWatchProbe])在按**实测画质**选定目标后,再用本方法确认
+     * 它不"可疑"。判据本身仍只有一份([LineHealthPolicy.isSuspect]),这里只负责取数,
+     * 避免出现第二套"可疑"口径。
+     */
+    @Synchronized
+    fun isSuspect(sourceKey: String?, vodId: String?, flag: String?, now: Long = System.currentTimeMillis()): Boolean {
+        if (!isEnabled()) return false
+        val k = keyOf(sourceKey, vodId, flag)
+        if (k.isEmpty()) return false
+        return try {
+            LineHealthPolicy.isSuspect(decode(loadAll().optJSONObject(k)), now)
+        } catch (th: Throwable) {
+            // 判据读不到就按"不可疑"处理:宁可不干预切换顺序,不可因一次读取异常阻断换线
+            false
+        }
+    }
+
     /** 记一次失败 */
     @JvmStatic
     @JvmOverloads

@@ -1454,12 +1454,28 @@ class DetailViewModel : ViewModel() {
             .filter { it.isSearchable() && it.isQuickSearch() && (effectiveChecked == null || effectiveChecked.containsKey(it.key)) }
         // 被屏蔽的源不进自动换源候选池(防滥用封禁机制,P2):放在 take(上限) **之前**,
         // 免得坏源白占候选名额;整池被滤空时 fail-open 回退,不会让换源直接无候选。
-        val sources = SourceHealthFilter.filter(candidatePool)
-            .sortedBy { it.key != home.key }
-            .take(fallbackPoolCap)
+        //
+        // 降权(2026-10-13):上一轮搜索里超时的源排到队尾 —— 此前换源链**只滤封禁、不读降权**,
+        // 于是同一个"刚超时 5 次的慢源"在搜索页被排到队尾,在这里却照旧占着前几批的并发额度,
+        // 而换源链恰恰是用户已经在等画面的那条路。判据与搜索页同源(SourceHealthFilter.penalizedKeys),
+        // 只是这里的队列是"分批串行",排到队尾就等于"最后才搜到它"。
+        //
+        // ⚠️ 顺序不能反:**先 take 截断、再降权垫底**。反过来会让被降权的源被上限直接砍掉,
+        // 降权就退化成屏蔽(见 SearchBatchPolicy.penalizedLast 的 KDoc)。
+        val penalized = SourceHealthFilter.penalizedKeys()
+        val sources = SearchBatchPolicy.penalizedLast(
+            SourceHealthFilter.filter(candidatePool)
+                .sortedBy { it.key != home.key }
+                .take(fallbackPoolCap),
+            penalized,
+        )
         // 诊断包靠这行判断"预热到底有没有触发、候选池多大" —— 真机日志被 ROM 屏蔽时,
         // 文件日志(仅 diag 包落盘)是唯一可观测点。前缀 echo-source- 已在 LOG 白名单里。
-        LOG.i("echo-source-search start title=" + title + " pool=" + sources.size + " token=$myToken")
+        // defer=N 是"本轮被降权垫底了几个源",与搜索页 echo-searchplan 的 defer= 同口径。
+        LOG.i(
+            "echo-source-search start title=" + title + " pool=" + sources.size +
+                " defer=" + penalized.size + " token=$myToken"
+        )
         // ⚠️ 必须先取消旧搜索 job(2026-10-09 真机数据修正):分批后旧 job 要跑完全部批才自然结束,
         // 快速换片时 30 个会话里 27 个在 semaphore(12) 队列里陪跑 —— 它们的回包本就被
         // currentTokenStr() 守卫丢弃,留在队列里纯粹白占并发、拖慢新搜索。cancel 后排队中的
@@ -1554,6 +1570,7 @@ class DetailViewModel : ViewModel() {
             val data = event.obj as? AbsXml ?: return
             if (data.searchToken != currentTokenStr()) return
             pendingSearchDone.remove(data.sourceKey)?.complete(Unit)
+            recordFallbackSourceAnswered(data)
             val videos = data.movie?.videoList.orEmpty()
             val fresh = videos.filter {
                 !it.id.isNullOrEmpty() && TitleMatcher.isSameTitle(it.name, searchTitle)
@@ -1580,6 +1597,38 @@ class DetailViewModel : ViewModel() {
         } else if (event.type == RefreshEvent.TYPE_PLAY_QUALITY) {
             updateQualityOptions(event.obj as? org.json.JSONObject)
         }
+    }
+
+    /**
+     * 换源链搜索结果:只向源健康台账报**正向证据**(2026-10-13)。
+     *
+     * <p>## 补的是什么空白
+     * 换源链是**第二套聚合搜索**(与搜索页各跑一套,见 [startSourceSearch]),但此前它
+     * 一条结果都不写台账 —— 于是:搜索页刚给某个源记下一次超时(连续超时计数 = 1),
+     * 换源链随后明明拿到了它的应答,那个计数却**不会归零**;下一轮搜索再超时一次就凑满
+     * "连续 2 次",把它封 30 分钟 —— 而它中间刚答过话。这是纯粹的误封来源。
+     *
+     * <p>## 为什么只报正向,不报超时/失败(这条线不能破)
+     * 源级封禁的**规则 1** 门槛是"24 小时内失败 ≥3 次 **且** 涉及 ≥2 部不同影片",
+     * 而换源链**每点开一张卡片就可能触发一轮**(候选池上限 120 个源)。若它也开始写失败证据,
+     * 同一个源在几部片之间的失败会迅速凑满规则 1 ⇒ 6 小时封禁;而**雪崩保险丝只回滚规则 2**,
+     * 管不到规则 1(见 [SourceHealthMemory] 的说明)。所以这里守住一条线:
+     * **换源链不生产封禁证据** —— 它只减少误封(答话即清零 + 登记收录),
+     * 绝不增加误封。这与 [recordSourcePlayFailure]"只观测不记账"是同一取向。
+     *
+     * <p>口径与搜索页 [SearchViewModel.recordSourceOutcome] 完全对齐:拿回一条 `AbsXml`
+     * (哪怕是无命中)就算"源答话了"。耗时**刻意传 -1**:本链没有逐源计时,不编一个数出来
+     * 污染"慢源"采样(搜索页有真值,慢源降权仍由它负责)。
+     */
+    private fun recordFallbackSourceAnswered(data: AbsXml) {
+        val key = data.sourceKey ?: return
+        if (key.isEmpty()) return
+        val hitTitles = data.movie?.videoList.orEmpty()
+            .mapNotNull { it.name?.takeIf { name -> name.isNotEmpty() } }
+        if (hitTitles.isNotEmpty()) {
+            SourceHealthMemory.recordCarriers(key, hitTitles)
+        }
+        SourceHealthMemory.recordAnswered(key, elapsedMs = -1L)
     }
 
     private fun currentTokenStr(): String = "detail_$searchToken"
@@ -1726,6 +1775,17 @@ class DetailViewModel : ViewModel() {
                 " (was " + (currentFlag ?: "null") + ")"
         )
         if (chosen.isNullOrEmpty() || chosen == currentFlag) return
+        // 实测最优 ≠ 能用(2026-10-13):一条刚连续失败两次的线路,即便探测出的清晰度最高,
+        // 切过去大概率还是失败,用户白等一次起播超时。而**当前线路**是上一步
+        // bestFlagByLabelAndCompleteness 已经按线路健康选过的,所以这里只需回答
+        // "要不要为了画质去换一条已知有问题的线" —— 答案是不要。
+        // 只在"目标可疑且当前不可疑"时拦下:当前也 anyway 可疑时,换一条仍然可能更好。
+        if (LineHealthMemory.isSuspect(siteKey, vodId, chosen) &&
+            !LineHealthMemory.isSuspect(siteKey, vodId, currentFlag)
+        ) {
+            LOG.i("echo-quality skip-suspect chosen=" + chosen + " keep=" + (currentFlag ?: "null"))
+            return
+        }
         // 等待期间可能换了片/进了换源链:那时再写 vodInfo 会把新内容顶掉
         if (token != detailBuildToken || sourceKey != siteKey || info.playFlag != currentFlag) return
         info.playFlag = chosen
@@ -1933,11 +1993,24 @@ class DetailViewModel : ViewModel() {
      * 把当前片标记为无资源并通知列表刷新。
      *
      * <p>标记失败不影响任何播放逻辑 —— 这是一条纯体验优化,不该有能力影响主流程。
+     *
+     * <p>## 为什么源被封时**不写**这个标记(2026-10-13)
+     * 两条链路的有效期差三个数量级:源封禁是 30 分钟 ~ 6 小时(**会**自动解除),
+     * 而本标记是 90 天(见 [AvailabilityMemory] 的 TTL)。若当前源正在封禁中就写标记,
+     * 等于把"源暂时不答话"这件**源侧**的短期故障,记成了这部片**影片侧**的长期属性 ——
+     * 源 30 分钟后已自动解封,用户却还要 90 天看不到这张海报。
+     *
+     * <p>触发路径真实存在:从历史/收藏进入(那里不过滤被封源),或本次会话中该源
+     * 被并行的搜索判封。此时"取不到内容"有明确的旁因,不能据此断言影片无资源。
      */
     private fun markCurrentVodUnavailable() {
         val site = sourceKey
         val id = vodId
         if (site.isEmpty() || id.isEmpty()) return
+        if (SourceHealthMemory.isBlocked(site)) {
+            LOG.i("echo-unavailable mark skip: source-blocked site=$site vod=$id")
+            return
+        }
         viewModelScope.launch {
             try {
                 val siteName = ApiConfig.get().getSource(site)?.name.orEmpty()

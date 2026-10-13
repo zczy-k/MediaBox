@@ -72,6 +72,38 @@ internal object SearchBatchPolicy {
     }
 
     /**
+     * 把**降权源**排到队尾,**不改变候选取舍**(返回列表与入参元素完全相同,只变顺序)。
+     *
+     * <p>## 为什么单独有它,而不是复用 [splitFastRoundSources]
+     * 那个函数回答的是"首轮快速源该放哪几个",会把**非快速源也一并延后**;
+     * 而详情页换源链的候选池**已经**全是快速源(`isQuickSearch()` 已在池构造时过滤),
+     * 它只需要"降权垫底"这一个动作。两者混用会让"换源链到底降了谁"变得难读。
+     *
+     * <p>## ⚠️ 调用方必须**先做上限截断(take)再调本函数**
+     * 若先降权后截断,被降权的源会被上限直接砍掉 —— 那就不是"降权"而是"屏蔽"了,
+     * 正是《源与线路的权重模型》第 2 节警告的"没有安全网的事实封禁"。
+     * 本函数只重排不剔除,所以它本身没有这个风险;风险在调用顺序上。
+     *
+     * <p>刻意**不豁免首页源**(与 [splitFastRoundSources] 不同):换源链的当前源
+     * 正是刚刚失败的那个,给它任何优先都没有依据;不豁免让语义更简单、少一个特例。
+     *
+     * @param sources   已完成过滤与上限截断的候选(顺序即原调度优先级)
+     * @param penalized 本轮要降权的源 key(近期搜索超时,见 `SourceHealthPolicy.shouldDefer`)
+     */
+    fun penalizedLast(sources: List<SourceBean>, penalized: Set<String>): List<SourceBean> {
+        if (sources.size < 2 || penalized.isEmpty()) return sources
+        val normal = ArrayList<SourceBean>(sources.size)
+        val deferred = ArrayList<SourceBean>()
+        for (source in sources) {
+            if (penalized.contains(source.key)) deferred.add(source) else normal.add(source)
+        }
+        // 一个降权源都没有 ⇒ 原样返回(省一次重排,也确实无需改动顺序)
+        if (deferred.isEmpty()) return sources
+        normal.addAll(deferred)
+        return normal
+    }
+
+    /**
      * 本次应该启动多少个源:首轮用 [FAST_ROUND_SOURCE_LIMIT],之后每批恢复 [DEFAULT_BATCH_SIZE]。
      *
      * <p>用"队列里是否还含延后源"判断首轮:首轮只取快速源,队列一旦被消耗过就说明已经进过后续批。
