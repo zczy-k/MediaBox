@@ -502,16 +502,24 @@ final class PlaybackRetryDelegate {
                     st.lastFailureNetwork, st.userPickedLine);
         }
         List<String> lineFlags = EpisodeMatcher.lineFlagsInDisplayOrder(vod);
-        // 按**线路健康度**重排候选(2026-10-12):近期连续失败/取流慢的线路排到队尾。
-        //
-        // ⚠️ 只重排、不剔除:坏线路仍会被试到,只是不再抢在好线路前面 —
-        // 这正是"只降权不屏蔽"的落点(一部片可能只有 3 条线,屏蔽掉一条
-        // 而剩下两条都坏 = 用户无路可走)。
-        lineFlags = LineHealthSelector.INSTANCE.reorder(
-                lineFlags,
-                lineHealthKeys(vod, lineFlags));
+        // ⚠️ 关键顺序(2026-10-12,本实现第一版的真 bug):
+        //    **先**在**原顺序**上定位当前线路,**再**重排候选区段。
+        //    若先重排再定位,刚被记失败的当前线路会被压到队尾 ⇒ currentLineIndex = 末位
+        //    ⇒ startLineIndex = size ⇒ 下面的循环一次都不跑 ⇒ 直接判"线路耗尽"跳去换源。
+        //    表现是"坏线一跳就换源、完全不试其它线路",比不做重排还差。
         int currentLineIndex = EpisodeMatcher.lineFlagIndex(lineFlags, currentFlag);
         int startLineIndex = currentLineIndex >= 0 ? currentLineIndex + 1 : 0;
+        // 只重排**当前线路之后**的候选区段:保留"不回头试前面线路"的原有语义,
+        // 同时让区段内"近期连续失败/取流慢"的线路排到后面。
+        // 只重排、不剔除 —— 坏线路仍会被试到(见 LineHealthSelector 的硬约束)。
+        if (startLineIndex < lineFlags.size()) {
+            List<String> tail = new ArrayList<>(lineFlags.subList(startLineIndex, lineFlags.size()));
+            List<String> reorderedTail = LineHealthSelector.INSTANCE.reorder(tail, lineHealthKeys(vod, tail));
+            List<String> merged = new ArrayList<>(lineFlags.size());
+            merged.addAll(lineFlags.subList(0, startLineIndex));
+            merged.addAll(reorderedTail);
+            lineFlags = merged;
+        }
         String nextFlag = null;
         int nextIndex = 0;
         for (int i = startLineIndex; i < lineFlags.size(); i++) {

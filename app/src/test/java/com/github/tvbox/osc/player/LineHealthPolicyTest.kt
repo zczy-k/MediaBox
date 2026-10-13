@@ -145,7 +145,7 @@ class LineHealthPolicyTest {
             "s|1|线路二" to -100,
             "s|1|线路三" to 0,
         )
-        val out = LineHealthPolicy.reorderByScore(flags, { keys[flags.indexOf(it)] }) { scores[it] ?: 0 }
+        val out = LineHealthPolicy.reorderByScore(flags, { i -> keys[i] }) { scores[it] ?: 0 }
         assertEquals("长度必须不变(不剔除)", flags.size, out.size)
         assertEquals("内容必须一致(不新增不丢失)", flags.toSet(), out.toSet())
         // 坏线路被排到最后一名
@@ -158,7 +158,7 @@ class LineHealthPolicyTest {
         val keys = listOf("ka", "kb", "kc", "kd")
         // 全部同分 ⇒ 必须保持原序(站点展示顺序,不应被无故打乱)
         val scores = mapOf("ka" to 0, "kb" to 0, "kc" to 0, "kd" to 0)
-        val out = LineHealthPolicy.reorderByScore(flags, { keys[flags.indexOf(it)] }) { scores[it] ?: 0 }
+        val out = LineHealthPolicy.reorderByScore(flags, { i -> keys[i] }) { scores[it] ?: 0 }
         assertEquals(flags, out)
     }
 
@@ -168,8 +168,28 @@ class LineHealthPolicyTest {
         val keys = listOf("ka", "kb", "kc")
         // 只把 a 压后,b/c 同分保持相对顺序
         val scores = mapOf("ka" to -50, "kb" to 0, "kc" to 0)
-        val out = LineHealthPolicy.reorderByScore(flags, { keys[flags.indexOf(it)] }) { scores[it] ?: 0 }
+        val out = LineHealthPolicy.reorderByScore(flags, { i -> keys[i] }) { scores[it] ?: 0 }
         assertEquals(listOf("b", "c", "a"), out)
+    }
+
+    /**
+     * ⚠️ 重复 flag 的回归测试(2026-10-12)。
+     *
+     * <p>为什么需要它:`reorderByScore` 的第一版 API 是 `(T) -> String` 取键,
+     * 调用方只能用 `indexOf(item)` 从平行键列表里反查 —— 而**同一源站可能两次上报同名线路**,
+     * 反查永远命中第一条,把第二条的分数错记到第一条上(两条一起被压或一起不被压)。
+     * 改成按下标取键后此问题不存在,本测试钉住它。
+     */
+    @Test
+    fun `reorder_duplicateFlagsUseTheirOwnScore`() {
+        // 两条同名线路:第一条好(0),第二条坏(-100) —— 必须只压第二条
+        val flags = listOf("线路一", "线路一", "线路二")
+        val keys = listOf("s|1|线路一#0", "s|1|线路一#1", "s|1|线路二")
+        val scores = mapOf("s|1|线路一#0" to 0, "s|1|线路一#1" to -100, "s|1|线路二" to 0)
+        val out = LineHealthPolicy.reorderByScore(flags, { i -> keys[i] }) { scores[it] ?: 0 }
+        assertEquals("长度不变", 3, out.size)
+        // 第三个位置应是"被压后的那条"(keys[1] 对应坏掉的那一条,排到末尾)
+        assertEquals(listOf("线路一", "线路二", "线路一"), out)
     }
 
     @Test

@@ -3,6 +3,7 @@ package com.github.tvbox.osc.player
 import com.github.tvbox.osc.util.HawkConfig
 import com.github.tvbox.osc.util.KV
 import com.github.tvbox.osc.util.LOG
+import com.github.tvbox.osc.util.MD5
 import org.json.JSONObject
 
 /**
@@ -17,6 +18,12 @@ import org.json.JSONObject
  * 键 = `源key|片id|flag`(**按片绑定**,由用户确认;线路地址是源-specific 的,
  * 跨片/跨源复用是错的)。上限 [MAX_ENTRIES] 条,按时间淘汰 ——
  * 三维键会膨胀(330 源 × 每片 4 线 × 100 部片 ≈ 132k),不设上限会撑爆 KV。
+ *
+ * <p>## 存储形态:扁平的 `键 → {fs,fa,rm,pa}`
+ * ⚠️ **刻意不嵌套**(不要包一层 `"entries"`):本类第一版把条目嵌在 `"entries"` 下,
+ * 结果 `lookup`/`orderScores`/`recordPlayed` 都忘了先取那一层、直接对根对象取条目 ——
+ * **读永远读不到、成功上报永远不生效**,而 TypeScript/JSON 都不会报错,是纯静默故障
+ * (CI 只抓到了编译期那部分)。扁平结构让"键就是键"没有中间层可忘。
  *
  * <p>## 只记"有问题"的
  * 成功是常态,记录它会让条目数乘以 3。所以 [recordPlayed] 只用于**归零已有条目**
@@ -41,10 +48,11 @@ object LineHealthMemory {
             ""
         }
         // 取不到地址时退回固定桶:功能降级为"不分桶",但不因此完全不记
-        return KEY_PREFIX + if (api.isNullOrEmpty()) "default" else com.github.tvbox.osc.util.MD5.string2MD5(api)
+        return KEY_PREFIX + if (api.isNullOrEmpty()) "default" else MD5.string2MD5(api)
     }
 
     /** 复合键。三要素缺一不可判 —— 空则无法定位一条线路。 */
+    @JvmStatic
     fun keyOf(sourceKey: String?, vodId: String?, flag: String?): String {
         val s = sourceKey?.trim().orEmpty()
         val v = vodId?.trim().orEmpty()
@@ -57,8 +65,7 @@ object LineHealthMemory {
         val k = keyOf(sourceKey, vodId, flag)
         if (k.isEmpty()) return LineHealthPolicy.State()
         return try {
-            val all = loadAll()
-            decode(k, all.optJSONObject(k))
+            decode(loadAll().optJSONObject(k))
         } catch (th: Throwable) {
             LineHealthPolicy.State()
         }
@@ -91,12 +98,13 @@ object LineHealthMemory {
         if (k.isEmpty()) return
         try {
             val all = loadAll()
-            if (!all.has(k)) return
-            val current = decode(k, all.optJSONObject(k))
+            // 没有条目就什么都不做 —— 这正是"只记有问题的"
+            val current = decode(all.optJSONObject(k))
+            if (current.failStreak == 0 && current.failAt == 0L) return
             val next = LineHealthPolicy.recordPlayed(current, now)
             if (next.failStreak == current.failStreak && next.playedAt == current.playedAt) return
             all.put(k, encode(next))
-            all.put(encodeMeta(pruneLocked(all)))
+            pruneLocked(all)
             persist(all)
         } catch (th: Throwable) {
             LOG.i("echo-line-health played-failed key=" + k + " err=" + th.message)
@@ -115,7 +123,7 @@ object LineHealthMemory {
      * 批量读排序分:一次装载 + 一次解析,供 [LineHealthSelector] 重排候选。
      *
      * <p>⚠️ 刻意不缓存到内存:KV 读取本身是同步且廉价的(单键 JSON),
-     * 而缓存会引入"何时失效"的问题 —— 一次换线读一次就够,不值得为它引入失效逻辑。
+     * 而缓存会引入"何时失效"的问题 —— 一次换线读一次就够。
      */
     fun orderScores(keys: Collection<String>, now: Long): Map<String, Int> {
         if (keys.isEmpty()) return emptyMap()
@@ -123,7 +131,7 @@ object LineHealthMemory {
             val all = loadAll()
             keys.mapNotNull { k ->
                 if (k.isEmpty()) null
-                else k to LineHealthPolicy.orderScore(decode(k, all.optJSONObject(k)), now)
+                else k to LineHealthPolicy.orderScore(decode(all.optJSONObject(k)), now)
             }.toMap()
         } catch (th: Throwable) {
             emptyMap()
@@ -132,7 +140,7 @@ object LineHealthMemory {
 
     /** 只用于测试/诊断:当前条目数 */
     fun size(): Int = try {
-        loadAll().optJSONObject(ENTRIES)?.length() ?: 0
+        loadAll().length()
     } catch (th: Throwable) {
         0
     }
@@ -148,9 +156,6 @@ object LineHealthMemory {
 
     // ---------------- 内部 ----------------
 
-    private const val ENTRIES = "entries"
-    private const val PRUNED_AT = "prunedAt"
-
     private fun mutate(
         key: String,
         now: Long = System.currentTimeMillis(),
@@ -158,11 +163,9 @@ object LineHealthMemory {
     ) {
         try {
             val all = loadAll()
-            val entries = entriesOf(all)
-            val current = decode(key, entries.optJSONObject(key))
-            val next = transform(current, now)
-            entries.put(key, encode(next))
-            all.put(encodeMeta(pruneLocked(entries)))
+            val current = decode(all.optJSONObject(key))
+            all.put(key, encode(transform(current, now)))
+            pruneLocked(all)
             persist(all)
         } catch (th: Throwable) {
             LOG.i("echo-line-health mutate-failed key=" + key + " err=" + th.message)
@@ -185,42 +188,28 @@ object LineHealthMemory {
         }
     }
 
-    private fun entriesOf(root: JSONObject): JSONObject {
-        val e = root.optJSONObject(ENTRIES)
-        if (e != null) return e
-        val fresh = JSONObject()
-        root.put(ENTRIES, fresh)
-        return fresh
-    }
-
     /**
-     * 超出上限时按时间淘汰最旧。
+     * 超出上限时按时间淘汰最旧(**就地**修改 [entries])。
      *
-     * <p>时间戳取"最近一次被写过"(`failAt`/`playedAt` 三者最大),
-     * 因为那才是"这条记忆还有没有用"的依据。纯中性态(全 0)不会出现在表里
-     * (见 [recordPlayed] 的守卫)所以不会有"淘汰不掉的中性条目"。
-     *
-     * @return 淘汰了多少条(>0 时留一条日志,便于真机判断容量是否定得合理)
+     * <p>时间戳取 `failAt`/`playedAt` 的较大者 —— 那才是"这条记忆还有没有用"的依据。
+     * 表里不会出现"全中性"条目(见 [recordPlayed] 的守卫),所以不会有淘汰不掉的僵尸项。
      */
-    private fun pruneLocked(entries: JSONObject): Int {
+    private fun pruneLocked(entries: JSONObject) {
         val n = entries.length()
-        if (n <= MAX_ENTRIES) return 0
-        data class Item(val key: String, val at: Long)
-        val all = ArrayList<Item>(n)
-        for (k in entries.keys()) {
+        if (n <= MAX_ENTRIES) return
+        // 收集 key + 时间戳,按时间升序,删最旧的那一批
+        val items = ArrayList<Pair<String, Long>>(n)
+        val keys = entries.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
             val o = entries.optJSONObject(k) ?: continue
-            val at = maxOf(o.optLong("fa"), o.optLong("pa"), 0L)
-            all.add(Item(k, at))
+            items.add(k to maxOf(o.optLong("fa"), o.optLong("pa")))
         }
-        all.sortBy { it.at }
+        items.sortBy { it.second }
         val overflow = n - MAX_ENTRIES
-        for (i in 0 until overflow) entries.remove(all[i].key)
+        for (i in 0 until overflow) entries.remove(items[i].first)
         LOG.i("echo-line-health pruned=" + overflow + " kept=" + MAX_ENTRIES)
-        return overflow
     }
-
-    private fun encodeMeta(pruned: Int): JSONObject =
-        if (pruned <= 0) JSONObject() else JSONObject().put(PRUNED_AT, System.currentTimeMillis())
 
     private fun persist(root: JSONObject) {
         KV.put(bucketKey(), root.toString())
@@ -232,7 +221,7 @@ object LineHealthMemory {
         .put("rm", s.resolveMs)
         .put("pa", s.playedAt)
 
-    private fun decode(key: String, o: JSONObject?): LineHealthPolicy.State {
+    private fun decode(o: JSONObject?): LineHealthPolicy.State {
         if (o == null) return LineHealthPolicy.State()
         return try {
             LineHealthPolicy.State(

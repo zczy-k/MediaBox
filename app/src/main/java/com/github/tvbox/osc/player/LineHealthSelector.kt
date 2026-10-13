@@ -32,12 +32,13 @@ object LineHealthSelector {
      * @return 与 flags 等长的重排结果
      */
     @JvmStatic
+    @JvmOverloads
     fun reorder(flags: List<String>, keys: List<String>, now: Long = System.currentTimeMillis()): List<String> {
         if (flags.size < 2) return flags
         if (keys.size != flags.size) return flags   // 契约不符:不动顺序(宁可不优化,不可排错)
         val scores = LineHealthMemory.orderScores(keys.filter { it.isNotEmpty() }, now)
         // 全零 ⇒ 没有记忆可读,原样返回(省一次排序)
         if (scores.values.none { it != 0 }) return flags
-        return LineHealthPolicy.reorderByScore(flags, keys) { k -> scores[k] ?: 0 }
+        return LineHealthPolicy.reorderByScore(flags, { i -> keys[i] }) { k -> scores[k] ?: 0 }
     }
 }

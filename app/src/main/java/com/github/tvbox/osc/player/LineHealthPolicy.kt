@@ -131,16 +131,20 @@ object LineHealthPolicy {
      *       屏蔽掉一条可能让"只剩两条且都坏"的场景变成无路可走。</li>
      * </ul>
      *
-     * @param scoreOf 取每条候选的健康分;缺失的键按 0(中性)处理
+     * @param keyAt 按**下标**取该条候选的健康键。刻意用下标而不是 `(T) -> String`:
+     *              调用方持有的是"候选列表 + 等长键列表"两个平行列表,而 **flag 可能重复**
+     *              (同一源站两次上报同名线路),用 `indexOf(item)` 反查会永远命中第一条,
+     *              把第二条的分数错记到第一条上。下标不会串位。
+     * @param scoreOf 取某个健康键的分数;缺失按 0(中性)处理
      */
-    fun <T> reorderByScore(items: List<T>, keyOf: (T) -> String, scoreOf: (String) -> Int): List<T> {
+    fun <T> reorderByScore(items: List<T>, keyAt: (Int) -> String, scoreOf: (String) -> Int): List<T> {
         if (items.size < 2) return items
-        // 全零 ⇒ 一条可用的健康证据都没有,原样返回
-        if (items.none { scoreOf(keyOf(it)) != 0 }) return items
+        // 全零 ⇒ 一条可用的健康证据都没有,原样返回(省一次排序)
+        if (items.indices.none { scoreOf(keyAt(it)) != 0 }) return items
         return items.indices
             .sortedWith(
                 // 主键:分数降序(健康分高的先试)
-                compareByDescending<Int> { scoreOf(keyOf(items[it])) }
+                compareByDescending<Int> { scoreOf(keyAt(it)) }
                     // 次级键:原下标 —— 保证同分稳定(稳定排序)
                     .thenBy { it },
             )
