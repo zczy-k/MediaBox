@@ -195,8 +195,13 @@ class LineHealthPolicyTest {
     @Test
     fun `reorder_shortListUnchanged`() {
         val flags = listOf("only")
+        // ⚠️ 空列表必须显式给类型参数:reorderByScore 是泛型 <T>,
+        //    裸 emptyList() 无法推断 T(CI 报 "Cannot infer type for type parameter 'T'")。
         assertEquals(flags, LineHealthPolicy.reorderByScore(flags, { "k" }) { -100 })
-        assertEquals(emptyList<String>(), LineHealthPolicy.reorderByScore(emptyList(), { "" }) { -100 })
+        assertEquals(
+            emptyList<String>(),
+            LineHealthPolicy.reorderByScore(emptyList<String>(), { "" }) { -100 },
+        )
     }
 
     // ---------- 硬约束二:键必须绑定片 id ----------
