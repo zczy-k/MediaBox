@@ -232,7 +232,8 @@ object LineHealthMemory {
                 lifted++
             }
             if (lifted > 0) persist(all)
-            if (lifted > 0) LOG.i("echo-recover layer=L1 line-suspect lifted=" + lifted)
+            // 日志不设 lifted>0 守卫:有守卫则"没触发"与"触发了但 0 个"在日志上无法区分
+            LOG.i("echo-recover layer=L1 line-suspect lifted=" + lifted)
             lifted
         } catch (th: Throwable) {
             LOG.i("echo-recover line-suspect failed: " + th.message)

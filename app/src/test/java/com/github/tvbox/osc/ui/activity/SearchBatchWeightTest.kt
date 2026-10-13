@@ -155,4 +155,38 @@ class SearchBatchWeightTest {
         val ordered = SearchBatchPolicy.orderByWeight(pool, homeKey = "", weightOf = { 60 })
         assertEquals(listOf("first", "second", "third"), ordered.map { it.key })
     }
+
+    // ==================== onFloorPicked 无条件回调(问题12修复) ====================
+
+    @Test
+    fun `保底配额回调始终触发_即使捞出0个`() {
+        // 全部源权重健康 ⇒ 无低权重源可捞 ⇒ floorAdded 为空
+        val sources = listOf(source("home", true), source("a", true), source("b", true))
+        val weights = mapOf("home" to 60, "a" to 90, "b" to 80)
+        var invoked = false
+        var captured: List<String>? = null
+        SearchBatchPolicy.splitFastRoundSourcesByWeight(
+            sources, homeKey = "home",
+            weightOf = { weights[it] ?: 60 },
+            floorQuotaN = 3,
+            onFloorPicked = { keys -> invoked = true; captured = keys },
+        )
+        // 关键:即便没捞到,回调也必须发生(否则日志 0 条无法区分"没跑"与"无料可捞")
+        assertTrue("回调必须被调用", invoked)
+        assertTrue("无低权重源时应为空", captured!!.isEmpty())
+    }
+
+    @Test
+    fun `保底配额回调传出实际捞入的key`() {
+        val sources = listOf(source("home", true), source("good", true), source("bad", false))
+        val weights = mapOf("home" to 60, "good" to 80, "bad" to 5)
+        var captured: List<String>? = null
+        SearchBatchPolicy.splitFastRoundSourcesByWeight(
+            sources, homeKey = "home",
+            weightOf = { weights[it] ?: 60 },
+            floorQuotaN = 1,
+            onFloorPicked = { keys -> captured = keys },
+        )
+        assertEquals(listOf("bad"), captured)
+    }
 }

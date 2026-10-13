@@ -510,11 +510,13 @@ class SearchViewModel : ViewModel() {
             homeKey = home.key,
             weightOf = { weightScores[it] ?: SourceWeightPolicy.NEUTRAL },
             lastSearchedAtOf = { lastSearched[it] ?: 0L },
-            // 保底配额实际捞进了哪些延后源(可观测,证明"兜底"是真的)。
-            // 没有这条日志只能看到 fast/deferred 计数,无法证明"权重最低的 N 个确实被塞回首轮"
-            // —— 而"兜底有没有生效"= "权重模型是不是真安全网"的唯一证据(见《源与线路的权重模型》§5.1)。
+            // 保底配额结果(可观测,证明"兜底"是真的)。
+            // n = 实际捞回首轮的配额源数;cand = 候选源总数。**无条件打印**:
+            // n=0 时若 cand>0 说明"无低权重源可捞"(配额逻辑正常),cand=0 才是"池空"。
+            // 没有这条日志,无法区分"配额没实现"与"配额正常但无可捞" —— 真机曾因此误判。
             onFloorPicked = { keys ->
-                LOG.i("echo-weight floor n=" + keys.size + " keys=" + keys.joinToString(","))
+                LOG.i("echo-weight floor n=" + keys.size + " cand=" + sources.size +
+                    " keys=" + keys.joinToString(","))
             },
         )
         queuedSourceKeys = fastKeys + deferredKeys

@@ -147,8 +147,12 @@ internal object SearchBatchPolicy {
                 floorAdded.add(key)
             }
         }
-        // 上报实际捞进首轮的保底成员(调用方打 echo-weight floor 日志)
-        if (floorAdded.isNotEmpty()) onFloorPicked?.invoke(floorAdded)
+        // 上报保底配额结果(调用方打 echo-weight floor 日志)。
+        // ⚠️ **无条件回调**(2026-10-13 真机教训):此前 `if (floorAdded.isNotEmpty())` 守卫导致
+        // "配额没生效(0 个)"与"配额生效但无低权重源可捞"在日志上都是 0 条,无法区分
+        // —— 真机上正是因此误判"保底配额没实现"。回调**始终**发生,把候选数一并传出,
+        // 调用方据 floor=<捞入数> cand=<候选数> 即可判断是"无料可捞"还是"根本没跑"。
+        onFloorPicked?.invoke(floorAdded)
         // ③ 延后列表里,被保底捞走的要去掉(它已在首轮),其余保持原次序
         val deferred = (healthyDeferred + lowWeightDeferred).filterNot { fast.contains(it) }
         return fast.toList() to deferred

@@ -208,12 +208,24 @@ class DetailViewModel : ViewModel() {
      */
     private fun markSourceConverged() {
         sourceConverged = true
+        replayPendingCrossSourceUpgrade("converge")
+    }
+
+    /**
+     * 补执行挂起的跨源升清(若有待办)。两个触发时机共用:
+     * <ol>
+     *   <li>源内收敛([markSourceConverged] —— 播放侧可能在收敛前就发了请求);</li>
+     *   <li>聚合搜索命中到达([fallbackCandidates] 填充后 —— 候选就绪才谈得上跨源择优)。</li>
+     * </ol>
+     *
+     * @param reason 仅用于日志,便于在真机上区分"是哪条时机触发的补执行"
+     */
+    private fun replayPendingCrossSourceUpgrade(reason: String) {
         val held = pendingCrossSourceS
-        if (held > 0) {
-            pendingCrossSourceS = 0
-            LOG.i("echo-xsource replay held S=" + held + " after converge")
-            tryCrossSourceUpgrade(held)
-        }
+        if (held <= 0) return
+        pendingCrossSourceS = 0
+        LOG.i("echo-xsource replay held S=" + held + " after " + reason)
+        tryCrossSourceUpgrade(held)
     }
 
     /** 跨源提示的一次性闩(键 = 站点|片id):用户关掉或点过之后,本会话同片不再弹。 */
@@ -372,7 +384,24 @@ class DetailViewModel : ViewModel() {
             }
             .filter { (k, _) -> k != sourceKey && !usedSourceKeys.contains(k) }
             .distinct()
-        if (candidates.isEmpty()) return
+        // ⚠️ 2026-10-13 真机修复(问题 10):候选列表空时**不能静默返回**。
+        //
+        // 根因:`fallbackCandidates` 只在**聚合搜索回包**时填充,而它是"换源链触发"的产物。
+        // 跨源升清是**播放中主动**行为 —— 播放正常时换源链从不触发 ⇒ 候选列表恒空 ⇒
+        // 决策链在 `candidates.isEmpty()` 处静默消失(真机取证:三次 replay 后均无 decide)。
+        //
+        // 修法:候选为空 ⇒ **主动启动聚合搜索**,并把当前 S 重新挂起([pendingCrossSourceS])。
+        // 聚合搜索命中到达后(见聚合回包处的 `fallbackCandidates.addAll` 分支)会再次调
+        // [tryCrossSourceUpgrade] 决策 —— 那时候选已就绪。
+        //
+        // 为什么不在本函数里自己造候选:跨源择优必须知道"**对端源该片的 id**"(不同源 id 不同),
+        // 这个映射只能由聚合搜索产出。自造候选等于凭空猜测 id,必然查不到画质记忆。
+        if (candidates.isEmpty()) {
+            LOG.i("echo-xsource skip: no candidates yet, kick aggregate search curS=" + currentSharpness)
+            pendingCrossSourceS = currentSharpness
+            ensureSourceSearchRunning()
+            return
+        }
         val bestByTitle = VideoQualityMemory.lookupBestBatch(candidates)
         val pool = ArrayList<CrossSourceUpgradePolicy.Candidate>(candidates.size)
         candidates.forEach { (candKey, candId) ->
@@ -389,12 +418,21 @@ class DetailViewModel : ViewModel() {
             deviceCapHeight = capHeight,
         )
         LOG.i(
-            "echo-xsource decide curS=" + currentSharpness + " candidates=" + pool.size +
-                " cap=" + capHeight + " verdict=" + (picked?.sourceKey ?: "none") +
+            "echo-xsource decide curS=" + currentSharpness + " candidates=" + candidates.size +
+                " pool=" + pool.size + " cap=" + capHeight +
+                " verdict=" + (picked?.sourceKey ?: "none") +
                 " targetS=" + (picked?.let { VideoQualityPolicy.sharpness(it.variant) } ?: -1)
         )
-        if (picked == null) return
-        val video = candidateForKey(picked.sourceKey) ?: return
+        // 问题 11:每个返回点都必须有日志(项目铁律"诊断日志不该有守卫")—— 否则决策链
+        // 在返回点无声消失,排查只能靠推测。此前这里三处 return 全无日志,本次真机就吃了亏。
+        if (picked == null) {
+            return
+        }
+        val video = candidateForKey(picked.sourceKey)
+        if (video == null) {
+            LOG.i("echo-xsource skip: picked key not resolvable key=" + picked.sourceKey)
+            return
+        }
         // 跨源切换走既有 switchSource 链路(重搜索 + 重取详情),与用户手动换源完全同路 ——
         // 不新造第二条切换路径,避免两套进度继承/状态复位逻辑漂移。
         switchSource(video)
@@ -1797,6 +1835,9 @@ class DetailViewModel : ViewModel() {
                 maybeCorrectCompleteness()
                 publishSourceChips()
                 refreshCrossSourceHint()
+                // 跨源升清的候选就绪 ⇒ 补执行挂起的决策(2026-10-13 问题 10 修复:
+                // 播放中换源链不触发时,候选只能靠这里"主动启动的聚合搜索"补齐)。
+                replayPendingCrossSourceUpgrade("candidates-ready")
                 if (shouldAutoTakeOver()) loadNextFallbackCandidate()
             }
             val related = videos.filter {

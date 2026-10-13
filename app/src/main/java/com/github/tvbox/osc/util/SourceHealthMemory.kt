@@ -435,8 +435,11 @@ object SourceHealthMemory {
             }
             if (lifted > 0) dirty = true
         }
+        // ⚠️ 日志**不设 lifted>0 守卫**(2026-10-13 真机教训):有守卫时"没触发"与
+        // "触发了但平反 0 个"在日志上完全一样,排查无从下手(项目铁律:诊断日志不该有守卫)。
+        // dirty/flush 仍按需(那是性能考量,与可观测性无关)。
+        LOG.i("echo-recover layer=L1 network-restored lifted=" + lifted)
         if (lifted > 0) {
-            LOG.i("echo-recover layer=L1 network-restored lifted=$lifted")
             flushNow()
             bumpRevision()
         }
@@ -733,8 +736,10 @@ object SourceHealthMemory {
                     // 网络恢复:立即平反纯网络类封禁。onAvailable 在系统网络线程回调,
                     // liftNetworkBans 内部自带锁,可在任意线程调用。
                     try {
-                        val lifted = liftNetworkBans()
-                        if (lifted > 0) LOG.i("echo-recover network available, lifted=$lifted")
+                        // 无条件打一行"网络恢复事件已到达":与 liftNetworkBans 内部那行
+                        // (带 lifted 计数)配对,能区分"回调没触发"与"触发了但平反 0 个"。
+                        LOG.i("echo-recover network available, evaluate")
+                        liftNetworkBans()
                     } catch (th: Throwable) {
                         LOG.i("echo-recover lift failed: " + th.message)
                     }
