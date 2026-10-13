@@ -2,6 +2,7 @@ package com.github.tvbox.osc.player;
 
 import android.text.TextUtils;
 import android.util.Base64;
+import android.os.SystemClock;
 
 import androidx.annotation.Nullable;
 import androidx.lifecycle.Observer;
@@ -88,6 +89,9 @@ final class PlaybackFetch {
                     return;
                 }
                 controller.cancelResolvePlayUrlTimeout();
+                // 线路健康"取流耗时"上报(2026-10-13,方案 A 接线)。
+                // 只有走到这里才算"结果被采纳"(上面的过期/换源中校验都已通过)⇒ 样本归属正确。
+                recordResolveElapsed(info);
                 controller.publishQuality(info);
                 controller.setWebPlayUrl(null);
                 controller.setProgressKey(info.optString("proKey", null));
@@ -187,6 +191,33 @@ final class PlaybackFetch {
         } else {
             // 获取播放信息错误后只需再重试一次
             controller.handleResolvePlayUrlFailed(controller.str(R.string.player_get_info_error));
+        }
+    }
+
+    /**
+     * 线路健康"取流耗时"上报:结果被采纳时算出"这次取流等了多久",写进线路台账。
+     *
+     * <p>只上报耗时、**绝不**上报失败 —— 这是[线路健康四条硬约束]里的第 4 条
+     * (播放证据永不参与源级封禁)的配套:耗时是纯观测值,喂给"慢线路降权",
+     * 不产生任何"这条线路坏了"的证据。
+     *
+     * <p>耗时口径 = 结果被采纳的时刻 − {@code startResolvePlayUrlTimeout} 落笔的发起时刻。
+     * 起点是消费式读取:陈旧结果不会重复上报同一次取流。
+     */
+    private void recordResolveElapsed(JSONObject info) {
+        try {
+            long start = controller.consumeResolveStartElapsed();
+            if (start <= 0L) return;
+            long elapsed = SystemClock.elapsedRealtime() - start;
+            if (elapsed <= 0L) return;
+            VodInfo vod = controller.vod();
+            if (vod == null || TextUtils.isEmpty(vod.id)) return;
+            String flag = info.optString("flag", "");
+            if (TextUtils.isEmpty(flag)) flag = vod.playFlag;
+            if (TextUtils.isEmpty(flag)) return;
+            LineHealthRecorder.INSTANCE.recordResolveMs(vod.sourceKey, vod.id, flag, elapsed);
+        } catch (Throwable ignored) {
+            // 诊断数据,任何异常都不得影响播放
         }
     }
 

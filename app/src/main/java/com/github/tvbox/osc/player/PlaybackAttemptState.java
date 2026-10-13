@@ -37,6 +37,16 @@ final class PlaybackAttemptState {
 
     long playTimeoutBasePosition = 0;
 
+    /**
+     * 本次取流(取播放地址)的发起时刻({@link android.os.SystemClock#elapsedRealtime()});0 = 未在途。
+     *
+     * <p>用途:取流结果被接受时算出"这条线路取流等了多久",上报给线路健康台账
+     * (见 {@code LineHealthPolicy} 的 resolveMs 与 {@code LineHealthRecorder.recordResolveMs})。
+     * 起点在 {@code PlaybackController.startResolvePlayUrlTimeout()} 落笔、终点在结果被接受时消费清零,
+     * 因此一次取流只上报一次:陈旧结果不会把已消费的起点再算一遍。
+     */
+    long resolveStartElapsed = 0L;
+
     final Set<String> triedLineFlags = new HashSet<>();
 
     long lastRetryTime = 0;
@@ -174,6 +184,7 @@ final class PlaybackAttemptState {
         everHadVideoTrack = false;
         qualityRecorded = false;
         playTimeoutBasePosition = 0;
+        resolveStartElapsed = 0L;
         allowSwitchPlayer = true;
         hasAutoSwitchedPlayer = false;
         hasAutoSwitchedDecode = false;

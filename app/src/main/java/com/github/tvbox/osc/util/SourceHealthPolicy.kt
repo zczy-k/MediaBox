@@ -81,7 +81,7 @@ data class SourceHealthState(
  *       ≥ [MIN_DISTINCT_CONTENTS] 部不同影片 → 封禁,时长按 [SourceHealthState.banCount] 升级
  *       (首次 [FIRST_BAN_MS](6h)→ 再次 [SECOND_BAN_MS](24h)→ 第三次及以后**永久**);</li>
  *   <li>**连续超时**(内容无关证据):连续 [TIMEOUT_STREAK_BAN] 次搜索超时 → 固定封禁
- *       [TIMEOUT_BAN_MS](1h),**不消耗 [SourceHealthState.banCount]**(不参与永久升级)。</li>
+ *       [TIMEOUT_BAN_MS](30 分钟),**不消耗 [SourceHealthState.banCount]**(不参与永久升级)。</li>
  * </ol>
  *
  * <p>## 为什么规则 2 要单独存在
@@ -89,12 +89,12 @@ data class SourceHealthState(
  * 而规则 1 的门槛里有"≥2 部**不同**影片" —— 这是为了挡住"同一部冷门片连点三次就封源"
  * (那可能只是那部片在源站被下架)。两者混在一个门槛里,后果是**用户要连搜三部不同的片子
  * 才会开始变快**,而真机实测一轮 328 个源里有 289 个超时(88%)—— 前两轮白等。
- * 拆开之后:超时走轻量快判(2 次即封 1 小时),内容相关失败仍走严格门槛。各按各的证据强度。
+ * 拆开之后:超时走轻量快判(2 次即封 30 分钟),内容相关失败仍走严格门槛。各按各的证据强度。
  *
  * <p>## 规则 2 为什么**不升级档位**
  * 超时是最弱的证据,一次网络抖动就能造成一串超时。若让它也累计 [SourceHealthState.banCount],
  * 第三次就会进入**永久封禁**、必须用户手动解除 —— 用最弱的证据给出最重的惩罚,不可接受。
- * 所以超时封禁固定 1 小时、到点自动解封,永不升级。
+ * 所以超时封禁固定 30 分钟、到点自动解封,永不升级。
  *
  * <p>两处容易写错、必须守住的地方:
  * <ul>
@@ -124,8 +124,16 @@ object SourceHealthPolicy {
     /** 规则 2 门槛:连续超时多少次即封 */
     const val TIMEOUT_STREAK_BAN = 2
 
-    /** 规则 2 封禁时长(固定,**不升级**) */
-    const val TIMEOUT_BAN_MS = 1L * 60 * 60 * 1000
+    /**
+     * 规则 2 封禁时长(固定,**不升级**)。
+     *
+     * <p>2026-10-13(C 方案)由 1 小时下调为 **30 分钟**。理由:规则 2 的证据只有"连续两次没答话",
+     * 是**最弱**的一档,而封禁期内源会被 [SourceHealthFilter] 从搜索池移除 ⇒ **无法再答话自证**,
+     * 只能封满整段。对"边界慢源"(跨境/弱网下偶尔踩到 8s 超时线)而言,1 小时的空窗过长;
+     * 30 分钟既保留了"快速止损"的初衷(触发门槛仍是连续 2 次,未放宽),
+     * 又把误封代价减半 —— 对真正死掉的源而言,30 分钟与 1 小时几无差别。
+     */
+    const val TIMEOUT_BAN_MS = 30L * 60 * 1000
 
     /**
      * 「降权」的有效期:最近一次搜索超时距今在这个窗口内,该源就被排到队尾。
@@ -217,7 +225,7 @@ object SourceHealthPolicy {
      * <p>## [suppressTimeoutBan](2026-10-10 雪崩保险丝)
      * 置真时(判定为网络抖动期,见 [SourceHealthMemory]):超时事件**只追加进 [SourceHealthState.fails]**
      * (供 30 分钟降权排序用),**不加** [SourceHealthState.timeoutStreak]、**不触发**规则 2 封禁 ——
-     * 一次弱网能让上百个源同时"连续超时 2 次",不抑制就会成批封掉 1 小时,弱网恢复后反而无源可搜。
+     * 一次弱网能让上百个源同时"连续超时 2 次",不抑制就会成批封掉 30 分钟,弱网恢复后反而无源可搜。
      * 规则 1 语义不受影响(其判据已不含 PLAY_FAILED,而 SEARCH_FAILED 本就不加 streak)。
      *
      * @param contentKey 归一化片名,见 [contentKey];为空表示"这次失败取不到片名",
@@ -233,7 +241,7 @@ object SourceHealthPolicy {
         if (state.manualLocked) return state
         val base = normalize(state, now)
         val window = base.fails + SourceFailEvent(kind, now, contentKey)
-        // 规则 1 先判:它的封禁时长(≥6h)严格长于规则 2(1h),先判后判最终态一样;
+        // 规则 1 先判:它的封禁时长(≥6h)严格长于规则 2(30min),先判后判最终态一样;
         // 但只有先判,才不会被"规则 2 已封"短路掉升级档位。
         if (shouldBan(window, now)) return ban(base, now)
         val streak = if (kind == SourceFailKind.SEARCH_TIMEOUT && !suppressTimeoutBan) {
@@ -242,9 +250,9 @@ object SourceHealthPolicy {
             base.timeoutStreak
         }
         if (streak >= TIMEOUT_STREAK_BAN) {
-            // 规则 2:固定 1 小时,**不动 banCount**(见类注释:最弱的证据不给最重的惩罚)。
+            // 规则 2:固定 30 分钟,**不动 banCount**(见类注释:最弱的证据不给最重的惩罚)。
             // fails 保留 —— 那是规则 1 的证据,不归这条规则处置。
-            // ⚠️ 取 max:绝不能用 1 小时去**缩短**一个更强的在效封禁(例如规则 1 刚判的 6 小时)。
+            // ⚠️ 取 max:绝不能用 30 分钟去**缩短**一个更强的在效封禁(例如规则 1 刚判的 6 小时)。
             // 正常路径下已被封的源会被过滤掉、不会再产生超时,但这条不该依赖那个前提。
             return base.copy(
                 fails = window,

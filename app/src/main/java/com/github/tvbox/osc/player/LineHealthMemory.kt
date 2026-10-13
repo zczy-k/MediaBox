@@ -51,6 +51,21 @@ object LineHealthMemory {
         return KEY_PREFIX + if (api.isNullOrEmpty()) "default" else MD5.string2MD5(api)
     }
 
+    /**
+     * 线路健康是否启用(2026-10-13)。
+     *
+     * <p>与源级封禁共用「自动屏蔽反复不可用的源」开关([HawkConfig.AUTO_BLOCK_BAD_SOURCES]):
+     * 两者同属"自动处理质量差的源/线路"这一套机制,关掉就该整体停用 ——
+     * 否则关掉源级封禁后线路仍被偷偷重排,开关语义自相矛盾。
+     *
+     * <p>口径与 [com.github.tvbox.osc.util.SourceHealthMemory.isEnabled] 一致:读不到时**按开启**(默认开)。
+     */
+    fun isEnabled(): Boolean = try {
+        KV.get(HawkConfig.AUTO_BLOCK_BAD_SOURCES, true)
+    } catch (th: Throwable) {
+        true
+    }
+
     /** 复合键。三要素缺一不可判 —— 空则无法定位一条线路。 */
     @JvmStatic
     fun keyOf(sourceKey: String?, vodId: String?, flag: String?): String {
@@ -61,6 +76,7 @@ object LineHealthMemory {
     }
 
     /** 读一条;不存在 / 装载失败一律中性态(调用方按"没记过"处理) */
+    @Synchronized
     fun lookup(sourceKey: String?, vodId: String?, flag: String?): LineHealthPolicy.State {
         val k = keyOf(sourceKey, vodId, flag)
         if (k.isEmpty()) return LineHealthPolicy.State()
@@ -74,6 +90,7 @@ object LineHealthMemory {
     /** 记一次失败 */
     @JvmStatic
     @JvmOverloads
+    @Synchronized
     fun recordFail(
         sourceKey: String?,
         vodId: String?,
@@ -93,6 +110,7 @@ object LineHealthMemory {
      * 为"一切正常"的线路新建条目会让容量翻三倍,而它们的记忆价值为零
      * (正常线路本来就不会被降权)。
      */
+    @Synchronized
     fun recordPlayed(sourceKey: String?, vodId: String?, flag: String?, now: Long = System.currentTimeMillis()) {
         val k = keyOf(sourceKey, vodId, flag)
         if (k.isEmpty()) return
@@ -112,6 +130,7 @@ object LineHealthMemory {
     }
 
     /** 记一次取流耗时;<=0 视为未知,不覆盖 */
+    @Synchronized
     fun recordResolveMs(sourceKey: String?, vodId: String?, flag: String?, resolveMs: Long) {
         if (resolveMs <= 0) return
         val k = keyOf(sourceKey, vodId, flag)
@@ -125,6 +144,7 @@ object LineHealthMemory {
      * <p>⚠️ 刻意不缓存到内存:KV 读取本身是同步且廉价的(单键 JSON),
      * 而缓存会引入"何时失效"的问题 —— 一次换线读一次就够。
      */
+    @Synchronized
     fun orderScores(keys: Collection<String>, now: Long): Map<String, Int> {
         if (keys.isEmpty()) return emptyMap()
         return try {
@@ -139,6 +159,7 @@ object LineHealthMemory {
     }
 
     /** 只用于测试/诊断:当前条目数 */
+    @Synchronized
     fun size(): Int = try {
         loadAll().length()
     } catch (th: Throwable) {
@@ -146,6 +167,7 @@ object LineHealthMemory {
     }
 
     /** 清空当前订阅的线路记忆(设置页"清缓存"用) */
+    @Synchronized
     fun clear() {
         try {
             KV.put(bucketKey(), "")
@@ -173,6 +195,7 @@ object LineHealthMemory {
     }
 
     /** 装载;载荷坏掉时返回空表(宁可丢记忆,也不能让功能不可用) */
+    @Synchronized
     private fun loadAll(): JSONObject {
         val raw = try {
             KV.get(bucketKey(), "")

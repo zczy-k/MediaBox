@@ -709,7 +709,24 @@ public class PlaybackController {
     // -------------------- 三处超时 --------------------
 
     public void startResolvePlayUrlTimeout() {
+        // 线路健康:记下本次取流的发起时刻,结果被接受时算出耗时上报(见 PlaybackFetch)。
+        // 取流请求即将发出,这里是最贴近"这个源开始答话"的起点。
+        st.resolveStartElapsed = android.os.SystemClock.elapsedRealtime();
         timeouts.startResolvePlayUrlTimeout(getResolvePlayUrlTimeoutMs());
+    }
+
+    /**
+     * 取出并清零本次取流的发起时刻(取流结果被接受时调用一次)。
+     *
+     * <p>消费式读取:调用方拿到非零值后起点即清零,陈旧结果(被 {@link #isStalePlayResult} 挡掉的那些)
+     * 不会把同一次取流的耗时重复上报。
+     *
+     * @return 发起时刻;0 = 本次没有在途取流(或已被消费)
+     */
+    public long consumeResolveStartElapsed() {
+        long start = st.resolveStartElapsed;
+        st.resolveStartElapsed = 0L;
+        return start;
     }
 
     /** 单站取流等待上界:站点声明再大的 timeout,也不让用户等超过这个数 */

@@ -52,6 +52,7 @@ object LineHealthRecorder {
         noNetwork: Boolean = false,
         userPickedLine: Boolean = false,
     ): Boolean {
+        if (!LineHealthMemory.isEnabled()) return false       // 总开关关闭:整条线路健康机制等同不存在
         if (userPickedLine) return false                    // 闸 2:用户选的,不产生证据
         val key = LineHealthMemory.keyOf(sourceKey, vodId, flag)
         if (key.isEmpty()) return false
@@ -69,6 +70,7 @@ object LineHealthRecorder {
     /** 上报一次取流耗时(不设闸:耗时是无害的观测值) */
     @JvmStatic
     fun recordResolveMs(sourceKey: String?, vodId: String?, flag: String?, resolveMs: Long) {
+        if (!LineHealthMemory.isEnabled()) return
         if (resolveMs <= 0) return
         LineHealthMemory.recordResolveMs(sourceKey, vodId, flag, resolveMs)
     }
@@ -76,6 +78,7 @@ object LineHealthRecorder {
     /** 上报一次成功起播:连续失败归零 */
     @JvmStatic
     fun recordPlayed(sourceKey: String?, vodId: String?, flag: String?) {
+        if (!LineHealthMemory.isEnabled()) return
         LineHealthMemory.recordPlayed(sourceKey, vodId, flag, System.currentTimeMillis())
     }
 }

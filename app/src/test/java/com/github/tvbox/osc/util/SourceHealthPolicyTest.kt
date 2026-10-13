@@ -24,6 +24,9 @@ class SourceHealthPolicyTest {
     private val hour = 60L * 60L * 1000L
     private val day = 24 * hour
 
+    /** 规则 2 的封禁时长(2026-10-13 起为 30 分钟)。用常量而非硬编码,阈值再调时测试自动跟随。 */
+    private val timeoutBan = SourceHealthPolicy.TIMEOUT_BAN_MS
+
     /** 连记 [fails] 次失败(片名轮流取,按需凑"不同影片数") */
     private fun state(
         base: SourceHealthState = SourceHealthState(),
@@ -55,15 +58,15 @@ class SourceHealthPolicyTest {
     fun threeFailsSameFilm_doesNotEscalate() {
         // 同一部片连点三次:可能只是那部片在源站被下架,不该走**升级档位**(那会一路到永久封禁)。
         //
-        // ⚠️ 2026-10-09:它仍会命中**规则 2**(连续超时 2 次 → 1 小时临时封)——
+        // ⚠️ 2026-10-09:它仍会命中**规则 2**(连续超时 2 次 → 30 分钟临时封)——
         // 因为超时是**内容无关**的证据:"源连响应都没有"与你搜的是哪部片无关。
         // 所以这里只断言"不升级、不永久",不再断言"完全没被封"(那正是旧口径)。
         val s = state(fails = 3, titles = listOf("电影A"))
         assertEquals(0, s.banCount)
         assertFalse(s.manualLocked)
-        // 封的是 1 小时的临时档,不是 6 小时
-        assertTrue(SourceHealthPolicy.isBlocked(s, t0 + hour - 1))
-        assertFalse(SourceHealthPolicy.isBlocked(s, t0 + hour))
+        // 封的是规则 2 的临时档(30 分钟),不是 6 小时
+        assertTrue(SourceHealthPolicy.isBlocked(s, t0 + timeoutBan - 1))
+        assertFalse(SourceHealthPolicy.isBlocked(s, t0 + timeoutBan))
     }
 
     @Test
@@ -78,12 +81,12 @@ class SourceHealthPolicyTest {
     @Test
     fun twoFailsTwoFilms_doNotEscalate() {
         // 两次失败不够**升级档位**(要 3 次)。⚠️ 2026-10-09:如果这两次都是**超时**,
-        // 它会命中规则 2 的 1 小时临时封 —— 这是设计使然(超时与搜什么片无关)。
-        // 所以这里只断言"没有升级",并显式确认封的是 1 小时那一档。
+        // 它会命中规则 2 的 30 分钟临时封 —— 这是设计使然(超时与搜什么片无关)。
+        // 所以这里只断言"没有升级",并显式确认封的是规则 2 的临时档。
         val s = state(fails = 2, titles = listOf("电影A", "电影B"))
         assertEquals(0, s.banCount)
-        assertTrue(SourceHealthPolicy.isBlocked(s, t0 + hour - 1))
-        assertFalse(SourceHealthPolicy.isBlocked(s, t0 + hour))
+        assertTrue(SourceHealthPolicy.isBlocked(s, t0 + timeoutBan - 1))
+        assertFalse(SourceHealthPolicy.isBlocked(s, t0 + timeoutBan))
     }
 
     @Test
@@ -151,7 +154,7 @@ class SourceHealthPolicyTest {
         assertEquals(1, s.banCount)
         // 再攒够三次 ⇒ 第二档 24 小时
         // (2026-10-10:PLAY_FAILED 已退出判据,这里用 SEARCH_FAILED —— 3 次 3 部不同影片,
-        //  且不加 streak,避免混入规则 2 的 1h 临时封把断言弄混)
+        //  且不加 streak,避免混入规则 2 的 30min 临时封把断言弄混)
         s = state(base = s, kind = SourceFailKind.SEARCH_FAILED, fails = 3, titles = listOf("电影C", "电影D", "电影E"), at = t1)
         assertEquals(2, s.banCount)
         assertTrue(SourceHealthPolicy.isBlocked(s, t1 + 24 * hour - 1))
@@ -214,12 +217,12 @@ class SourceHealthPolicyTest {
     // 两者混在一起时,用户要连搜三部不同的片子才会开始变快(真机实测 328 源里 289 个超时)。
 
     @Test
-    fun twoConsecutiveTimeouts_banOneHourWithoutEscalating() {
+    fun twoConsecutiveTimeouts_banTemporaryWithoutEscalating() {
         // 连 2 次超时即封,**同一部片也算**(超时与搜什么无关)
         val s = state(fails = 2, titles = listOf("电影A"))
         assertTrue(SourceHealthPolicy.isBlocked(s, t0))
-        assertTrue(SourceHealthPolicy.isBlocked(s, t0 + hour - 1))
-        assertFalse(SourceHealthPolicy.isBlocked(s, t0 + hour))
+        assertTrue(SourceHealthPolicy.isBlocked(s, t0 + timeoutBan - 1))
+        assertFalse(SourceHealthPolicy.isBlocked(s, t0 + timeoutBan))
         // ⚠️ 不消耗升级档位:超时是最弱的证据,一次网络抖动就能造出一串;
         // 让它累计到第 3 次就会变成**永久封禁**(要用户手动解除)—— 不可接受
         assertEquals(0, s.banCount)
@@ -270,7 +273,7 @@ class SourceHealthPolicyTest {
     fun timeoutBanExpiryRequiresFreshStreak() {
         var s = state(fails = 2, titles = listOf("电影A"))
         assertTrue(SourceHealthPolicy.isBlocked(s, t0))
-        val t1 = t0 + hour
+        val t1 = t0 + timeoutBan
         s = SourceHealthPolicy.normalize(s, t1)
         assertFalse(SourceHealthPolicy.isBlocked(s, t1))
         // 封禁时计数已归零 ⇒ 解封后只超时一次不该立刻又封

@@ -146,7 +146,7 @@ class SearchViewModel : ViewModel() {
      * 本轮搜索(token)内**已向源健康台账记过失败**的源(2026-10-10)。
      *
      * <p>为什么要这个集合:超时源会先走 4s 限时重试一轮(P4-A),"首批超时 + 重试再超时"
-     * 会被台账当成**连续两次**超时,凑满规则 2 的门槛直接封 1 小时 —— 同一次搜索就把源封掉,
+         * 会被台账当成**连续两次**超时,凑满规则 2 的门槛直接封 30 分钟 —— 同一次搜索就把源封掉,
      * 显然不是"连续超时"的本意。口径改为:**同一 token 内每个源最多记一次**失败证据,
      * 连续 2 次必须是**跨两次独立搜索**(或两个不同 token 的批次)。每源每关键词仅重试一次
      * 是既有约束,所以集合无上限膨胀风险,随 [search] 开新轮清空。
@@ -847,7 +847,7 @@ class SearchViewModel : ViewModel() {
     private fun recordSourceOutcome(sourceKey: String, state: ResultState, settled: SourceResult?) {
         when (state) {
             // 同一 token 内每源只记一次(2026-10-10):重试轮的超时/失败是**同一次搜索的延续**,
-            // 再记一次就凑成"连续 2 次"把源误封 1 小时(见 failRecordedForToken 的说明)
+            // 再记一次就凑成"连续 2 次"把源误封 30 分钟(见 failRecordedForToken 的说明)
             ResultState.Timeout ->
                 if (failRecordedForToken.add(sourceKey)) {
                     notifyIfBanned(SourceHealthMemory.recordFail(SourceFailKind.SEARCH_TIMEOUT, sourceKey, searchedTitle.value))

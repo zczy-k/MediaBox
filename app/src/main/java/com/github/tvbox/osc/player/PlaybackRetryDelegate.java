@@ -502,34 +502,25 @@ final class PlaybackRetryDelegate {
                     st.lastFailureNetwork, st.userPickedLine);
         }
         List<String> lineFlags = EpisodeMatcher.lineFlagsInDisplayOrder(vod);
-        // ⚠️ 关键顺序(2026-10-12,本实现第一版的真 bug):
-        //    **先**在**原顺序**上定位当前线路,**再**重排候选区段。
-        //    若先重排再定位,刚被记失败的当前线路会被压到队尾 ⇒ currentLineIndex = 末位
-        //    ⇒ startLineIndex = size ⇒ 下面的循环一次都不跑 ⇒ 直接判"线路耗尽"跳去换源。
-        //    表现是"坏线一跳就换源、完全不试其它线路",比不做重排还差。
-        int currentLineIndex = EpisodeMatcher.lineFlagIndex(lineFlags, currentFlag);
-        int startLineIndex = currentLineIndex >= 0 ? currentLineIndex + 1 : 0;
-        // 只重排**当前线路之后**的候选区段:保留"不回头试前面线路"的原有语义,
-        // 同时让区段内"近期连续失败/取流慢"的线路排到后面。
-        // 只重排、不剔除 —— 坏线路仍会被试到(见 LineHealthSelector 的硬约束)。
-        if (startLineIndex < lineFlags.size()) {
-            List<String> tail = new ArrayList<>(lineFlags.subList(startLineIndex, lineFlags.size()));
-            List<String> reorderedTail = LineHealthSelector.INSTANCE.reorder(tail, lineHealthKeys(vod, tail));
-            List<String> merged = new ArrayList<>(lineFlags.size());
-            merged.addAll(lineFlags.subList(0, startLineIndex));
-            merged.addAll(reorderedTail);
-            lineFlags = merged;
-        }
-        String nextFlag = null;
-        int nextIndex = 0;
-        for (int i = startLineIndex; i < lineFlags.size(); i++) {
-            String flag = lineFlags.get(i);
+        // 候选 = **全部**未试且带剧集的线路(跨"当前线路之前/之后"统一取)。
+        // ⚠️ 2026-10-13(B 方案):原实现只在"当前线路之后"重排 —— 于是当前线路之前
+        //    未试的坏线仍会被优先选中,这是"换集/重开后重复踩同一条坏线"的一个来源。
+        //    改为:先按"已试"过滤(跨位置统一),再对整段候选按线路健康分**稳定重排**。
+        //    仍然是"只排后、不剔除":坏线只是排到后面,仍会被试到(见 LineHealthSelector 硬约束)。
+        //    这也顺带消掉了原实现"先定位再重排"的顺序陷阱:不再依赖 currentLineIndex。
+        List<String> untried = new ArrayList<>(lineFlags.size());
+        for (String flag : lineFlags) {
             List<VodInfo.VodSeries> seriesList = vod.seriesMap.get(flag);
             if (!st.triedLineFlags.contains(flag) && seriesList != null && !seriesList.isEmpty()) {
-                nextFlag = flag;
-                nextIndex = EpisodeMatcher.sameEpisodeIndex(currentSeries, seriesList, currentIndex);
-                break;
+                untried.add(flag);
             }
+        }
+        List<String> ordered = LineHealthSelector.INSTANCE.reorder(untried, lineHealthKeys(vod, untried));
+        String nextFlag = ordered.isEmpty() ? null : ordered.get(0);
+        int nextIndex = 0;
+        if (nextFlag != null) {
+            nextIndex = EpisodeMatcher.sameEpisodeIndex(
+                    currentSeries, vod.seriesMap.get(nextFlag), currentIndex);
         }
         if (nextFlag == null) {
             LOG.i("echo-autoRetry all lines exhausted");

@@ -13,6 +13,7 @@ import com.github.tvbox.osc.util.DetailNoListMemory
 import com.github.tvbox.osc.util.SearchSettings
 import com.github.tvbox.osc.util.SourceCompletenessPolicy
 import com.github.tvbox.osc.util.QualityLabelPolicy
+import com.github.tvbox.osc.util.EpisodeMatcher
 import com.github.tvbox.osc.util.EpisodeNormalizer
 import com.github.tvbox.osc.util.EpisodeSetMath
 import com.github.tvbox.osc.util.EpisodeType
@@ -24,6 +25,7 @@ import com.github.tvbox.osc.event.RefreshEvent
 import com.github.tvbox.osc.player.CrossSourceHintPolicy
 import com.github.tvbox.osc.player.DeviceCapability
 import com.github.tvbox.osc.player.LineQualitySelector
+import com.github.tvbox.osc.player.LineHealthMemory
 import com.github.tvbox.osc.player.MiniProbeBudget
 import com.github.tvbox.osc.player.MiniProbeGate
 import com.github.tvbox.osc.player.PlaybackSession
@@ -1757,28 +1759,46 @@ class DetailViewModel : ViewModel() {
      * 电影(全不可数)标签档自然成为主导——与完整性豁免设计互补。
      */
     private fun bestFlagByLabelAndCompleteness(info: VodInfo): String? {
-        var best: String? = null
-        var bestLabel = -1
-        var bestCovers = false
-        var bestCount = 0
-        info.seriesMap?.forEach { (flag, list) ->
-            val label = QualityLabelPolicy.priorityFromLabel(flag)
-            val count = list.mapNotNull { e ->
-                val n = EpisodeNormalizer.normalize(e.name)
-                if (n.type == EpisodeType.REGULAR) n.episode else null
-            }.distinct().size
-            val covers = list.size > info.playIndex
-            if (label > bestLabel ||
-                (label == bestLabel && covers && !bestCovers) ||
-                (label == bestLabel && covers == bestCovers && count > bestCount)
-            ) {
-                best = flag
-                bestLabel = label
-                bestCovers = covers
-                bestCount = count
-            }
+        // 候选按站点展示顺序取(与换线侧 EpisodeMatcher.lineFlagsInDisplayOrder 同源),
+        // 这样"线路健康降权"与既有四级键的相对次序才有稳定基准。
+        val flags = EpisodeMatcher.lineFlagsInDisplayOrder(info)
+        if (flags.isEmpty()) return null
+        // 线路健康(2026-10-13,B 方案):在既有四级键之上叠加"近期连续失败/取流慢"的降权。
+        // **只降权、不剔除** —— 与换线侧同一口径;开关关闭或没有记忆时 orderScores 全 0,等价原行为。
+        // ⚠️ 键必须与录入侧同构:sourceKey 取 info.sourceKey(详情期已带),缺任一要素则取不到记忆、按中性处理。
+        val keys = flags.map { LineHealthMemory.keyOf(info.sourceKey, info.id, it) }
+        val health = if (keys.any { it.isNotEmpty() }) {
+            LineHealthMemory.orderScores(keys.filter { it.isNotEmpty() }, System.currentTimeMillis())
+        } else {
+            emptyMap()
         }
-        return best
+        // 每个 flag 的排序键预计算一次: [健康分, 标签档, 覆盖当前集, 可数集数]
+        val ranked = flags.mapIndexed { i, flag ->
+            flag to (listOf(health[keys[i]] ?: 0) + labelCompletenessScore(info, flag))
+        }
+        // 排序优先级:健康分(降权沉底)> 自报标签档 > 覆盖当前集 > 可数集数 > 站点原序(stable)。
+        // 高级分靠前 ⇒ 坏线不再"因为排在站点第一位就先被起播选中",这是 B 方案的核心收益。
+        return ranked.sortedWith(
+            compareByDescending<Pair<String, List<Int>>> { it.second[0] }
+                .thenByDescending { it.second[1] }
+                .thenByDescending { it.second[2] }
+                .thenByDescending { it.second[3] },
+        ).firstOrNull()?.first
+    }
+
+    /**
+     * 四级排序键(P-质量维度,2026-10-10):自报标签档(HIGH>PLAIN>TC) → 覆盖当前播放位置 →
+     * 可数集数降序 → 站点默认序(由调用方的稳定排序保证)。返回可比较的元组,越大越优先。
+     */
+    private fun labelCompletenessScore(info: VodInfo, flag: String): List<Int> {
+        val list = info.seriesMap?.get(flag).orEmpty()
+        val label = QualityLabelPolicy.priorityFromLabel(flag)
+        val count = list.mapNotNull { e ->
+            val n = EpisodeNormalizer.normalize(e.name)
+            if (n.type == EpisodeType.REGULAR) n.episode else null
+        }.distinct().size
+        val covers = if (list.size > info.playIndex) 1 else 0
+        return listOf(label, covers, count)
     }
 
     /**
