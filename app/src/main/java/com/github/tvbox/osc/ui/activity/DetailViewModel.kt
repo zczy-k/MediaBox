@@ -321,11 +321,12 @@ class DetailViewModel : ViewModel() {
     private var poolRound = ExpandPoolPolicy.FIRST_ROUND
 
     /**
-     * 本次搜索的**源总数**(过滤后、未截断),供搜索协程内判断扩池时对比
-     * ([ExpandPoolPolicy.shouldExpand] 需要 `curSize < total`)。
-     * 用 AtomicInteger:写入在主线程(startSourceSearch),读取在搜索协程(IO)。
+     * **本次搜索已投出过的源**(2026-10-13 增量扩池)。跨扩池轮次**保留**,
+     * 用于"扩池时只投新增源" —— 这是"扩池后**继续搜**、不重头搜"的核心:
+     * 每波只把 [searchedSourceKeys] 里没有的源投出去,已搜过的**绝不重发**。
+     * 换片时清空([startSourceSearch] 中 title 变化处)。
      */
-    private val orderedPoolTotal = java.util.concurrent.atomic.AtomicInteger(0)
+    private val searchedSourceKeys = HashSet<String>()
 
     /**
      * 是否启用**自动扩池**(默认开,可在播放设置关闭)。
@@ -1520,9 +1521,11 @@ class DetailViewModel : ViewModel() {
         // searchTitle —— 晚一步就写错键(把上一部的命中挂到这一部名下)。
         flushFallbackHitsSave()
         // 换片 ⇒ 扩池轮次复位(2026-10-13):"上一部扩到第 3 轮"不能带给新片(每部片都从 1/3 起搜)。
-        // 判据用 searchTitle 是否变化:扩池重启是同片(两值相等)⇒ 不复位;换片 ⇒ 复位。
+        // 判据用 searchTitle 是否变化:扩池是同片(两值相等)⇒ 不复位、且**不清已搜源**(增量续搜);
+        // 换片 ⇒ 复位轮次 + 清"已搜源"。
         if (searchTitle != title) {
             poolRound = ExpandPoolPolicy.FIRST_ROUND
+            searchedSourceKeys.clear()
         }
         searchTitle = title
         // 新一轮搜索 ⇒ 解冻(上一轮可能因为起播成功被冻结过;那条源后来放不出来时还得靠它)
@@ -1555,7 +1558,6 @@ class DetailViewModel : ViewModel() {
         )
         val roundSize = roundPoolSize(orderedPool.size)
         val sources = orderedPool.take(roundSize)
-        orderedPoolTotal.set(orderedPool.size)
         // 诊断包靠这行判断"预热到底有没有触发、候选池多大" —— 真机日志被 ROM 屏蔽时,
         // 文件日志(仅 diag 包落盘)是唯一可观测点。前缀 echo-source- 已在 LOG 白名单里。
         // round/pool/total 三者同看,才能确认"动态扩池"真的在逐轮扩大。
@@ -1581,84 +1583,91 @@ class DetailViewModel : ViewModel() {
         if (sources.isEmpty()) return
         searchJob = viewModelScope.launch {
             val doneCount = java.util.concurrent.atomic.AtomicInteger()
-            // ⚡ 2026-10-13:**去掉批次屏障**(原 `chunked(SEARCH_BATCH_SIZE)` + 每批 awaitAll)。
+            // ⚡ 2026-10-13 增量扩池重构:把"投一波源→等收口→判扩池→再投更多源"做成**单 job 内的波次循环**,
+            // 而不是"扩池就重启 startSourceSearch"。
             //
-            // 真正限制并发的是信号量(12),所以批次大小并不改变"先发谁" —— 前 12 个源先跑;
-            // 但第 13 个源必须等**整批(30 个)全部收口**才开始,而慢源要等满 8s 超时
-            // ⇒ 命中在 13 名之后的源时,"第一个候选"被硬生生推后 8~16s。
-            // (真机实测:点卡片 → 第一个候选 +10.8s/+9.8s,而取流出画面只要 2.6~2.9s。)
+            // ## 为什么必须增量(用户反馈)
+            // 旧实现扩池时 `startSourceSearch()` 重启:换 token + 从头 `sources.mapIndexed` 全量重投
+            // ⇒ 已搜过的 120 个源被**再搜一遍**,纯粹浪费(用户:"前面搜索过的就不用搜索了")。
             //
-            // 现在:全部源一次性入队,由信号量控并发 —— 任一源答话/超时释放额度,排队的下一个
-            // **立刻**顶上。候选到达因此只受"最快答话的源"约束,不受批次边界约束。
-            // 覆盖不变(池里几个源就搜几个,一个不少),只是不再互相排队等整批。
+            // ## 增量怎么做
+            // 波次循环里每波只投 [searchedSourceKeys] 里**没有的**源(take 全量视图的前 N 个、
+            // 滤掉已投的)。扩池只是"把 N 加大",下一波自然只多出"新增区间"那批源 ——
+            // **同 token、不 cancel、不重投**,进度累加。这是"扩池后继续搜"的正解。
             //
-            // 让路能力不靠批次保留:每个源在**拿额度前后各查一次**[searchActive] ——
-            // 换代(换片/换源/重试)与"起播成功冻结"都在这两处生效,排队的任务一到期就自己退出,
-            // 不会白打请求(比"等整批跑完"更早让路)。
-            coroutineScope {
-                sources.mapIndexed { index, bean ->
-                    async {
-                        if (!searchActive(tokenStr)) return@async
-                        semaphore.withPermit {
-                            if (!searchActive(tokenStr)) return@withPermit
-                            // 优先级最高的前 N 个源用快探超时:它们是为"首屏候选"下注的那批,
-                            // 让额度更快回收 ⇒ 后续源更早被投出去。结果晚到仍会经事件通道计入(不丢证据)。
-                            val sourceTimeoutMs = SearchBatchPolicy.detailSourceTimeoutMs(
-                                index,
-                                SearchBatchPolicy.DETAIL_PROBE_SIZE,
-                                SearchBatchPolicy.DETAIL_PROBE_TIMEOUT_MS,
-                                SOURCE_SEARCH_TIMEOUT_MS,
-                            )
-                            val done = CompletableDeferred<Unit>()
-                            pendingSearchDone.put(bean.key, done)?.complete(Unit)
-                            try {
-                                withTimeoutOrNull(sourceTimeoutMs) {
-                                    withContext(Dispatchers.IO) {
-                                        searchCaller.getSearch(bean.key, title, tokenStr)
+            // ## 并发仍由信号量(12)控
+            // 每波内 `async` 排队,慢源等满超时才释放额度;波间串行(上一波 awaitAll 完才判扩池)。
+            val poolView = orderedPool  // 全量(按权重降序);每波只 take 前 N 个并滤掉已投
+            var waveSize = roundSize    // 当前波宽度(首轮 = 外层算好的 roundSize)
+            val total = poolView.size
+            while (true) {
+                val wave = poolView.take(waveSize).filter { searchedSourceKeys.add(it.key) }
+                val waveSizeBefore = doneCount.get()
+                if (wave.isNotEmpty()) {
+                    coroutineScope {
+                        wave.mapIndexed { index, bean ->
+                            async {
+                                if (!searchActive(tokenStr)) return@async
+                                semaphore.withPermit {
+                                    if (!searchActive(tokenStr)) return@withPermit
+                                    // 优先级最高的前 N 个源用快探超时:它们是为"首屏候选"下注的那批,
+                                    // 让额度更快回收 ⇒ 后续源更早被投出去。结果晚到仍会经事件通道计入(不丢证据)。
+                                    val sourceTimeoutMs = SearchBatchPolicy.detailSourceTimeoutMs(
+                                        index,
+                                        SearchBatchPolicy.DETAIL_PROBE_SIZE,
+                                        SearchBatchPolicy.DETAIL_PROBE_TIMEOUT_MS,
+                                        SOURCE_SEARCH_TIMEOUT_MS,
+                                    )
+                                    val done = CompletableDeferred<Unit>()
+                                    pendingSearchDone.put(bean.key, done)?.complete(Unit)
+                                    try {
+                                        withTimeoutOrNull(sourceTimeoutMs) {
+                                            withContext(Dispatchers.IO) {
+                                                searchCaller.getSearch(bean.key, title, tokenStr)
+                                            }
+                                            done.await()
+                                        }
+                                    } finally {
+                                        pendingSearchDone.remove(bean.key)
+                                        // 取消/换代/冻结后的旧 job 不回写进度:免得旧计数覆盖新搜索的 N/M 显示
+                                        if (searchActive(tokenStr)) {
+                                            publishSearchProgress(doneCount.incrementAndGet(), total)
+                                        }
                                     }
-                                    done.await()
-                                }
-                            } finally {
-                                pendingSearchDone.remove(bean.key)
-                                // 取消/换代/冻结后的旧 job 不回写进度:免得旧计数覆盖新搜索的 N/M 显示
-                                if (searchActive(tokenStr)) {
-                                    publishSearchProgress(doneCount.incrementAndGet(), sources.size)
                                 }
                             }
-                        }
+                        }.awaitAll()
                     }
-                }.awaitAll()
+                }
+                LOG.i(
+                    "echo-source-search wave-done done=${doneCount.get()}" +
+                        " wave=" + (doneCount.get() - waveSizeBefore) +
+                        " searched=" + searchedSourceKeys.size + " round=" + poolRound +
+                        " frozen=$searchFrozen token=$myToken"
+                )
+                // 让路:换片/冻结后立即停(别再投下一波、也别走收口)
+                if (!searchActive(tokenStr)) return@launch
+                // 扩池判定:本波收口且 0 命中且还有更多源 ⇒ 加大宽度进下一波(**不重启、不重投**)
+                val hitCount = synchronized(fallbackCandidates) { fallbackCandidates.size }
+                if (autoExpandPool && ExpandPoolPolicy.shouldExpand(hitCount, true, searchedSourceKeys.size, total)) {
+                    poolRound += 1
+                    waveSize = ExpandPoolPolicy.poolSizeForRound(total, poolRound)
+                    LOG.i(
+                        "echo-source-search expand round=" + poolRound +
+                            " nextSize=" + waveSize + " total=" + total +
+                            " searched=" + searchedSourceKeys.size + " token=$myToken"
+                    )
+                    continue  // 继续下一波:只投"新增的"源(searchedSourceKeys 已滤掉已搜的)
+                }
+                break
             }
             LOG.i(
                 "echo-source-search all-done done=${doneCount.get()}" +
-                    " total=${sources.size} frozen=$searchFrozen token=$myToken"
+                    " total=${total} searched=${searchedSourceKeys.size} frozen=$searchFrozen token=$myToken"
             )
             // 全池/在途波次收口再回存一次(过程中已按合并窗口增量回存,这里兜底)
             if (tokenStr == currentTokenStr() && fallbackSearchHits.isNotEmpty()) {
                 saveFallbackHitsToCache()
-            }
-            // ⚡ 动态扩池(2026-10-13,用户方案):本轮全部收口且 **0 命中** ⇒ 按比例扩大候选池再搜一轮。
-            // 判据见 ExpandPoolPolicy.shouldExpand(三条件缺一不可:收口 / 0 命中 / 还有更多源)。
-            // 这是"源集合 300+ 但固定只搜 120 个 ⇒ 冷门片搜不到"的根本解法。
-            if (tokenStr == currentTokenStr() && !searchFrozen) {
-                val hitCount = synchronized(fallbackCandidates) { fallbackCandidates.size }
-                val fullTotal = orderedPoolTotal.get()
-                if (autoExpandPool && ExpandPoolPolicy.shouldExpand(hitCount, true, sources.size, fullTotal)) {
-                    poolRound += 1
-                    LOG.i(
-                        "echo-source-search expand round=" + poolRound +
-                            " nextSize=" + ExpandPoolPolicy.poolSizeForRound(fullTotal, poolRound) +
-                            " total=" + fullTotal + " token=$myToken"
-                    )
-                    // ⚠️ 必须先置 sourcesSearching=false:**否则** startSourceSearch 开头的
-                    // `if (sourcesSearching.value && searchTitle == title) return` 会把这次扩池重启
-                    // 直接拦掉(同片同 title)⇒ 永远停在第一轮。
-                    sourcesSearching.value = false
-                    searchProgress.value = null
-                    // 以新轮次重启搜索(候选按权重已排序、新轮取更多前 N 个;已搜过的源由 searchActive/去重兜住)
-                    startSourceSearch()
-                    return@launch
-                }
             }
             // 冻结时状态已由 [freezeFallbackSearch] 收口,这里**不能**再走接管/空态收口:
             // 那两件事是"给还没起播的页面找内容"用的,而冻结的前提正是"画面已经出来了"。
