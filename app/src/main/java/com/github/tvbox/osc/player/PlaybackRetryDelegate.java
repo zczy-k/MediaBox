@@ -306,7 +306,9 @@ final class PlaybackRetryDelegate {
         long currentTime = System.currentTimeMillis();
         if (currentTime - st.lastRetryTime > 60_000) {
             LOG.i("echo-reset-autoRetryCount");
-            st.resetAutoRetryLadder();
+            // 2026-10-13(问题 17a):60s 窗口只复位"重播/切内核额度",**不复位已试线路** ——
+            // 否则死链会被反复重播、换线又切回刚失败的线路。线路记忆由换源/切集边界复位。
+            st.resetPepLadderKeepLines();
         }
         st.lastRetryTime = currentTime;
         // ConcurrentLinkedQueue.size() 是 O(n) 遍历且弱一致(并发 add 时可能读到 0);isEmpty() 为 O(1) 且更准确

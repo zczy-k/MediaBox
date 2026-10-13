@@ -216,6 +216,25 @@ final class PlaybackAttemptState {
         clearTriedLines();
     }
 
+    /**
+     * **仅复位"同址重播/切内核"额度,不动已试线路**(2026-10-13 真机修复,问题 17a)。
+     *
+     * <p>## 为什么必须与 [resetAutoRetryLadder] 分开
+     * 原实现在 60 秒窗口过期时调 [resetAutoRetryLadder],它**顺手清空了已试线路**
+     * ⇒ 结果:一条 404 死链被 `replay same url` 反复重播、换源链也在清空后**又切回刚失败的线路**
+     * (真机取证:千与千寻 `hn.bfvvs.com/...` 死链在 21:25:23/25/27 被反复重播 ≥3 次)。
+     *
+     * <p>60 秒窗口的本意只是"给同址重播和切内核一次新额度"(吸收瞬时网络抖动),
+     * **不该**同时把"这条线路已经试过并失败"的事实抹掉 —— 那是两件事。
+     * 线路记忆的正确复位点是 [linesExhausted](换源时)与 [clearTriedLines](切集时)。
+     */
+    void resetPepLadderKeepLines() {
+        allowSwitchPlayer = true;
+        hasAutoSwitchedPlayer = false;
+        hasRetriedSameUrlOnBoot = false;
+        // 刻意不调 clearTriedLines():线路记忆保留到换源/切集
+    }
+
     /** 换线成功:阶梯复位 + 置复用意图(不覆盖 REBUILD:自动切过内核回滚时该意图必须保持) */
     void onLineSwitched() {
         allowSwitchPlayer = true;

@@ -98,7 +98,9 @@ public class LOG {
             //     保底配额捞了哪几个源";echo-recover:四层恢复(L1 网络平反 / L2 探活) ——
             //     回答"误封的源何时被放回";echo-xsource:跨源升清决策(decide/skip) ——
             //     回答"为什么跨源切/没切"。
-            "echo-weight", "echo-recover", "echo-xsource"}
+            //   ⚠️ 2026-10-13 **第五次**踩坑:新增 echo-fallback(换源链跳过已失败源 / 全候选失败终态)
+            //     时又忘了登记 —— 提交前 grep 复核白名单,这条铁律要刻进流程。
+            "echo-weight", "echo-recover", "echo-xsource", "echo-fallback"}
             // ⚠️ FILE_LOG=false(正式包)时折成空数组,让这批前缀**字面量也从 dex 里消失**。
             //
             // 背景:release 靠 proguard 的 -assumenosideeffects 已经把**调用点**全删了

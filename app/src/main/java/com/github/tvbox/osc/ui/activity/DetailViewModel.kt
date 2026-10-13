@@ -30,6 +30,7 @@ import com.github.tvbox.osc.player.LineQualitySelector
 import com.github.tvbox.osc.player.LineHealthMemory
 import com.github.tvbox.osc.player.MiniProbeBudget
 import com.github.tvbox.osc.player.MiniProbeGate
+import com.github.tvbox.osc.player.PlaybackFailureMemory
 import com.github.tvbox.osc.player.PlaybackSession
 import com.github.tvbox.osc.player.QualityGovernor
 import com.github.tvbox.osc.player.VideoQualityMemory
@@ -407,6 +408,17 @@ class DetailViewModel : ViewModel() {
         candidates.forEach { (candKey, candId) ->
             val cand = bestByTitle["$candKey|$candId"] ?: return@forEach
             pool.add(CrossSourceUpgradePolicy.Candidate(candKey, cand))
+        }
+        // 2026-10-13 真机修复(问题 15/16):候选有、但**全部无实测画质**(pool 空)⇒ 无法择优。
+        // 此时触发跨源探测(用硬盘的迷你探测通道把对端源的最佳画质补上),并把 S 挂起 ——
+        // 探测回填后 [runMiniProbeForCrossSource] 结尾会 replay 一次决策。真机取证:三次 decide
+        // 全是 `candidates=N pool=0 verdict=none`,就是缺这一步。
+        // ⚠️ 只在 pool 为空时触发:非空说明数据够了,再探是浪费。
+        if (pool.isEmpty()) {
+            LOG.i("echo-xsource skip: no measured quality yet, kick probe curS=" + currentSharpness)
+            pendingCrossSourceS = currentSharpness
+            runMiniProbeForCrossSource()
+            return
         }
         val app = App.getInstance()
         val capHeight = if (app == null) 0 else DeviceCapability.capHeight(app)
@@ -2437,6 +2449,10 @@ class DetailViewModel : ViewModel() {
     private fun recordSourcePlayFailure() {
         val title = vodInfo?.name ?: vodName
         LOG.i("echo-srcban play-failed observed source=" + sourceKey + " content=" + title + " (not recorded)")
+        // 2026-10-13 真机修复(问题 17c):**记入会话级短期失败记忆**(与源级健康台账不同 ——
+        // 那条刻意不记播放失败以免误封;这条只影响"本轮换源链别原地打转")。
+        // 换源链在 loadNextFallbackCandidate 里据此跳过本会话已放不出来的源,根治死循环。
+        PlaybackFailureMemory.recordFailure(sourceKey)
     }
 
     private fun startFallbackIfNeeded(auto: Boolean, fromLinesExhausted: Boolean = false): Boolean {
@@ -2581,6 +2597,16 @@ class DetailViewModel : ViewModel() {
             } ?: break
             val cKey = candidateKey(video)
             if (usedSourceKeys.contains(video.sourceKey) || !triedKeys.add(cKey)) continue
+            // 2026-10-13 真机修复(问题 17c):跳过**本会话内这部片已放不出来**的源。
+            // 真机取证(千与千寻):换源链在几个源之间无限循环 —— 换 A 失败→换 B 失败→重搜→又切回 A。
+            // usedSourceKeys 只防"同一候选重复取",拦不住"重搜后同源又被重新灌进候选"的死循环。
+            // 短期失败记忆(TTL 5min,换片即清)让这一轮别再切回刚失败过的源。
+            // ⚠️ 只跳过、不封禁:TTL 过后自动遗忘,该源仍会被重新考虑(与"只降权不封禁"同源)。
+            if (PlaybackFailureMemory.hasFailed(video.sourceKey)) {
+                LOG.i("echo-fallback skip failed source key=" + video.sourceKey +
+                    " content=" + PlaybackFailureMemory.currentContentKey())
+                continue
+            }
             fallbackLoadingCandidate = true
             fallbackActive = true
             fallbackAutoSwitch = true
@@ -2599,6 +2625,21 @@ class DetailViewModel : ViewModel() {
         }
         publishSourceChips()
         refreshCrossSourceHint()
+        // 2026-10-13 真机修复(问题 17b,失败终态):候选遍历完时,若**当前所有候选源都在本会话失败过**
+        // ⇒ 换源链无路可走,直接收口进空态,**不再触发新一轮重搜**。
+        //
+        // 真机取证(千与千寻):所有源都放不出来时,链路表现为
+        // "重搜(token=13)→ 换源失败 → 重搜(token=14)→ 换源失败 → …"**无限循环**,
+        // 日志里 `source-search all-done ... frozen=false` 后立刻又 `start`,用户看到的就是"卡死无举动"。
+        // 短期失败记忆让这里能判定"确实全废了",从而进入既有 [finishFallbackWithoutResult] 终态。
+        val liveCandidateKeys = synchronized(fallbackCandidates) {
+            fallbackCandidates.mapNotNull { it.sourceKey?.takeIf { k -> k.isNotBlank() } }
+        }
+        if (liveCandidateKeys.isNotEmpty() && PlaybackFailureMemory.allFailed(liveCandidateKeys)) {
+            LOG.i("echo-fallback all candidates failed this session, enter终态 n=" + liveCandidateKeys.size)
+            finishFallbackWithoutResult()
+            return false
+        }
         if (!sourcesSearching.value) {
             finishFallbackWithoutResult()
             return false
@@ -2747,6 +2788,10 @@ class DetailViewModel : ViewModel() {
         crossSourceHint.value = null
         pendingCompletenessSkip = false
         completenessCorrected = false
+        // 2026-10-13(问题 17c):切换内容键。**仅当片名真的变了才清**短期失败记忆 ——
+        // 换源时片名不变,记忆必须保留(否则"跳过本会话失败过的源"立刻失效);
+        // 换片时片名变,记忆清空(另一部片在源A失败不该牵连这一部)。见 PlaybackFailureMemory.beginContent。
+        PlaybackFailureMemory.beginContent(searchTitle.ifEmpty { vodName })
         cancelDetailTimeout()
         triedKeys.clear()
         if (!keepChips) {
@@ -3009,7 +3054,13 @@ class DetailViewModel : ViewModel() {
                 break
             }
             // 探测有了新记忆 ⇒ 重算提示(可能因此出现一条本来没有的提示)
-            withContext(Dispatchers.Main) { refreshCrossSourceHint() }
+            withContext(Dispatchers.Main) {
+                refreshCrossSourceHint()
+                // 2026-10-13 真机修复(问题 15/16):跨源探测回填后**补执行跨源升清决策**。
+                // 真机取证(千与千寻等):`echo-xsource decide ... pool=0` —— 候选源有,但都没实测画质,
+                // 无法择优。探测(本函数)正是填这个数据的,回填后必须再决策一次,否则永远 pool=0。
+                replayPendingCrossSourceUpgrade("probe-done")
+            }
         }
     }
 
