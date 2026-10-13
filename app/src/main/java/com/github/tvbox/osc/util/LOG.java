@@ -88,7 +88,17 @@ public class LOG {
             // ↓ 2026-10-11:**拼音搜索**(本地标题索引的积累与解析)。
             //   没有它就无法回答"敲了拼音为什么没结果" —— 是索引还没积累(首次安装的固有限制),
             //   还是解析出了片名却没搜到(源站问题)。两者处置完全不同。
-            "echo-pinyin"}
+            "echo-pinyin",
+            // ↓ 2026-10-13:**源与线路智能调度四期优化**的三个新埋点前缀。
+            //   ⚠️ 本日**第四次**踩同一个坑:三个前缀全部漏登记,真机测试时
+            //   echo-weight / echo-recover / echo-xsource 落盘 0 条 —— 一度误判"功能没跑",
+            //   实际代码在跑(行为已验证)、纯日志被 fileLog 静默丢弃。教训再次确认铁律:
+            //   **LOG.i 的新前缀必须同步登记本数组,提交前 grep 复核**。
+            //   echo-weight:连续权重台账(record/floor/clear) —— 回答"权重模型是否生效、
+            //     保底配额捞了哪几个源";echo-recover:四层恢复(L1 网络平反 / L2 探活) ——
+            //     回答"误封的源何时被放回";echo-xsource:跨源升清决策(decide/skip) ——
+            //     回答"为什么跨源切/没切"。
+            "echo-weight", "echo-recover", "echo-xsource"}
             // ⚠️ FILE_LOG=false(正式包)时折成空数组,让这批前缀**字面量也从 dex 里消失**。
             //
             // 背景:release 靠 proguard 的 -assumenosideeffects 已经把**调用点**全删了

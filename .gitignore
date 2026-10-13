@@ -132,3 +132,5 @@ logs/
 keystore.properties
 # 本地纯函数验证脚本与产物(kotlinc+JUnit 直编,绕开 Gradle),不入库
 .verify/
+# 本地构建/真机测试产物(下载的 APK、拉取的日志、截图),不入库
+.build_out/

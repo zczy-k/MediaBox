@@ -120,4 +120,39 @@ class SearchBatchWeightTest {
         assertEquals(listOf("home"), fast)
         assertEquals(listOf("low"), deferred)
     }
+
+    // ==================== 详情页权重排序(orderByWeight,问题3修复) ====================
+
+    @Test
+    fun `详情页按权重降序排列`() {
+        val pool = listOf(source("a", false), source("b", false), source("c", false))
+        val weights = mapOf("a" to 30, "b" to 90, "c" to 60)
+        val ordered = SearchBatchPolicy.orderByWeight(pool, homeKey = "", weightOf = { weights[it] ?: 60 })
+        assertEquals(listOf("b", "c", "a"), ordered.map { it.key })
+    }
+
+    @Test
+    fun `详情页首页源固定置顶`() {
+        val pool = listOf(source("a", false), source("home", false), source("b", false))
+        val weights = mapOf("a" to 90, "home" to 5, "b" to 60)
+        val ordered = SearchBatchPolicy.orderByWeight(pool, homeKey = "home", weightOf = { weights[it] ?: 60 })
+        assertEquals("home", ordered.first().key)
+        assertEquals(listOf("a", "b"), ordered.drop(1).map { it.key })
+    }
+
+    @Test
+    fun `详情页一个源都不少`() {
+        val pool = listOf(source("a", false), source("b", false), source("c", false), source("d", false))
+        val weights = mapOf("a" to 10, "b" to 20, "c" to 30, "d" to 40)
+        val ordered = SearchBatchPolicy.orderByWeight(pool, homeKey = "", weightOf = { weights[it] ?: 60 })
+        assertEquals(pool.map { it.key }.toSet(), ordered.map { it.key }.toSet())
+        assertEquals(pool.size, ordered.size)
+    }
+
+    @Test
+    fun `详情页同权重保持原顺序`() {
+        val pool = listOf(source("first", false), source("second", false), source("third", false))
+        val ordered = SearchBatchPolicy.orderByWeight(pool, homeKey = "", weightOf = { 60 })
+        assertEquals(listOf("first", "second", "third"), ordered.map { it.key })
+    }
 }

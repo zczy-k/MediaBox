@@ -44,6 +44,7 @@ import com.github.tvbox.osc.util.SearchHelper
 import com.github.tvbox.osc.util.SourceHealthFilter
 import com.github.tvbox.osc.util.SourceHealthMemory
 import com.github.tvbox.osc.util.SourceWeightMemory
+import com.github.tvbox.osc.util.SourceWeightPolicy
 import com.github.tvbox.osc.util.TrailerPolicy
 import com.github.tvbox.osc.util.SourceIdentityMask
 import com.github.tvbox.osc.util.TitleMatcher
@@ -189,6 +190,32 @@ class DetailViewModel : ViewModel() {
     /** 当前片当前源是否已收敛(sweep 已出 verdict、不会再自动升档)。跨源提示只在收敛后出场。 */
     private var sourceConverged = false
 
+    /**
+     * **跨源升清的待办 S**(2026-10-13 真机修复):播放侧可能在**源内收敛之前**就发来跨源请求
+     * (它只看 `untriedHigher==0`,不等 sweep)。此时不能丢弃(丢弃 = 该集永不重发,链路失效),
+     * 而是把当前实测 S 挂在这里,等 [markSourceConverged] 时补执行一次。
+     *
+     * <p>0 = 无待办。换片/换源时清除([resetEngineState])。
+     */
+    private var pendingCrossSourceS = 0
+
+    /**
+     * 标记当前源已收敛并**补执行挂起的跨源升清**(若有)。
+     *
+     * <p>为什么收敛点和补执行要绑在一起:跨源升清的前置条件正是"源内已到头"
+     * (`sourceConverged`),而收敛是异步 sweep 的产物。把"置真"与"补执行"收在一处,
+     * 避免漏掉某个收敛分支(本项目已有多处 `sourceConverged = true`)。
+     */
+    private fun markSourceConverged() {
+        sourceConverged = true
+        val held = pendingCrossSourceS
+        if (held > 0) {
+            pendingCrossSourceS = 0
+            LOG.i("echo-xsource replay held S=" + held + " after converge")
+            tryCrossSourceUpgrade(held)
+        }
+    }
+
     /** 跨源提示的一次性闩(键 = 站点|片id):用户关掉或点过之后,本会话同片不再弹。 */
     private var crossHintDismissedKey = ""
 
@@ -298,14 +325,35 @@ class DetailViewModel : ViewModel() {
         if (currentSharpness <= 0) return
         val info = vodInfo ?: return
         val titleKey = searchTitle.ifEmpty { vodName }.ifEmpty { vodId }
-        // 与提示同一批前置闸:源内未收敛 / 本片已闩掉 / 正在换源 都不自动切
-        if (!sourceConverged || crossHintDismissedKey == titleKey ||
-            fallbackActive || fallbackLoadingCandidate
-        ) {
-            LOG.i("echo-xsource skip: not-ready converged=" + sourceConverged +
-                " dismissed=" + (crossHintDismissedKey == titleKey) + " fallback=" + fallbackActive)
+        // 与提示同一批前置闸:源内未收敛 / 本片已闩掉 / 正在换源 都不自动切。
+        //
+        // ⚠️ 2026-10-13 真机修复(时序竞态):播放侧在**源内收敛之前**就会发跨源请求
+        // (只要 `untriedHigher==0` 即发,而 sweep 要几秒后才收敛)。若这里直接 return,
+        // 请求被丢弃、而播放侧的 `crossSourceRequested` 闩已置真 ⇒ **本集再也不发** ⇒
+        // 跨源升清整条链路从不生效(真机取证:20:22:10 发出请求,20:22:35 才收敛,
+        // 全程无 echo-xsource decide)。
+        // 修法:**未收敛时挂起待办**,等 [markSourceConverged] 时补执行一次。
+        if (!sourceConverged) {
+            pendingCrossSourceS = currentSharpness
+            LOG.i("echo-xsource defer: not converged yet, hold S=" + currentSharpness)
             return
         }
+        if (crossHintDismissedKey == titleKey || fallbackActive || fallbackLoadingCandidate) {
+            LOG.i("echo-xsource skip: dismissed=" + (crossHintDismissedKey == titleKey) +
+                " fallback=" + fallbackActive)
+            return
+        }
+        pendingCrossSourceS = 0
+        doCrossSourceUpgrade(currentSharpness, info)
+    }
+
+    /**
+     * 跨源升清的实际执行体(前置闸已在 [tryCrossSourceUpgrade] 判过)。
+     *
+     * @param currentSharpness 当前实测清晰度 S
+     * @param info             当前详情(避免重复取 [vodInfo])
+     */
+    private fun doCrossSourceUpgrade(currentSharpness: Int, info: com.github.tvbox.osc.bean.VodInfo) {
         val mode = DeviceCapability.effectiveMode()
         val qualityFirst = mode == DeviceCapability.QualityMode.QUALITY_FIRST
         // 用当前 S 构造一个最小 current Variant:S 是唯一参与判据的字段(见 CrossSourceUpgradePolicy),
@@ -1052,14 +1100,14 @@ class DetailViewModel : ViewModel() {
             )
             // 源内收敛:verdict 非 switch ⇒ 本源不会再自动升档 ⇒ 允许跨源提示出场
             if (best == null || reject != null) {
-                sourceConverged = true
+                markSourceConverged()
                 refreshCrossSourceHint()
                 // 提示要有数据才出得来:对端没记忆时按闸门去探一次(默认不发请求,见其 KDoc)
                 if (crossSourceHint.value == null) runMiniProbeForCrossSource()
                 return@launch
             }
             if (best.flag.isEmpty() || best.flag == currentFlag) {
-                sourceConverged = true
+                markSourceConverged()
                 refreshCrossSourceHint()
                 if (crossSourceHint.value == null) runMiniProbeForCrossSource()
                 return@launch
@@ -1141,6 +1189,7 @@ class DetailViewModel : ViewModel() {
         lineQualityHeights.value = emptyMap()
         // 换片/换源:源内收敛结论与跨源提示都属于上一个会话,必须清零,否则会串到新片
         sourceConverged = false
+        pendingCrossSourceS = 0
         crossSourceHint.value = null
         miniProbeJob?.cancel()
         miniProbeJob = null
@@ -1578,24 +1627,29 @@ class DetailViewModel : ViewModel() {
         //
         // 降权(2026-10-13):上一轮搜索里超时的源排到队尾 —— 此前换源链**只滤封禁、不读降权**,
         // 于是同一个"刚超时 5 次的慢源"在搜索页被排到队尾,在这里却照旧占着前几批的并发额度,
-        // 而换源链恰恰是用户已经在等画面的那条路。判据与搜索页同源(SourceHealthFilter.penalizedKeys),
-        // 只是这里的队列是"分批串行",排到队尾就等于"最后才搜到它"。
+        // 而换源链恰恰是用户已经在等画面的那条路。
         //
-        // ⚠️ 顺序不能反:**先 take 截断、再降权垫底**。反过来会让被降权的源被上限直接砍掉,
-        // 降权就退化成屏蔽(见 SearchBatchPolicy.penalizedLast 的 KDoc)。
-        val penalized = SourceHealthFilter.penalizedKeys()
-        val sources = SearchBatchPolicy.penalizedLast(
+        // ⚠️ 2026-10-13 真机修复(问题 3):口径从**二值降权**(penalizedKeys)升级为**连续权重**
+        // (SourceWeightMemory,与搜索页 splitFastRoundSourcesByWeight 同一台账)—— 此前两处口径
+        // 不一致,会出现"搜索页已把这源降到队尾、换源却仍优先切过去"。判据仍只有一份(权重台账)。
+        //
+        // ⚠️ 顺序保持"**先 take 截断、再排序**"不变:反过来会让低权重源被上限直接砍掉,
+        // 降权就退化成屏蔽(与 SearchBatchPolicy.orderByWeight 的 KDoc 一致,池大小不因本次改动变化)。
+        val weightKeys = candidatePool.map { it.key }
+        val weightScores = SourceWeightMemory.scoresOf(weightKeys)
+        val sources = SearchBatchPolicy.orderByWeight(
             SourceHealthFilter.filter(candidatePool)
                 .sortedBy { it.key != home.key }
                 .take(fallbackPoolCap),
-            penalized,
+            homeKey = home.key,
+            weightOf = { weightScores[it] ?: SourceWeightPolicy.NEUTRAL },
         )
         // 诊断包靠这行判断"预热到底有没有触发、候选池多大" —— 真机日志被 ROM 屏蔽时,
         // 文件日志(仅 diag 包落盘)是唯一可观测点。前缀 echo-source- 已在 LOG 白名单里。
-        // defer=N 是"本轮被降权垫底了几个源",与搜索页 echo-searchplan 的 defer= 同口径。
+        // weight-known=N 是"候选池里有多少源已积累权重",与搜索页 echo-searchplan 同口径。
         LOG.i(
             "echo-source-search start title=" + title + " pool=" + sources.size +
-                " defer=" + penalized.size + " token=$myToken"
+                " weight-known=" + weightScores.size + " token=$myToken"
         )
         // ⚠️ 必须先取消旧搜索 job(2026-10-09 真机数据修正):分批后旧 job 要跑完全部批才自然结束,
         // 快速换片时 30 个会话里 27 个在 semaphore(12) 队列里陪跑 —— 它们的回包本就被
@@ -2648,6 +2702,7 @@ class DetailViewModel : ViewModel() {
         searchProgress.value = null
         // 换源/重扫:新源尚未有收敛结论,跨源提示也必须先撤下,否则会拿着上一个源的结论弹提示
         sourceConverged = false
+        pendingCrossSourceS = 0
         crossSourceHint.value = null
         pendingCompletenessSkip = false
         completenessCorrected = false

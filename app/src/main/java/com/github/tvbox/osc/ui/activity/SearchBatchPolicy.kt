@@ -187,6 +187,35 @@ internal object SearchBatchPolicy {
     }
 
     /**
+     * 详情换源链的**权重驱动**排序(2026-10-13,优化方案问题 3 修复)。
+     *
+     * <p>## 为什么需要它
+     * 详情页此前用 [penalizedLast] + `SourceHealthFilter.penalizedKeys()`(旧**二值**口径),
+     * 而搜索页已升级为 [splitFastRoundSourcesByWeight](**连续权重**)。两处口径不一致会造成:
+     * 同一个"刚超时 5 次的慢源"在搜索页被排到队尾,在这里却仍占前几批并发额度。
+     *
+     * <p>本函数把详情的排序也切到**同一份权重台账**,与搜索页口径对齐:
+     * <ul>
+     *   <li>按有效权重降序(权重高的在前),并列时保持原顺序(稳定排序);</li>
+     *   <li>**一个源都不少** —— 只重排不剔除(与"降权≠屏蔽"一致);</li>
+     *   <li>首页源不特殊照顾:详情页候选池已 `sortedBy { it.key != home.key }` 把首页源排最前,
+     *       这里再按权重排会削弱"首页优先";故**首页源固定在最前**,其余按权重。</li>
+     * </ul>
+     *
+     * @param sources       已过滤的候选池
+     * @param homeKey       首页源 key(固定置顶)
+     * @param weightOf      取某源有效权重;缺失按 [SourceWeightPolicy.NEUTRAL]
+     */
+    fun orderByWeight(sources: List<SourceBean>, homeKey: String, weightOf: (String) -> Int): List<SourceBean> {
+        if (sources.size < 2) return sources
+        // 稳定排序:sortedByDescending 在 Kotlin 中是稳定排序,同权重保留原到达序
+        return sources.sortedWith(
+            compareByDescending<SourceBean> { it.key == homeKey }
+                .thenByDescending { weightOf(it.key) },
+        )
+    }
+
+    /**
      * 本次应该启动多少个源:首轮用 [FAST_ROUND_SOURCE_LIMIT],之后每批恢复 [DEFAULT_BATCH_SIZE]。
      *
      * <p>用"队列里是否还含延后源"判断首轮:首轮只取快速源,队列一旦被消耗过就说明已经进过后续批。
