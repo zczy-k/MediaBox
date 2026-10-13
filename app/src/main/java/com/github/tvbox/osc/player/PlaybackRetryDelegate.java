@@ -17,6 +17,8 @@ import com.github.tvbox.osc.util.LOG;
 import org.greenrobot.eventbus.EventBus;
 import org.json.JSONObject;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 
@@ -490,8 +492,24 @@ final class PlaybackRetryDelegate {
         VodInfo.VodSeries currentSeries = host.currentSeries(currentFlag, currentIndex);
         if (!TextUtils.isEmpty(currentFlag)) {
             st.triedLineFlags.add(currentFlag);
+            // 记一次线路失败(2026-10-12 线路健康)。
+            //
+            // ⚠️ 三道闸全在 LineHealthRecorder 里(userPickedLine / 会话去重 / 弱网抑制),
+            //    这里只管"确实是要换掉当前线了"这一个事实 —— 换线即上一条线的失败证据。
+            //    noNetwork 从 lastFailureNetwork 取:最后一次错误是网络类 ⇒ 判弱网,只记证据不加 streak。
+            LineHealthRecorder.INSTANCE.recordFailure(
+                    vod.sourceKey, vod.id, currentFlag,
+                    st.lastFailureNetwork, st.userPickedLine);
         }
         List<String> lineFlags = EpisodeMatcher.lineFlagsInDisplayOrder(vod);
+        // 按**线路健康度**重排候选(2026-10-12):近期连续失败/取流慢的线路排到队尾。
+        //
+        // ⚠️ 只重排、不剔除:坏线路仍会被试到,只是不再抢在好线路前面 —
+        // 这正是"只降权不屏蔽"的落点(一部片可能只有 3 条线,屏蔽掉一条
+        // 而剩下两条都坏 = 用户无路可走)。
+        lineFlags = LineHealthSelector.INSTANCE.reorder(
+                lineFlags,
+                lineHealthKeys(vod, lineFlags));
         int currentLineIndex = EpisodeMatcher.lineFlagIndex(lineFlags, currentFlag);
         int startLineIndex = currentLineIndex >= 0 ? currentLineIndex + 1 : 0;
         String nextFlag = null;
@@ -514,6 +532,18 @@ final class PlaybackRetryDelegate {
                 R.string.player_trying_other_line);
     }
 
+    /** 与 [lineFlags] 一一对应的线路健康键(源|片|flag);任一要素为空 ⇒ 空串,取不到记忆按中性处理 */
+    private List<String> lineHealthKeys(VodInfo vod, List<String> lineFlags) {
+        if (vod == null) return Collections.nCopies(lineFlags.size(), "");
+        String sourceKey = vod.sourceKey;
+        String vodId = vod.id;
+        List<String> keys = new ArrayList<>(lineFlags.size());
+        for (String f : lineFlags) {
+            keys.add(LineHealthMemory.INSTANCE.keyOf(sourceKey, vodId, f));
+        }
+        return keys;
+    }
+
     // -------------------- 自适应画质:线内升档 + 回滚(2026-10-10 第一批) --------------------
 
     /** 新内容边界(beginNewPlay):升档计数/会话锁/出发地快照全部作废 */
@@ -528,6 +558,10 @@ final class PlaybackRetryDelegate {
         episodeStartElapsed = 0L;
         upgradesDone = 0;
         upgradeLockedThisSession = false;
+        // 线路健康的**会话去重**集合随内容边界清空(2026-10-12):
+        // 否则同一部片第二次播放时,"本会话已记过"会让失败记不进去,
+        // 表现为"明明又失败了却不更新证据"。
+        LineHealthRecorder.INSTANCE.onNewSession();
     }
 
     /** 起播成功(markPlaybackStarted):稳定期计时起点 */

@@ -688,6 +688,12 @@ public class PlaybackController {
         cancelPlayTimeout();
         // 自适应画质:稳定期计时起点(升档门控"进集 ≥60s")
         retry.noteEpisodeStart();
+        // 线路健康的**成功**上报(2026-10-12):归零该线路的连续失败计数。
+        // 这是"失败后又成功 ⇒ 偶发,不该继续压"的唯一入口,与源侧 recordAnswered 同构。
+        VodInfo started = vod();
+        if (started != null && !TextUtils.isEmpty(started.playFlag)) {
+            LineHealthRecorder.INSTANCE.recordPlayed(started.sourceKey, started.id, started.playFlag);
+        }
     }
 
     public boolean isPlaybackStarted() {

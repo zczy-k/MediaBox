@@ -59,6 +59,7 @@ import com.github.tvbox.osc.util.FileUtils
 import com.github.tvbox.osc.util.HistoryHelper
 import com.github.tvbox.osc.util.HistoryMerge
 import com.github.tvbox.osc.util.HomeSettings
+import com.github.tvbox.osc.player.LineHealthMemory
 import com.github.tvbox.osc.player.effect.anime4k.Anime4kTier
 import com.github.tvbox.osc.util.HawkConfig
 import com.github.tvbox.osc.util.MusicSettings
@@ -159,6 +160,9 @@ class SettingsViewModel : ViewModel() {
                 // 拼音索引也是"可重建的缓存"(2026-10-11):它由搜索/历史/收藏在使用中重新积累。
                 // 清缓存却留着索引会让用户困惑 —— 他期望"清干净"。
                 TitleIndexMemory.clear()
+                // 线路健康记忆同理(2026-10-12):它由后续播放重新积累,
+                // 不该比拼音索引活得更久 —— 用户点"清缓存"是期望一次性清干净。
+                LineHealthMemory.clear()
                 FileUtils.formatCacheSize(FileUtils.getCacheSize())
             }
             applyCacheSizeText(text)
