@@ -117,6 +117,66 @@ internal object SearchBatchPolicy {
     fun shouldAutoContinue(hasAnyResult: Boolean, queuedSourceCount: Int): Boolean =
         !hasAnyResult && queuedSourceCount > 0
 
+    // ==================== 详情换源链的"快探首批"(2026-10-13) ====================
+
+    /**
+     * 详情换源链**快探首批**的源数。
+     *
+     * <p>取值 = 搜索并发数(12):恰好**一个并发波次**。
+     * 首批的目的不是"搜到全部",而是"尽快拿到**第一个可用候选**"——
+     * 候选一到位就能起播,剩下的源照常在后批里搜完。
+     */
+    const val DETAIL_PROBE_SIZE = 12
+
+    /**
+     * 快探首批的单源超时(ms)。
+     *
+     * <p>常规单源超时是 8s(`SOURCE_SEARCH_TIMEOUT_MS`),而真机源超时率 75~83% ⇒
+     * 首批 30 源 ÷ 并发 12 = 3 波 ≈ 最坏 24s,实测 **10.8s** 才等到第一个候选
+     * (真机 15:17/15:18 两次起播实测:首批收口 +10.8s / +9.8s,而取流出画面只要 2.6~2.9s)。
+     *
+     * <p>取 4s:快源(1~2s)完全来得及;**慢源本来也来不及救首屏**,让它们占着并发额度
+     * 只会把"第一个候选"往后拖 —— 它们仍会在后续批次里被搜到(准确度不变)。
+     */
+    const val DETAIL_PROBE_TIMEOUT_MS = 4_000L
+
+    /**
+     * 把详情换源链的候选切成"快探首批 + 其余按常规批"。
+     *
+     * <p>⚠️ **只改顺序与批次边界,不增删任何源** —— 全部源最终仍会被搜到,
+     * 因此"库里明明有这部片却搜不到"的准确度风险为零(与 [splitFastRoundSources] 同一取向)。
+     * 这与 `penalizedLast` 的"先 take 截断再降权"是两件事:那个管取舍,这个只管次序。
+     *
+     * @param keys      已排好优先级的候选(首页源在前、降权源垫底)
+     * @param probeSize 快探首批源数
+     * @param batchSize 其余批次的源数
+     */
+    fun <T> detailSearchBatches(
+        keys: List<T>,
+        probeSize: Int = DETAIL_PROBE_SIZE,
+        batchSize: Int = DEFAULT_BATCH_SIZE,
+    ): List<List<T>> {
+        if (keys.isEmpty()) return emptyList()
+        val probe = keys.take(probeSize.coerceAtLeast(1))
+        val rest = keys.drop(probe.size)
+        val out = ArrayList<List<T>>(1 + rest.size / batchSize.coerceAtLeast(1) + 1)
+        out.add(probe)
+        if (rest.isNotEmpty()) out.addAll(rest.chunked(batchSize.coerceAtLeast(1)))
+        return out
+    }
+
+    /**
+     * 某一批的单源超时:首批走快探超时,其余走常规超时。
+     *
+     * <p>单独抽成纯函数是为了让"首批必须短"这条口径可被单测钉住 ——
+     * 它很容易在后续重构里被无意改回统一超时,而那正是起播慢的成因。
+     */
+    fun detailBatchTimeoutMs(
+        batchIndex: Int,
+        probeMs: Long = DETAIL_PROBE_TIMEOUT_MS,
+        normalMs: Long = 8_000L,
+    ): Long = if (batchIndex <= 0) probeMs else normalMs
+
     /** 仅用户正在滚动且接近列表尾部时预取;短列表不会因初始布局把所有源自动搜完。 */
     fun shouldLoadMoreOnScroll(
         isScrollInProgress: Boolean,

@@ -462,6 +462,49 @@ public class VideoView<P extends AbstractPlayer> extends FrameLayout
     }
 
     /**
+     * 页面退出用的**无条件硬停**(2026-10-13)。
+     *
+     * <p>## 为什么 {@link #pause()} + {@link #stopPlaybackKeepPlayer()} 不够
+     * 两者都带状态守卫,而守卫依据的是 **View 层自己的状态机**:
+     * <ul>
+     *   <li>{@link #pause()} 要求 {@code isInPlaybackState() && mMediaPlayer.isPlaying()}
+     *       —— 而 {@code isPlaying()} 在 STATE_BUFFERING 下等于内核的 {@code playWhenReady},
+     *       一旦 View 层状态落到非 playback 态,整个方法体**静默不执行**;</li>
+     *   <li>{@link #stopPlaybackKeepPlayer()} 在 `mCurrentPlayState == STATE_PAUSED` 时**直接 return**。</li>
+     * </ul>
+     * 于是"缓冲中退出页面"(或换线/换源风暴把状态搅乱时)两者会**双双跳过**:
+     * 内核的 {@code playWhenReady} 仍是 {@code true},缓冲一到就自己播起来 ——
+     * 页面已经没了,声音却还在。
+     *
+     * <p>## 真机证据(2026-10-13 15:19,诊断包)
+     * 返回首页后仍能查到:
+     * <pre>
+     *   dumpsys media.audio_flinger → "9 Tracks of which 1 are active",活跃音轨 Client = 本进程
+     *   dumpsys audio              → 本应用的 AudioPlaybackConfiguration 仍为 state:started
+     *   logcat                     → abandonAudioFocus / ExoPlayerImpl: Release
+     *                                直到 60s 空闲释放才发生(即"停会话"只撤了通知与锁)
+     * </pre>
+     *
+     * <p>## 口径
+     * **不看任何播放状态**:清 {@code playWhenReady} → 停内核 → 放音频焦点。
+     * 代价是内核被 stop(下次起播按需重建),这是"页面退出绝不残留出声"的必然取舍。
+     */
+    public void stopPlaybackHard() {
+        if (mMediaPlayer != null) {
+            // ① 清 playWhenReady —— "缓冲完成后自己播起来"的根因就是这个标志
+            mMediaPlayer.pause();
+            // ② 真停内核(释放解码器与音轨)
+            mMediaPlayer.stop();
+        }
+        setPlayState(STATE_IDLE);
+        // ③ 放音频焦点:否则别的 App 在 60s 内被压住(真机实测焦点一直没放)
+        if (mAudioFocusHelper != null) {
+            mAudioFocusHelper.abandonFocus();
+        }
+        mPlayerContainer.setKeepScreenOn(false);
+    }
+
+    /**
      * 显式落盘当前进度(P2 服务化后新增)。
      *
      * <p>背景:改造前"退出页面即 {@link #release()}",进度由 release() 内部的 saveProgress 落盘。

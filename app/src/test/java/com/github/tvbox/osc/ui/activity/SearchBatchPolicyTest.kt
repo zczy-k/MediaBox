@@ -211,4 +211,66 @@ class SearchBatchPolicyTest {
         val ordered = SearchBatchPolicy.penalizedLast(sources, setOf("s1", "s2", "s3"))
         assertEquals(listOf("s1", "s2", "s3"), ordered.map { it.key })
     }
+
+    // ---------- 详情换源链的"快探首批"(2026-10-13) ----------
+
+    /**
+     * 快探首批:只用**一个并发波次**的源、且超时远小于常规 8s,
+     * 目的是尽快拿到"第一个可用候选"而不是搜完。
+     *
+     * <p>真机依据(15:17/15:18 两次起播实测):首批 30 源 ÷ 并发 12 = 3 波,
+     * 首批收口要 +10.8s / +9.8s,而取流出画面只要 2.6~2.9s。
+     */
+    @Test
+    fun detailProbeBatchIsOneWaveAndMuchShorterThanNormalTimeout() {
+        // 首批必须恰好一个并发波次,否则又要等第二波
+        assertEquals(12, SearchBatchPolicy.DETAIL_PROBE_SIZE)
+        // 首批超时必须显著短于常规 8s —— 否则等于没改(这正是起播慢的成因)
+        assertTrue(SearchBatchPolicy.DETAIL_PROBE_TIMEOUT_MS < 8_000L)
+        assertEquals(
+            SearchBatchPolicy.DETAIL_PROBE_TIMEOUT_MS,
+            SearchBatchPolicy.detailBatchTimeoutMs(0, SearchBatchPolicy.DETAIL_PROBE_TIMEOUT_MS, 8_000L),
+        )
+        assertEquals(8_000L, SearchBatchPolicy.detailBatchTimeoutMs(1, SearchBatchPolicy.DETAIL_PROBE_TIMEOUT_MS, 8_000L))
+        assertEquals(8_000L, SearchBatchPolicy.detailBatchTimeoutMs(7, SearchBatchPolicy.DETAIL_PROBE_TIMEOUT_MS, 8_000L))
+        // 负数下标也按首批处理(防御:调用方不该传,但传了不能变成"用常规超时")
+        assertEquals(
+            SearchBatchPolicy.DETAIL_PROBE_TIMEOUT_MS,
+            SearchBatchPolicy.detailBatchTimeoutMs(-1, SearchBatchPolicy.DETAIL_PROBE_TIMEOUT_MS, 8_000L),
+        )
+    }
+
+    /**
+     * 分批只改**次序与批次边界**,一个源都不能少、也不能重复 ——
+     * 与"降权源只排后不剔除"是同一条硬约束:少了源就是"库里明明有却搜不到"。
+     */
+    @Test
+    fun detailSearchBatchesProbeFirstAndDropsNothing() {
+        val keys = (1..100).map { "S$it" }
+        val batches = SearchBatchPolicy.detailSearchBatches(keys, probeSize = 12, batchSize = 30)
+        // 首批 = 前 12 个(优先级最高的那批)
+        assertEquals((1..12).map { "S$it" }, batches.first())
+        // 其余按 30 一批:13..42 / 43..72 / 73..100
+        assertEquals(listOf(30, 30, 28), batches.drop(1).map { it.size })
+        // 一个都不能少、也不能重复,且总顺序与入参一致(只切边界)
+        val flat = batches.flatten()
+        assertEquals(keys, flat)
+        assertEquals(keys.size, flat.toSet().size)
+    }
+
+    @Test
+    fun detailSearchBatchesKeepsDegenerateInputsIntact() {
+        assertTrue(SearchBatchPolicy.detailSearchBatches(emptyList<String>()).isEmpty())
+        // 池子比快探批还小 ⇒ 只有一批,内容原样
+        val small = listOf("a", "b", "c")
+        val batches = SearchBatchPolicy.detailSearchBatches(small, probeSize = 12, batchSize = 30)
+        assertEquals(1, batches.size)
+        assertEquals(small, batches.first())
+        // probeSize 传 0/负数时按 1 兜底:不能退化成"没有首批"(否则首批为空、白跑一轮)。
+        // ⚠️ 兜底只影响**首批大小**:剩下的源仍会被照常分批,所以 3 个源 ⇒ [["a"], ["b","c"]]
+        //    (第一版断言只写了 [["a"]],把"兜底"误当成"其余丢掉"—— 测试写错,代码行为正确)
+        val degenerate = SearchBatchPolicy.detailSearchBatches(small, probeSize = 0, batchSize = 30)
+        assertEquals(listOf(listOf("a"), listOf("b", "c")), degenerate)
+        assertEquals(small, degenerate.flatten())
+    }
 }

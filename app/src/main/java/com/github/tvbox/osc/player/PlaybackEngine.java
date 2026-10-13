@@ -456,8 +456,13 @@ public final class PlaybackEngine implements PlaybackHostApi {
         if (!keepPlayback) {
             // ① 停播(一律,含"确认纯音频"的音乐):退页面即停
             videoView.pause();
-            // ③ 刚点播放就退出(PREPARING/BUFFERING):pause() 无效,必须停内核,否则页面销毁后自己播起来
-            videoView.stopPlaybackKeepPlayer();
+            // ② **无条件硬停**(2026-10-13):原实现只调 stopPlaybackKeepPlayer(),
+            //    它与 pause() 都带状态守卫,在"缓冲中退出 / 换线风暴"下会**双双跳过** ⇒
+            //    内核 playWhenReady 仍为 true,缓冲一到就自己播起来 —— 返回首页后仍在出声。
+            //    真机证据(15:19):dumpsys media.audio_flinger 显示本进程仍有 Active=yes 的音轨、
+            //    dumpsys audio 该条仍是 state:started,音频焦点直到 60s 空闲释放才 abandon。
+            //    详见 VideoView.stopPlaybackHard 的 KDoc。
+            videoView.stopPlaybackHard();
             // ③ 收在途:撤取流/超时/解析 + 停会话(撤通知、放 wake/wifi 锁)
             controller.stopPlaybackForPageExit();
             // 归属守卫可能让 ③ 的停会话被跳过(owner 是页面 vs host 也是页面 —— 通常一致,这里再兜一次)

@@ -11,6 +11,7 @@ import com.github.tvbox.osc.util.AvailabilityMemory
 import com.github.tvbox.osc.util.CompletenessMemory
 import com.github.tvbox.osc.util.DetailNoListMemory
 import com.github.tvbox.osc.util.SearchSettings
+import com.github.tvbox.osc.util.SearchResultCache
 import com.github.tvbox.osc.util.SourceCompletenessPolicy
 import com.github.tvbox.osc.util.QualityLabelPolicy
 import com.github.tvbox.osc.util.EpisodeMatcher
@@ -285,6 +286,14 @@ class DetailViewModel : ViewModel() {
     private var detailRequestToken = 0
 
     private val fallbackCandidates = ArrayList<Movie.Video>()
+
+    /**
+     * 本轮换源搜索的**同名命中**(源 key → 列表),用于回存 [SearchResultCache](2026-10-13)。
+     *
+     * <p>只收同名条目:缓存是给"这部片的换源候选"用的,塞进同名无关条目会让下次进入灌进错误候选。
+     * 只在主线程读写(事件回调与 viewModelScope 协程都在 Main),无需并发容器。
+     */
+    private val fallbackSearchHits = HashMap<String, List<Movie.Video>>()
 
     // P-完整性方案(2026-10-09):当前片的权威参照系与起播/纠偏状态
     // completenessTitleKey/OwnCount 由 recordCompleteness 在详情就绪时写入
@@ -1485,7 +1494,19 @@ class DetailViewModel : ViewModel() {
         sourcesSearching.value = sources.isNotEmpty()
         relatedVideos.value = emptyList()
         searchProgress.value = if (sources.isEmpty()) null else SearchProgress(0, sources.size, 0)
+        // 历史命中先灌一批候选(2026-10-13)。
+        // ⚠️ 必须在调用方(startFallbackIfNeeded → loadNextFallbackCandidate)之前:
+        //    它随后取候选时就能直接命中,不必等聚合搜索的首批收口(实测 9.8~10.8s)。
+        fallbackSearchHits.clear()
+        seedCandidatesFromCache(title)
         if (sources.isEmpty()) return
+        // 快探首批(2026-10-13):12 源 / 4s 一个并发波次,只为尽快拿到**第一个可用候选**;
+        // 其余源仍按 SEARCH_BATCH_SIZE 分批搜完 —— 只改次序,不增删任何源。
+        val batches = SearchBatchPolicy.detailSearchBatches(
+            sources,
+            SearchBatchPolicy.DETAIL_PROBE_SIZE,
+            SEARCH_BATCH_SIZE,
+        )
         searchJob = viewModelScope.launch {
             val doneCount = java.util.concurrent.atomic.AtomicInteger()
             // S6 分批递进(2026-10-09):整池一次 awaitAll 有两个毛病 —— ①换片/换代后旧搜索
@@ -1493,11 +1514,16 @@ class DetailViewModel : ViewModel() {
             // 是检查点:换代立刻 abort(在途批照跑完,不中断单源),进度按源粒度上报。
             // 刻意不做批间空窗收口:命中与否由候选事件驱动(不变),收口仍等全池 ——
             // "库里明明有却提前宣判"是准确性事故,不做。
-            for ((batchIdx, batch) in sources.chunked(SEARCH_BATCH_SIZE).withIndex()) {
+            for ((batchIdx, batch) in batches.withIndex()) {
                 if (tokenStr != currentTokenStr()) {
                     LOG.i("echo-source-search abort stale batch=$batchIdx token=$myToken")
                     return@launch
                 }
+                val batchTimeoutMs = SearchBatchPolicy.detailBatchTimeoutMs(
+                    batchIdx,
+                    SearchBatchPolicy.DETAIL_PROBE_TIMEOUT_MS,
+                    SOURCE_SEARCH_TIMEOUT_MS,
+                )
                 coroutineScope {
                     batch.map { bean ->
                         async {
@@ -1505,7 +1531,7 @@ class DetailViewModel : ViewModel() {
                                 val done = CompletableDeferred<Unit>()
                                 pendingSearchDone.put(bean.key, done)?.complete(Unit)
                                 try {
-                                    withTimeoutOrNull(SOURCE_SEARCH_TIMEOUT_MS) {
+                                    withTimeoutOrNull(batchTimeoutMs) {
                                         withContext(Dispatchers.IO) {
                                             searchCaller.getSearch(bean.key, title, tokenStr)
                                         }
@@ -1524,8 +1550,13 @@ class DetailViewModel : ViewModel() {
                 }
                 LOG.i(
                     "echo-source-search batch-done batch=$batchIdx done=${doneCount.get()}" +
-                        " total=${sources.size} token=$myToken"
+                        " total=${sources.size} timeout=${batchTimeoutMs}ms token=$myToken"
                 )
+                // 每批收口即回存命中:用户可能在搜索跑完前就退出,不存就白搜一轮
+                // (这正是"同一部片再次进入依旧很慢"的成因 —— 上次的命中没留下任何东西)
+                if (tokenStr == currentTokenStr() && fallbackSearchHits.isNotEmpty()) {
+                    saveFallbackHitsToCache()
+                }
             }
             if (tokenStr == currentTokenStr()) {
                 sourcesSearching.value = false
@@ -1572,6 +1603,15 @@ class DetailViewModel : ViewModel() {
             pendingSearchDone.remove(data.sourceKey)?.complete(Unit)
             recordFallbackSourceAnswered(data)
             val videos = data.movie?.videoList.orEmpty()
+            // 命中回存(2026-10-13):只收**同名**条目,供"同一部片再次进入"秒出候选。
+            // 按源覆盖:同一源后到的结果更全(查询变体可能回包多次)。
+            val hitSourceKey = data.sourceKey
+            if (!hitSourceKey.isNullOrEmpty() && videos.isNotEmpty()) {
+                val sameTitle = videos.filter {
+                    !it.id.isNullOrEmpty() && TitleMatcher.isSameTitle(it.name, searchTitle)
+                }
+                if (sameTitle.isNotEmpty()) fallbackSearchHits[hitSourceKey] = sameTitle
+            }
             val fresh = videos.filter {
                 !it.id.isNullOrEmpty() && TitleMatcher.isSameTitle(it.name, searchTitle)
                         && !usedSourceKeys.contains(it.sourceKey)
@@ -1632,6 +1672,57 @@ class DetailViewModel : ViewModel() {
     }
 
     private fun currentTokenStr(): String = "detail_$searchToken"
+
+    /**
+     * 用 [SearchResultCache] 的历史命中**先灌一批候选**(2026-10-13)。
+     *
+     * <p>## 解决什么
+     * 详情页的换源候选**只能**来自聚合搜索,而首批收口实测要 **9.8~10.8s**
+     * (30 源 ÷ 并发 12 = 3 波 × 8s 超时;真机源超时率 75~83%)。
+     * 于是"同一部片再次进入"要重新付出同样代价 —— 而上次明明已经搜出过它由哪些源收录。
+     *
+     * <p>命中缓存时候选**立刻**可用,[startFallbackIfNeeded] 紧接着的
+     * [loadNextFallbackCandidate] 就能直接加载对端详情(1~2s),把 12~15s 压到 2~3s。
+     * 后台真实搜索照常执行(用于纠正/扩展),所以缓存陈旧**不会**导致"搜不到"。
+     *
+     * <p>过滤口径与 [onSearchResultEvent] 完全一致(同名 / 未用过 / 非当前源 / 未登记过),
+     * 否则会灌进重复候选、或把已经试过的源又排在前面。
+     */
+    private fun seedCandidatesFromCache(title: String) {
+        val normalized = SearchSettings.normalizedTitle(title)
+        if (normalized.isEmpty()) return
+        val cached = SearchResultCache.load(normalized)
+        if (cached.isEmpty()) return
+        val fresh = ArrayList<Movie.Video>()
+        for ((_, videos) in cached) {
+            for (v in videos) {
+                if (v.id.isNullOrEmpty()) continue
+                if (!TitleMatcher.isSameTitle(v.name, title)) continue
+                if (usedSourceKeys.contains(v.sourceKey)) continue
+                if (v.sourceKey == sourceKey) continue
+                if (!candidateKeys.add(candidateKey(v))) continue
+                fresh.add(v)
+            }
+        }
+        if (fresh.isEmpty()) return
+        synchronized(fallbackCandidates) { fallbackCandidates.addAll(fresh) }
+        sortFallbackCandidatesByCompleteness()
+        publishSourceChips()
+        LOG.i("echo-source-search cache-seed title=" + title + " n=" + fresh.size)
+    }
+
+    /**
+     * 把本轮换源搜索的命中回存,供下次进入秒出候选。
+     *
+     * <p>**必须回存**:[SearchResultCache] 此前只有搜索页([SearchViewModel])会写,
+     * 而首页卡片(索引型源)进来的片名往往从未在搜索页搜过 ⇒ 缓存恒为空、修复形同虚设。
+     */
+    private fun saveFallbackHitsToCache() {
+        if (fallbackSearchHits.isEmpty()) return
+        val normalized = SearchSettings.normalizedTitle(searchTitle)
+        if (normalized.isEmpty()) return
+        SearchResultCache.save(normalized, HashMap(fallbackSearchHits))
+    }
 
     /** 当前源 + 已返回的同名影片候选源;不等待仍在进行的搜索,未知候选不增加起播延迟。 */
     private fun knownMatchingSourceCount(currentSourceKey: String): Int {
