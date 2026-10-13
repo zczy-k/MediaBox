@@ -122,6 +122,14 @@ public class HawkConfig {
      * 存取见 {@code util/SourceWeightMemory}。这是《源与线路的权重模型》设计稿的落地存储。
      */
     public static final String SOURCE_WEIGHT = "source_weight";
+    /**
+     * 详情页**换源候选池上限**(2026-10-13,问题 18)。
+     *
+     * <p>此前是 `DetailViewModel` 里硬编码的 120 —— 源集合有 300+ 源时,换源链只看得到前 120 个,
+     * 其余源**永不参与换源**(用户观察到"每次进详情页始终只有 120 个待搜索源")。
+     * 现改为可配置:默认仍 120(兼顾换源链启动速度),用户可调大到 200/300 以覆盖更多源。
+     */
+    public static final String FALLBACK_POOL_CAP = "fallback_pool_cap";
     public static final String REMOTE_TVBOX = "remote_tvbox_host";
     public static final String PLAYER_IS_LIVE = "player_is_live";
     public static final String DOH_JSON = "doh_json";

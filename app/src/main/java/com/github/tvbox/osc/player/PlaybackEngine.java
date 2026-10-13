@@ -108,6 +108,59 @@ public final class PlaybackEngine implements PlaybackHostApi {
         controller.initFetch();
         // 预载协调器随引擎走(P2):页面挂载时用页面快照评估,无页面时留空
         controller.initPreload();
+        // 2026-10-13(问题 20b):订阅"网络恢复"事件。引擎是单例、生命周期与 App 同长,
+        // 在此注册一次即可;release() 时反注册。见 onNetworkRestoredEvent 的说明。
+        try {
+            org.greenrobot.eventbus.EventBus.getDefault().register(this);
+        } catch (Throwable th) {
+            LOG.i(TAG + " eventbus register failed: " + th.getMessage());
+        }
+    }
+
+    /**
+     * 网络恢复(2026-10-13,问题 20b):给"卡死"的播放一次自愈机会。
+     *
+     * <p>## 解决的现场
+     * 断网时播放器的 autoRetry 阶梯把额度耗尽(同址重播/切内核各用过一次),网络恢复后
+     * **没有任何东西再触发重试** —— 画面永远停在"正在获取播放信息"。真机取证:网络回来后
+     * 播放无任何新日志、不续播。
+     *
+     * <p>## 处置(保守,不误伤正在播的内容)
+     * 只在**当前确实处于异常态**时动作:播放器已停止/处于 error 或 buffering 卡死,且**该集尚未成功起播过**
+     * (或已起播但停在错误态)。满足才"重置重试阶梯 + 触发一次 autoRetry"。
+     * <ul>
+     *   <li>**正常播放中**:不打扰(用户正在看,重置阶梯反而可能引发不必要的重连);</li>
+     *   <li>**用户主动暂停**:`playbackStarted` 且未在错误态 ⇒ 不动;</li>
+     *   <li>**卡死/错误**:重置 `userSelfRescue()`(恢复重播/切内核额度)+ `autoRetry()`。</li>
+     * </ul>
+     *
+     * <p>⚠️ 事件在系统网络线程 post,EventBus 会切到主线程(MODE.MAIN)投递,故这里可安全碰播放器状态。
+     */
+    @org.greenrobot.eventbus.Subscribe(threadMode = org.greenrobot.eventbus.ThreadMode.MAIN)
+    public void onNetworkRestoredEvent(com.github.tvbox.osc.event.RefreshEvent event) {
+        if (event == null || event.type != com.github.tvbox.osc.event.RefreshEvent.TYPE_NETWORK_RESTORED) return;
+        if (released) return;
+        try {
+            // 只在"当前这一集没能正常播"时动作:没有起播过(卡在取流/起播失败)或处于错误态。
+            boolean playing = videoView != null && videoView.isPlaying();
+            boolean started = controller.isPlaybackStarted();
+            boolean inError = controller.isInErrorState();
+            if (playing) {
+                LOG.i(TAG + " net-restored: still playing, no-op");
+                return;
+            }
+            if (started && !inError) {
+                // 已起播且非错误态 = 用户主动暂停/缓冲中,不打扰
+                LOG.i(TAG + " net-restored: started & no error, skip (user paused/buffering)");
+                return;
+            }
+            LOG.i(TAG + " net-restored: retry playback (started=" + started + " error=" + inError + ")");
+            // 重置阶梯:断网时把重播/切内核额度耗尽了,这里给回一次机会,否则 autoRetry 会直接判"无路可走"
+            controller.resetAutoRetryState();
+            controller.autoRetry();
+        } catch (Throwable th) {
+            LOG.i(TAG + " net-restored retry failed: " + th.getMessage());
+        }
     }
 
     // ==================== 页面取用 ====================
@@ -572,6 +625,12 @@ public final class PlaybackEngine implements PlaybackHostApi {
         // 引擎死亡必须复位直播标记(2026-09-15):否则"直播中被释放"会把 true 留给下一个引擎/后续点播
         setLiveFlag(false);
         LOG.i(TAG + " engine release");
+        // 反注册"网络恢复"订阅(2026-10-13,与构造处 register 配对),避免已释放的引擎仍收事件
+        try {
+            org.greenrobot.eventbus.EventBus.getDefault().unregister(this);
+        } catch (Throwable th) {
+            LOG.i(TAG + " eventbus unregister failed: " + th.getMessage());
+        }
         PlaybackPage page = attachedPage();
         pageRef = null;
         if (page != null) page.onServiceStopped();

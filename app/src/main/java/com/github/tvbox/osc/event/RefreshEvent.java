@@ -80,6 +80,19 @@ public class RefreshEvent {
      * <p>obj 携带当前实测 S(int,取 sharpness);无 obj 或非正 = 拿不到当前画质,详情页直接忽略。
      */
     public static final int TYPE_CROSS_SOURCE_UPGRADE = 28;
+    /**
+     * 网络恢复(2026-10-13,问题 20b):系统报告"默认网络重新可用"。
+     *
+     * <p>谁发:{@code SourceHealthMemory.installNetworkWatcher} 的 onAvailable。
+     * 谁收:{@code PlaybackEngine} —— 若当前播放处于"卡死/错误"态,重置重试阶梯并重试一次。
+     *
+     * <p>## 为什么播放卡死的恢复**不能只靠网络回调**
+     * 断网期间 App 可能被系统挂起/限流,onAvailable 未必到达;即便到达,播放器的 autoRetry
+     * 阶梯早就在断网时把额度耗尽(hasRetriedSameUrlOnBoot 等),网络恢复后**没有东西再触发重试**
+     * —— 表现就是"网络回来了,画面还停在'正在获取播放信息'"。本事件给播放器一个"网络好了,
+     * 再试一次"的明确信号(重置阶梯 + autoRetry)。
+     */
+    public static final int TYPE_NETWORK_RESTORED = 29;
     public int type;
     public Object obj;
 

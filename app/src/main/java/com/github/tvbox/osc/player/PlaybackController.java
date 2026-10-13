@@ -702,6 +702,21 @@ public class PlaybackController {
         return isStartedPlayState(view.currentPlayState()) || hasPlaybackProgress(view.currentPosition()) || view.isPlaying();
     }
 
+    /**
+     * 当前是否处于**错误态**(2026-10-13,问题 20b 配套):供"网络恢复"时判断要不要重试。
+     *
+     * <p>取内核上报的播放状态 == {@code VideoView.STATE_ERROR}(doikki VideoView)。
+     * 拿不到 view / 状态时返回 false(宁可不动,也不要在状态不明时乱重试)。
+     */
+    public boolean isInErrorState() {
+        try {
+            if (view == null) return false;
+            return view.currentPlayState() == xyz.doikki.videoplayer.player.VideoView.STATE_ERROR;
+        } catch (Throwable th) {
+            return false;
+        }
+    }
+
     private boolean hasPlaybackProgress(long progress) {
         return progress > Math.max(st.playTimeoutBasePosition, 0) + 1000;
     }

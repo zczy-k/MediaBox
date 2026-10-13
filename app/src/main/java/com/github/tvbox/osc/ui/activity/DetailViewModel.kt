@@ -39,6 +39,8 @@ import com.github.tvbox.osc.player.VideoQualityProbe
 import com.github.tvbox.osc.util.EpisodeTotals
 import com.github.tvbox.osc.util.HistoryHelper
 import com.github.tvbox.osc.util.HistoryWriter
+import com.github.tvbox.osc.util.HawkConfig
+import com.github.tvbox.osc.util.KV
 import com.github.tvbox.osc.util.LOG
 import com.github.tvbox.osc.util.OkGoHelper
 import com.github.tvbox.osc.util.SearchHelper
@@ -199,6 +201,27 @@ class DetailViewModel : ViewModel() {
      * <p>0 = 无待办。换片/换源时清除([resetEngineState])。
      */
     private var pendingCrossSourceS = 0
+
+    /**
+     * **跨源探测是否已为本集尝试过**(2026-10-13 真机修复,问题 19)。
+     *
+     * <p>## 它防的是什么
+     * 当候选源全部无实测画质(`pool=0`)时,`doCrossSourceUpgrade` 会触发跨源探测并挂起 S,
+     * 探测完成后 replay 再决策。但若**探测失败**(源站 empty-body / 超时),pool 仍为空 ⇒
+     * replay 又触发探测 ⇒ **死循环**。
+     *
+     * <p>真机取证(千与千寻):
+     * <pre>
+     * 21:56:04.950  skip: no measured quality yet, kick probe
+     * 21:56:08.980  xhint-probe empty-body key=aidan          ← 探测失败
+     * 21:56:08.989  replay held after probe-done
+     * 21:56:08.991  skip: no measured quality yet, kick probe ← 又触发(循环)
+     * </pre>
+     *
+     * <p>修法:每集**最多触发一次**跨源探测。试过了还拿不到数据 ⇒ 放弃升清(而不是原地打转)。
+     * 内容边界复位(换片/换集),[resetEngineState] 里清。
+     */
+    private var crossSourceProbed = false
 
     /**
      * 标记当前源已收敛并**补执行挂起的跨源升清**(若有)。
@@ -415,6 +438,12 @@ class DetailViewModel : ViewModel() {
         // 全是 `candidates=N pool=0 verdict=none`,就是缺这一步。
         // ⚠️ 只在 pool 为空时触发:非空说明数据够了,再探是浪费。
         if (pool.isEmpty()) {
+            // 每集最多触发一次探测(问题 19:探测失败后 pool 仍空,replay 会再触发 ⇒ 死循环)
+            if (crossSourceProbed) {
+                LOG.i("echo-xsource give up: probe already tried, still no quality curS=" + currentSharpness)
+                return
+            }
+            crossSourceProbed = true
             LOG.i("echo-xsource skip: no measured quality yet, kick probe curS=" + currentSharpness)
             pendingCrossSourceS = currentSharpness
             runMiniProbeForCrossSource()
@@ -491,10 +520,21 @@ class DetailViewModel : ViewModel() {
     private val triedKeys = HashSet<String>()
     private val usedSourceKeys = HashSet<String>()
     /**
-     * 换源候选池上界:聚合订阅可达数百站(实测某订阅 673 个 site),全量排队会把换源拖到超时;
-     * 只取站点序前 N,其余候选靠搜索回包事件增量补进来。
+     * 换源候选池上界:**可配置**(2026-10-13,问题 18)。
+     *
+     * <p>聚合订阅可达数百站(实测 359~673 个 site),全量排队会把换源拖到超时;故有上界。
+     * 但此前是**硬编码 120**,源集合 300+ 时其余源永不参与换源(用户观察到"始终只有 120 个待搜索源")。
+     * 现从 [HawkConfig.FALLBACK_POOL_CAP] 读取:默认 120,用户可在设置页调大。
+     * 取不到/非法时回退默认,保证永不因配置异常而崩/归零。
      */
-    private val fallbackPoolCap = 120
+    private val fallbackPoolCap: Int
+        get() = try {
+            val configured = KV.get(HawkConfig.FALLBACK_POOL_CAP, DEFAULT_FALLBACK_POOL_CAP)
+            // 非法配置(小于下界)一律回默认 —— coerceAtLeast 会把 0 抬成 MIN,那不是"回默认"而是"悄悄改语义"
+            if (configured < MIN_FALLBACK_POOL_CAP) DEFAULT_FALLBACK_POOL_CAP else configured
+        } catch (th: Throwable) {
+            DEFAULT_FALLBACK_POOL_CAP
+        }
     private val semaphore = Semaphore(SOURCE_SEARCH_CONCURRENCY)
     private val pendingSearchDone = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
     private val searchCaller = SourceViewModel()
@@ -1240,6 +1280,7 @@ class DetailViewModel : ViewModel() {
         // 换片/换源:源内收敛结论与跨源提示都属于上一个会话,必须清零,否则会串到新片
         sourceConverged = false
         pendingCrossSourceS = 0
+        crossSourceProbed = false
         crossSourceHint.value = null
         miniProbeJob?.cancel()
         miniProbeJob = null
@@ -2785,6 +2826,7 @@ class DetailViewModel : ViewModel() {
         // 换源/重扫:新源尚未有收敛结论,跨源提示也必须先撤下,否则会拿着上一个源的结论弹提示
         sourceConverged = false
         pendingCrossSourceS = 0
+        crossSourceProbed = false
         crossSourceHint.value = null
         pendingCompletenessSkip = false
         completenessCorrected = false
@@ -3465,6 +3507,12 @@ class DetailViewModel : ViewModel() {
 
     companion object {
         private val SEARCH_SEQ = java.util.concurrent.atomic.AtomicInteger(0)
+
+        /** 换源候选池默认上界(2026-10-13,问题 18):与旧硬编码值一致,保持换源链启动速度 */
+        private const val DEFAULT_FALLBACK_POOL_CAP = 120
+
+        /** 候选池下界:低于此值视为非法配置,回默认(避免用户误配 0/个位数导致换源链无候选) */
+        private const val MIN_FALLBACK_POOL_CAP = 20
 
         /** 候选站详情取超时:候选站本身慢就赶紧轮到下一个,别让用户盯着等 */
         private const val DETAIL_FALLBACK_DETAIL_TIMEOUT_MS = 3000L

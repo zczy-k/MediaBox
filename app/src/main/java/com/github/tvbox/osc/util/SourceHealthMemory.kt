@@ -731,18 +731,44 @@ object SourceHealthMemory {
         try {
             val context = AppContextHolder.context() ?: return
             val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
-            cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+            // ⚠️ 用带 NetworkRequest 的 registerNetworkCallback 而不是 registerDefaultNetworkCallback
+            // (2026-10-13 问题 20a):真机取证 —— 断网再恢复时默认回调**未触发**(echo-recover 只在
+            // App 启动出现过两次)。显式注册一个"需要 INTERNET 能力"的请求,让系统在**任一网络满足该
+            // 能力时**回调,不依赖"默认网络"这一条链路的内部状态机。
+            val request = android.net.NetworkRequest.Builder()
+                .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build()
+            cm.registerNetworkCallback(request, object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: android.net.Network) {
-                    // 网络恢复:立即平反纯网络类封禁。onAvailable 在系统网络线程回调,
-                    // liftNetworkBans 内部自带锁,可在任意线程调用。
+                    // 网络恢复:立即平反纯网络类封禁 + 通知播放器"网络好了,再试一次"。
+                    // onAvailable 在系统网络线程回调,被调方法内部自带锁/事件线程切换,可任意线程调用。
                     try {
                         // 无条件打一行"网络恢复事件已到达":与 liftNetworkBans 内部那行
                         // (带 lifted 计数)配对,能区分"回调没触发"与"触发了但平反 0 个"。
                         LOG.i("echo-recover network available, evaluate")
                         liftNetworkBans()
+                        // 问题 20b:通知播放器网络已恢复。播放卡死的恢复不能只靠本回调是否到达 ——
+                        // 但既然到达了,就顺手给播放器一个"重置重试阶梯并重试"的信号(由 PlaybackEngine 消费)。
+                        try {
+                            org.greenrobot.eventbus.EventBus.getDefault()
+                                .post(com.github.tvbox.osc.event.RefreshEvent(
+                                    com.github.tvbox.osc.event.RefreshEvent.TYPE_NETWORK_RESTORED))
+                        } catch (th: Throwable) {
+                            LOG.i("echo-recover post event failed: " + th.message)
+                        }
                     } catch (th: Throwable) {
                         LOG.i("echo-recover lift failed: " + th.message)
                     }
+                }
+
+                // 问题 20a:补丢失回调,让"断网"这一半也可观测 —— 此前只记恢复不记断开,
+                // 排查时无法确认"到底有没有断开过"。
+                override fun onLost(network: android.net.Network) {
+                    LOG.i("echo-recover network lost")
+                }
+
+                override fun onUnavailable() {
+                    LOG.i("echo-recover network unavailable")
                 }
             })
             LOG.i("echo-recover network watcher installed")
