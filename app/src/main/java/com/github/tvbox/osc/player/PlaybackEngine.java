@@ -494,6 +494,10 @@ public final class PlaybackEngine implements PlaybackHostApi {
         // 内核没了 ⇒ 播放器里不再有"属于某个会话的内容":清掉 D6 的接管依据,
         // 否则"换源停播后重进同一部"会被判成同片接管而跳过取流(内容其实已经没了)
         controller.clearStartedContent();
+        // 2026-10-13(P1):会话也要作废 —— 内核里那份画面/声音已随 release 销毁,
+        // 但 session 字段还指着上一部,attach 日志会打出旧 key、让人误以为引擎还持有上一部内容。
+        // 换片路径(stopForContentSwitch → releasePlayerKernel → 本方法)后下一次 setData 才会写入新会话。
+        session = null;
     }
 
     /**

@@ -117,65 +117,67 @@ internal object SearchBatchPolicy {
     fun shouldAutoContinue(hasAnyResult: Boolean, queuedSourceCount: Int): Boolean =
         !hasAnyResult && queuedSourceCount > 0
 
-    // ==================== 详情换源链的"快探首批"(2026-10-13) ====================
+    // ==================== 详情换源链的"快探"(2026-10-13) ====================
 
     /**
-     * 详情换源链**快探首批**的源数。
+     * 详情换源链里享受**快探超时**的源数(优先级最高的前 N 个)。
      *
-     * <p>取值 = 搜索并发数(12):恰好**一个并发波次**。
-     * 首批的目的不是"搜到全部",而是"尽快拿到**第一个可用候选**"——
-     * 候选一到位就能起播,剩下的源照常在后批里搜完。
+     * <p>取值 = 搜索并发数(12):恰好**一个并发波次**。这 12 个是"为第一个候选下注"的那批,
+     * 给它们更短的超时 ⇒ 额度更快回收 ⇒ 排队的下一个源更早被投出去。
+     *
+     * <p>⚠️ 它**不是"首批大小"** ——源不会被切成批、也没有批次屏障(见
+     * {@code DetailViewModel.startSourceSearch}):全部源一次性入队,并发由信号量控。
+     * 这个常量只回答"前几个源用短超时"。
      */
     const val DETAIL_PROBE_SIZE = 12
 
     /**
-     * 快探首批的单源超时(ms)。
+     * 快探源的**单源超时**(ms)。
      *
      * <p>常规单源超时是 8s(`SOURCE_SEARCH_TIMEOUT_MS`),而真机源超时率 75~83% ⇒
-     * 首批 30 源 ÷ 并发 12 = 3 波 ≈ 最坏 24s,实测 **10.8s** 才等到第一个候选
-     * (真机 15:17/15:18 两次起播实测:首批收口 +10.8s / +9.8s,而取流出画面只要 2.6~2.9s)。
+     * 排在并发窗口里的慢源会各占 8s 额度,把后面的源硬生生压住。
      *
-     * <p>取 4s:快源(1~2s)完全来得及;**慢源本来也来不及救首屏**,让它们占着并发额度
-     * 只会把"第一个候选"往后拖 —— 它们仍会在后续批次里被搜到(准确度不变)。
+     * <p>取 4s:快源(1~2s)完全来得及。**超时不等于丢证据** ——
+     * 协程超时只是让本任务提前让出额度,该源的请求仍在跑,结果晚到照样经
+     * `onSearchResultEvent` 计入候选与台账(口径不变)。
+     *
+     * <p>⚠️ 对**爬虫型源(type 3)无效**:那类走 `BoundedCall` 阻塞调用,
+     * 超时由站点声明的取数限时决定(默认 8s),协程取消打断不了它 ——
+     * 所以这个值只对 0/1/4 型源起效,这一点写在注释里避免日后误解。
      */
     const val DETAIL_PROBE_TIMEOUT_MS = 4_000L
 
     /**
-     * 把详情换源链的候选切成"快探首批 + 其余按常规批"。
+     * 详情换源链**单源**的超时:按候选顺序,前 [probeCount] 个走快探超时,其余走常规超时。
      *
-     * <p>⚠️ **只改顺序与批次边界,不增删任何源** —— 全部源最终仍会被搜到,
-     * 因此"库里明明有这部片却搜不到"的准确度风险为零(与 [splitFastRoundSources] 同一取向)。
-     * 这与 `penalizedLast` 的"先 take 截断再降权"是两件事:那个管取舍,这个只管次序。
-     *
-     * @param keys      已排好优先级的候选(首页源在前、降权源垫底)
-     * @param probeSize 快探首批源数
-     * @param batchSize 其余批次的源数
-     */
-    fun <T> detailSearchBatches(
-        keys: List<T>,
-        probeSize: Int = DETAIL_PROBE_SIZE,
-        batchSize: Int = DEFAULT_BATCH_SIZE,
-    ): List<List<T>> {
-        if (keys.isEmpty()) return emptyList()
-        val probe = keys.take(probeSize.coerceAtLeast(1))
-        val rest = keys.drop(probe.size)
-        val out = ArrayList<List<T>>(1 + rest.size / batchSize.coerceAtLeast(1) + 1)
-        out.add(probe)
-        if (rest.isNotEmpty()) out.addAll(rest.chunked(batchSize.coerceAtLeast(1)))
-        return out
-    }
-
-    /**
-     * 某一批的单源超时:首批走快探超时,其余走常规超时。
-     *
-     * <p>单独抽成纯函数是为了让"首批必须短"这条口径可被单测钉住 ——
+     * <p>单独抽成纯函数是为了让"快探那批必须短"这条口径可被单测钉住 ——
      * 它很容易在后续重构里被无意改回统一超时,而那正是起播慢的成因。
      */
-    fun detailBatchTimeoutMs(
-        batchIndex: Int,
+    fun detailSourceTimeoutMs(
+        index: Int,
+        probeCount: Int = DETAIL_PROBE_SIZE,
         probeMs: Long = DETAIL_PROBE_TIMEOUT_MS,
         normalMs: Long = 8_000L,
-    ): Long = if (batchIndex <= 0) probeMs else normalMs
+    ): Long = if (index >= 0 && index < probeCount) probeMs else normalMs
+
+    /**
+     * 起播成功后是否该**冻结**后台聚合搜索(2026-10-13,P1)。
+     *
+     * <p>画面已经出来就没必要再把剩下的源搜完:候选只在"这条源放不出来"时才有用,
+     * 而那种情况会由换源链重新发起一轮新搜索 —— 搜索的重启判据只看"搜索是否在跑"
+     * (见 {@code DetailViewModel.ensureSourceSearchRunning}),所以冻结时必须把该状态置回 false。
+     *
+     * <p>两条判据都必要:
+     * <ul>
+     *   <li>没起播:没什么可省的,搜索该跑完(它正是"起播失败"时的救命通道);</li>
+     *   <li>搜索已收工:别去动一个已经收口的状态 —— 重复置位/重复落盘都是白做,
+     *       而且会把"这一轮到底结束没有"的语义搅浑。</li>
+     * </ul>
+     * 冻结的兑现口径(不在这里表达,由调用方保证):**停投新源 + 在途源照跑**,
+     * 在途结果仍计入候选与台账 —— 冻结的是"还要不要继续开新请求",不是"已发出的证据要不要"。
+     */
+    fun shouldFreezeOnPlaybackStarted(playbackStarted: Boolean, searchRunning: Boolean): Boolean =
+        playbackStarted && searchRunning
 
     /** 仅用户正在滚动且接近列表尾部时预取;短列表不会因初始布局把所有源自动搜完。 */
     fun shouldLoadMoreOnScroll(

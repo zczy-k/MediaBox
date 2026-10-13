@@ -47,4 +47,37 @@ object KernelReusePolicy {
         val cut = targetKey.lastIndexOf('|')
         return if (cut > 0) targetKey.substring(0, cut + 1) else ""
     }
+
+    /**
+     * 本次起播是不是**换片**(内核里躺着的是**另一部片**),而不是同一部的换源/换线/换集。
+     *
+     * <p>## 为什么要单独判"换片"(2026-10-13)
+     * [isCrossContentSwitch] 太宽:它把换源/换线也算成"换内容",而这三条路复用上一部的内核是**收益**
+     * (省一次内核重建;进度继承也正靠它)。真正**不能**复用上一部内核的只有换片 ——
+     * 内核里那份是另一部片的画面与声音:取流要 1~3 秒,而这段时间里旧内容仍在播放器里
+     * (缓冲态下 {@code playWhenReady} 甚至还是 true)⇒ 用户先听到上一部的声音、多走一次错误的起播,
+     * 之后才被新片的地址顶掉。所以换片必须"上一部的内核/会话/待继承位置一律作废"。
+     *
+     * <p>判据取归属键 `源|片id|线路|集号`([com.github.tvbox.osc.player.PlaybackSession.playbackKey])
+     * 的第 2 段(片 id):换源 = 同一片 id 不同源,换线/换集 = 同片同源不同线路/集号 ⇒ 都不算换片。
+     *
+     * @param startedKey 内核里那份内容的键;null/空 = 内核里本来没有内容(预热内核/已释放)
+     * @return true = 必须先作废上一部内容再起播
+     */
+    @JvmStatic
+    fun isDifferentVodSwitch(startedKey: String?, targetKey: String?): Boolean {
+        // 内核里没内容 ⇒ 没有"上一部"可作废(这一条同时保住了"预热/空闲内核复用"的收益)
+        if (startedKey.isNullOrEmpty()) return false
+        return vodIdOf(startedKey) != vodIdOf(targetKey)
+    }
+
+    /**
+     * 取归属键里的**片 id**(第 2 段)。段数不足(不该发生)时把整键当身份用 ——
+     * 判不出就按"不是同一部"处理,宁可多重一次内核,也不能让上一部的声画留到新片里。
+     */
+    private fun vodIdOf(key: String?): String? {
+        if (key.isNullOrEmpty()) return null
+        val parts = key.split('|')
+        return if (parts.size >= 2) parts[1] else key
+    }
 }

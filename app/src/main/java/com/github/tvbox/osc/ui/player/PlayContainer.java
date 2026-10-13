@@ -25,6 +25,7 @@ import com.github.tvbox.osc.data.CacheManager;
 import com.github.tvbox.osc.dlna.CastVideo;
 import com.github.tvbox.osc.event.RefreshEvent;
 import com.github.tvbox.osc.player.ExoPlayer;
+import com.github.tvbox.osc.player.KernelReusePolicy;
 import com.github.tvbox.osc.player.PreloadCoordinator;
 import com.github.tvbox.osc.player.MyVideoView;
 import com.github.tvbox.osc.player.PageHost;
@@ -1140,12 +1141,33 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
             if (mVideoView != null && !mVideoView.isPlaying()) mVideoView.start();
             return;
         }
+        // 换片判定(2026-10-13,P1)必须在释放内核**之前**算:releasePlayerKernel 会清掉
+        // 引擎的"已起播内容"归属键(startedPlaybackKey),算晚了就恒判不出"内核里是上一部"。
+        //
+        // 换片兜底:正常换片由页面先发 StopForContentSwitch 作废上一部,但那条指令走的是异步命令
+        // 通道 —— 万一它没到(换片发生在页面首次组合之前),这里按归属键再判一次:
+        // 内核里还活着**另一部片**就先释放,绝不让上一部的声画活到新片起播(那正是"上一部声音")。
+        //
+        // 只在"旧内容还活着"时动手:IDLE 内核已被 stopPlaybackHard 停死并被遮黑覆盖,复用它是既有
+        // 收益(P2 空闲内核/预热复用),不能因为换了片就白扔 —— 释放的代价是一次内核重建。
+        boolean differentVod = KernelReusePolicy.isDifferentVodSwitch(
+                scheduler.startedPlaybackKey(), session.playbackKey());
+        boolean previousContentAlive = mVideoView != null
+                && mVideoView.getCurrentPlayState() != VideoView.STATE_IDLE;
+        if (differentVod && previousContentAlive) {
+            LOG.i("echo-p2 setData: previous vod still alive, release kernel before switch");
+            releasePlayerKernel();
+        }
         // 同片同线路换集(选集面板点集走的就是这条):内核可复用,省一次重建;换片/换线路仍走重建
         boolean sameVodSwitch = isSameVodEpisodeSwitch(session);
         // 用户手动换线(详情页「线路N」chip / 选集面板):新线路的进度键不同,先把当前位置记下,
         // 下一次 play 会把它写进新键 —— 缺这一步就是"换条线从头播"。
         // 放在 setData 里而不是靠页面的异步指令:与"这次起播"同帧,不存在"指令晚到、先播了"的竞态
-        if (session.userPickedLine()) rememberProgressForSwitch();
+        //
+        // ⚠️ 换片**不许**记(2026-10-13,P1):那份位置属于上一部,而 pendingInherit 的守卫只比
+        // "集名写法"(pendingInheritAppliesTo),同名集在两个片之间完全可能撞上 ⇒ 新片会从上一部的
+        // 进度中部起播。换线/换集(!differentVod)照记,那是它的正当用途。
+        if (!differentVod && session.userPickedLine()) rememberProgressForSwitch();
         engine.setData(session);
         syncSessionVod();
         mController.setPlayerConfig(scheduler.playerCfg());
@@ -1417,6 +1439,12 @@ mController.toggleControlBar();
         mVideoView.saveCurrentProgress();
         // pause 对取流中的起播无效(PAUSED 时本调用自会 return):不打断的话这一集会在新片加载期间自己响起来
         mVideoView.stopPlaybackKeepPlayer();
+        // 2026-10-13(P1):换片必须把上一部的内核也作废 —— stopPlaybackKeepPlayer 只把状态置 PAUSED,
+        // 内核里那份画面/声音还在。新片详情回来之前有 1~3s 的窗口,这期间 playWhenReady 仍为 true,
+        // 旧内容会自己响起来("上一部声音"正是这条路径漏的)。释放后下一起播必走 REBUILD,
+        // 既不会带旧 key 也不会继承旧进度。同片换源/换线/换集不走本方法,不受影响。
+        releasePlayerKernel();
+        LOG.i("echo-p2 stopForContentSwitch released kernel to drop previous vod");
     }
                 public MyVideoView getPlayer() {
         return mVideoView;

@@ -389,6 +389,24 @@ class DetailViewModel : ViewModel() {
     private var searchToken = 0
     private var searchTitle = ""
 
+    /**
+     * 本轮聚合搜索是否已被"起播成功"**冻结**(2026-10-13,P1):冻结后不再投新源,
+     * 但**在途的照跑**(它们的结果仍计入候选与台账,不丢证据)。
+     *
+     * <p>判据见 [SearchBatchPolicy.shouldFreezeOnPlaybackStarted],兑现见 [freezeFallbackSearch]。
+     * 每轮搜索开头复位 —— 下一次需要候选时(例如这条源后来放不出来)必须能重新搜。
+     */
+    private var searchFrozen = false
+
+    /**
+     * 命中回存的**合并写**句柄(2026-10-13):命中是逐源到达的,而落盘要序列化整张命中表,
+     * 不能每来一条就写一次(120 源 × 整表 JSON,主线程扛不住)。
+     *
+     * <p>合并窗口内仍会丢失"最后一次写入之后才到的命中",所以**边界必须显式 flush**:
+     * 换片/退出页面/起播冻结/搜索收工(见 [flushFallbackHitsSave] 的各调用点)。
+     */
+    private var hitsSaveJob: Job? = null
+
     init {
         EventBus.getDefault().register(this)
         // 单实例 + 代次(D2/V4):不再换 SourceViewModel 实例,迟到回包由回包自带的代次丢弃
@@ -459,6 +477,9 @@ class DetailViewModel : ViewModel() {
 
     /** 换片时收掉上一部在途的聚合搜索,并让旧 token 立即失效(搜索回包仍靠 token 失配兜底) */
     private fun cancelInFlightContent() {
+        // ⚠️ 必须先回存:下面就要换片,searchTitle 随后会被 resetContentState 清空 ——
+        // 那一刻之后再落盘,键就取不到了(命中白白丢掉,正是"同一部片再次进入依旧慢"的成因)。
+        flushFallbackHitsSave()
         searchJob?.cancel()
         searchJob = null
         val stopped = pendingSearchDone.keys.toList()
@@ -1450,7 +1471,12 @@ class DetailViewModel : ViewModel() {
         val title = searchTitle.ifEmpty { vodName.trim() }
         if (title.isEmpty()) return
         if (sourcesSearching.value && searchTitle == title) return
+        // ⚠️ 回存必须在**改写 searchTitle 之前**:命中表马上会被清空,而落盘的键取自
+        // searchTitle —— 晚一步就写错键(把上一部的命中挂到这一部名下)。
+        flushFallbackHitsSave()
         searchTitle = title
+        // 新一轮搜索 ⇒ 解冻(上一轮可能因为起播成功被冻结过;那条源后来放不出来时还得靠它)
+        searchFrozen = false
         searchToken = SEARCH_SEQ.incrementAndGet()
         val myToken = searchToken
         val tokenStr = "detail_$myToken"
@@ -1500,65 +1526,67 @@ class DetailViewModel : ViewModel() {
         fallbackSearchHits.clear()
         seedCandidatesFromCache(title)
         if (sources.isEmpty()) return
-        // 快探首批(2026-10-13):12 源 / 4s 一个并发波次,只为尽快拿到**第一个可用候选**;
-        // 其余源仍按 SEARCH_BATCH_SIZE 分批搜完 —— 只改次序,不增删任何源。
-        val batches = SearchBatchPolicy.detailSearchBatches(
-            sources,
-            SearchBatchPolicy.DETAIL_PROBE_SIZE,
-            SEARCH_BATCH_SIZE,
-        )
         searchJob = viewModelScope.launch {
             val doneCount = java.util.concurrent.atomic.AtomicInteger()
-            // S6 分批递进(2026-10-09):整池一次 awaitAll 有两个毛病 —— ①换片/换代后旧搜索
-            // 要等全池跑完(最长 ~59s)才让路;②用户在整个等待期零进度反馈。分批后每批之间
-            // 是检查点:换代立刻 abort(在途批照跑完,不中断单源),进度按源粒度上报。
-            // 刻意不做批间空窗收口:命中与否由候选事件驱动(不变),收口仍等全池 ——
-            // "库里明明有却提前宣判"是准确性事故,不做。
-            for ((batchIdx, batch) in batches.withIndex()) {
-                if (tokenStr != currentTokenStr()) {
-                    LOG.i("echo-source-search abort stale batch=$batchIdx token=$myToken")
-                    return@launch
-                }
-                val batchTimeoutMs = SearchBatchPolicy.detailBatchTimeoutMs(
-                    batchIdx,
-                    SearchBatchPolicy.DETAIL_PROBE_TIMEOUT_MS,
-                    SOURCE_SEARCH_TIMEOUT_MS,
-                )
-                coroutineScope {
-                    batch.map { bean ->
-                        async {
-                            semaphore.withPermit {
-                                val done = CompletableDeferred<Unit>()
-                                pendingSearchDone.put(bean.key, done)?.complete(Unit)
-                                try {
-                                    withTimeoutOrNull(batchTimeoutMs) {
-                                        withContext(Dispatchers.IO) {
-                                            searchCaller.getSearch(bean.key, title, tokenStr)
-                                        }
-                                        done.await()
+            // ⚡ 2026-10-13:**去掉批次屏障**(原 `chunked(SEARCH_BATCH_SIZE)` + 每批 awaitAll)。
+            //
+            // 真正限制并发的是信号量(12),所以批次大小并不改变"先发谁" —— 前 12 个源先跑;
+            // 但第 13 个源必须等**整批(30 个)全部收口**才开始,而慢源要等满 8s 超时
+            // ⇒ 命中在 13 名之后的源时,"第一个候选"被硬生生推后 8~16s。
+            // (真机实测:点卡片 → 第一个候选 +10.8s/+9.8s,而取流出画面只要 2.6~2.9s。)
+            //
+            // 现在:全部源一次性入队,由信号量控并发 —— 任一源答话/超时释放额度,排队的下一个
+            // **立刻**顶上。候选到达因此只受"最快答话的源"约束,不受批次边界约束。
+            // 覆盖不变(池里几个源就搜几个,一个不少),只是不再互相排队等整批。
+            //
+            // 让路能力不靠批次保留:每个源在**拿额度前后各查一次**[searchActive] ——
+            // 换代(换片/换源/重试)与"起播成功冻结"都在这两处生效,排队的任务一到期就自己退出,
+            // 不会白打请求(比"等整批跑完"更早让路)。
+            coroutineScope {
+                sources.mapIndexed { index, bean ->
+                    async {
+                        if (!searchActive(tokenStr)) return@async
+                        semaphore.withPermit {
+                            if (!searchActive(tokenStr)) return@withPermit
+                            // 优先级最高的前 N 个源用快探超时:它们是为"首屏候选"下注的那批,
+                            // 让额度更快回收 ⇒ 后续源更早被投出去。结果晚到仍会经事件通道计入(不丢证据)。
+                            val sourceTimeoutMs = SearchBatchPolicy.detailSourceTimeoutMs(
+                                index,
+                                SearchBatchPolicy.DETAIL_PROBE_SIZE,
+                                SearchBatchPolicy.DETAIL_PROBE_TIMEOUT_MS,
+                                SOURCE_SEARCH_TIMEOUT_MS,
+                            )
+                            val done = CompletableDeferred<Unit>()
+                            pendingSearchDone.put(bean.key, done)?.complete(Unit)
+                            try {
+                                withTimeoutOrNull(sourceTimeoutMs) {
+                                    withContext(Dispatchers.IO) {
+                                        searchCaller.getSearch(bean.key, title, tokenStr)
                                     }
-                                } finally {
-                                    pendingSearchDone.remove(bean.key)
-                                    // 取消/换代的旧 job 不回写进度:免得旧计数覆盖新搜索的 N/M 显示
-                                    if (tokenStr == currentTokenStr()) {
-                                        publishSearchProgress(doneCount.incrementAndGet(), sources.size)
-                                    }
+                                    done.await()
+                                }
+                            } finally {
+                                pendingSearchDone.remove(bean.key)
+                                // 取消/换代/冻结后的旧 job 不回写进度:免得旧计数覆盖新搜索的 N/M 显示
+                                if (searchActive(tokenStr)) {
+                                    publishSearchProgress(doneCount.incrementAndGet(), sources.size)
                                 }
                             }
                         }
-                    }.awaitAll()
-                }
-                LOG.i(
-                    "echo-source-search batch-done batch=$batchIdx done=${doneCount.get()}" +
-                        " total=${sources.size} timeout=${batchTimeoutMs}ms token=$myToken"
-                )
-                // 每批收口即回存命中:用户可能在搜索跑完前就退出,不存就白搜一轮
-                // (这正是"同一部片再次进入依旧很慢"的成因 —— 上次的命中没留下任何东西)
-                if (tokenStr == currentTokenStr() && fallbackSearchHits.isNotEmpty()) {
-                    saveFallbackHitsToCache()
-                }
+                    }
+                }.awaitAll()
             }
-            if (tokenStr == currentTokenStr()) {
+            LOG.i(
+                "echo-source-search all-done done=${doneCount.get()}" +
+                    " total=${sources.size} frozen=$searchFrozen token=$myToken"
+            )
+            // 全池/在途波次收口再回存一次(过程中已按合并窗口增量回存,这里兜底)
+            if (tokenStr == currentTokenStr() && fallbackSearchHits.isNotEmpty()) {
+                saveFallbackHitsToCache()
+            }
+            // 冻结时状态已由 [freezeFallbackSearch] 收口,这里**不能**再走接管/空态收口:
+            // 那两件事是"给还没起播的页面找内容"用的,而冻结的前提正是"画面已经出来了"。
+            if (tokenStr == currentTokenStr() && !searchFrozen) {
                 sourcesSearching.value = false
                 searchProgress.value = null
                 if (shouldAutoTakeOver()) loadNextFallbackCandidate()
@@ -1610,7 +1638,13 @@ class DetailViewModel : ViewModel() {
                 val sameTitle = videos.filter {
                     !it.id.isNullOrEmpty() && TitleMatcher.isSameTitle(it.name, searchTitle)
                 }
-                if (sameTitle.isNotEmpty()) fallbackSearchHits[hitSourceKey] = sameTitle
+                if (sameTitle.isNotEmpty()) {
+                    fallbackSearchHits[hitSourceKey] = sameTitle
+                    // 合并写(见 hitsSaveJob):逐源到达就逐源落盘会让主线程反复序列化整张表;
+                    // 但**不落盘**就等于"这次搜过的命中白搜"—— 上一版只在搜索全跑完时写一次,
+                    // 用户提前退出/换片就把整轮命中丢了,"同一部片再次进入依旧慢"于是复发。
+                    scheduleFallbackHitsSave()
+                }
             }
             val fresh = videos.filter {
                 !it.id.isNullOrEmpty() && TitleMatcher.isSameTitle(it.name, searchTitle)
@@ -1674,12 +1708,74 @@ class DetailViewModel : ViewModel() {
     private fun currentTokenStr(): String = "detail_$searchToken"
 
     /**
+     * 这一轮聚合搜索现在是否仍该**投源/回写进度**。
+     *
+     * <p>两道判据缺一不可:代次未变(换片/换源/重试后旧任务一律作废)且未被冻结
+     * (起播成功 ⇒ 不再投新源,见 [freezeFallbackSearch])。
+     */
+    private fun searchActive(tokenStr: String): Boolean =
+        tokenStr == currentTokenStr() && !searchFrozen
+
+    /**
+     * 起播成功 ⇒ **冻结**后台聚合搜索(2026-10-13,P1)。
+     *
+     * <p>## 为什么
+     * 画面已经出来了,就没必要把剩下的源搜完:候选只在"这条源放不出来"时才有用,
+     * 而那种情况会重新发起一轮新搜索([ensureSourceSearchRunning] 只看 [sourcesSearching],
+     * 所以这里必须把它置回 false,否则冻结之后再也搜不动)。
+     * 冻结把 12 个并发搜索请求迅速收干到 0,带宽让给正在缓冲/刚起播的播放流。
+     *
+     * <p>## 兑现口径(刻意只做一半)
+     * **停投新源 + 在途照跑**:已经发出去的请求不撤 —— 它们的结果仍经 [onSearchResultEvent]
+     * 计入候选与台账(冻结的是"还要不要再开新请求",不是"已发出的证据要不要")。
+     * 排队等额度的源在 [searchActive] 处直接退出,所以并发额度会立刻陆续释放。
+     */
+    private fun freezeFallbackSearch() {
+        // 判据抽成纯函数:它很容易被改成"无条件冻结",而那会伤到"起播失败要靠搜索救命"的场景
+        if (!SearchBatchPolicy.shouldFreezeOnPlaybackStarted(true, sourcesSearching.value)) return
+        if (searchFrozen) return
+        searchFrozen = true
+        LOG.i("echo-source-search freeze token=$searchToken title=$searchTitle")
+        // 状态即时收口:进度条随之下线(在途源的回写已被 [searchActive] 挡住,不会再让它冒出来)
+        sourcesSearching.value = false
+        searchProgress.value = null
+        // 冻结即落盘:用户随时可能换片/退出,没落盘的命中等于没搜过
+        flushFallbackHitsSave()
+    }
+
+    /**
+     * 排队一次命中回存(合并窗口内的多次命中,见 [hitsSaveJob])。
+     *
+     * <p>只做合并、不做合并的兜底 —— 兜底由各内容边界上的 [flushFallbackHitsSave] 负责。
+     */
+    private fun scheduleFallbackHitsSave() {
+        if (hitsSaveJob?.isActive == true) return
+        hitsSaveJob = viewModelScope.launch {
+            delay(HIT_CACHE_SAVE_MERGE_MS)
+            saveFallbackHitsToCache()
+        }
+    }
+
+    /**
+     * 立即回存(并取消排队中的合并写)。
+     *
+     * <p>调用点都是**内容边界**:搜索开销、换片、起播冻结、退出页面。这些时点是"再也不用
+     * 这一轮的命中表了"的最后机会,漏一个就会丢一整轮命中。
+     */
+    private fun flushFallbackHitsSave() {
+        hitsSaveJob?.cancel()
+        hitsSaveJob = null
+        saveFallbackHitsToCache()
+    }
+
+    /**
      * 用 [SearchResultCache] 的历史命中**先灌一批候选**(2026-10-13)。
      *
      * <p>## 解决什么
-     * 详情页的换源候选**只能**来自聚合搜索,而首批收口实测要 **9.8~10.8s**
-     * (30 源 ÷ 并发 12 = 3 波 × 8s 超时;真机源超时率 75~83%)。
-     * 于是"同一部片再次进入"要重新付出同样代价 —— 而上次明明已经搜出过它由哪些源收录。
+     * 详情页的换源候选**只能**来自聚合搜索。索引型源(如 js_douban)没有详情接口,
+     * 必须等聚合搜索给出第一个候选才能起播,而真机源超时率 75~83%(12 并发下,
+     * 第一个候选实测要 9.8~10.8s)。于是"同一部片再次进入"要重新付出同样代价 ——
+     * 而上次明明已经搜出过它由哪些源收录。
      *
      * <p>命中缓存时候选**立刻**可用,[startFallbackIfNeeded] 紧接着的
      * [loadNextFallbackCandidate] 就能直接加载对端详情(1~2s),把 12~15s 压到 2~3s。
@@ -1716,6 +1812,11 @@ class DetailViewModel : ViewModel() {
      *
      * <p>**必须回存**:[SearchResultCache] 此前只有搜索页([SearchViewModel])会写,
      * 而首页卡片(索引型源)进来的片名往往从未在搜索页搜过 ⇒ 缓存恒为空、修复形同虚设。
+     *
+     * <p>调用时机有两类:**过程增量**([scheduleFallbackHitsSave],合并 2s 一次)与
+     * **边界兑现**([flushFallbackHitsSave]:搜索开头/换片/起播冻结/退出页面)。后者是硬要求 ——
+     * 只在"整轮搜索收口"时写一次的话,用户提前退出或换片就把这一轮命中整批丢掉,
+     * 于是"同一部片再次进入依旧慢"会复发(这正是 2026-10-10 之前的形态)。
      */
     private fun saveFallbackHitsToCache() {
         if (fallbackSearchHits.isEmpty()) return
@@ -2449,6 +2550,8 @@ class DetailViewModel : ViewModel() {
     }
 
     fun destroyEngine() {
+        // 页面要走:合并窗口里排队的命中回存必须当场兑现(作用域随后就会被取消)
+        flushFallbackHitsSave()
         cancelDetailTimeout()
         qualityProbeJob?.cancel()
         qualityProbeJob = null
@@ -2936,6 +3039,11 @@ class DetailViewModel : ViewModel() {
         // 是为了不占用首帧:起播前只做 ≤1~2s 的直链轻探,重活(全源扫描 + 爬虫深探)全部后置。
         // 每片每会话只跑一次(内部有闩),幂等且自带取消域。
         sweepSourceLinesForQuality()
+        // 画面已经出来了 ⇒ 后台聚合搜索到此为止(2026-10-13,P1):不再为"可能需要的候选"
+        // 把剩下上百个源搜完 —— 那些请求正在跟刚开始缓冲的播放流抢带宽。
+        // 是"冻结"不是"取消":在途的照收(证据不丢),而且这条源一旦放不出来,
+        // 换源链会重新发起一轮新搜索([ensureSourceSearchRunning] 只看 sourcesSearching)。
+        freezeFallbackSearch()
     }
 
     private fun syncPlayingVodInfo(playing: VodInfo) {
@@ -3086,12 +3194,15 @@ class DetailViewModel : ViewModel() {
         private const val FIRST_WATCH_PROBE_LINES = 3
         /** 单个候选站的同名搜索超时。原 30s:聚合订阅动辄数百站,单站卡住会拖垮整轮候选收集 */
         private const val SOURCE_SEARCH_TIMEOUT_MS = 8_000L
+
         /**
-         * S6 分批递进的批大小(2026-10-09)。取 [SOURCE_SEARCH_CONCURRENCY] 的 ~2.5 倍:
-         * 批内保持信号量饱和,批间是"换代 abort + 批日志"的检查点。再大会退化回
-         * "整池一次 awaitAll"的旧毛病;再小则批间空隙增多,总耗时被批边界拉长。
+         * 命中回存的**合并窗口**(2026-10-13)。
+         *
+         * <p>命中是逐源到达的(最坏 120 次),而每次落盘都要序列化整张命中表 + 遍历 MMKV 键表;
+         * 逐条写等于在主线程上跑 120 次全表序列化。合并到 2s 一次,把写次数压到个位数,
+         * 而"提前退出/换片"造成的尾部丢失由边界上的 flush 兜住(见 flushFallbackHitsSave)。
          */
-        private const val SEARCH_BATCH_SIZE = 30
+        private const val HIT_CACHE_SAVE_MERGE_MS = 2_000L
 
         /**
          * 加载体验预算:停在 Loading 超过它就必须给确定画面。
