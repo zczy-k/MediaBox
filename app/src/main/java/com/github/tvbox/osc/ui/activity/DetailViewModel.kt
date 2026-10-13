@@ -24,7 +24,6 @@ import com.github.tvbox.osc.bean.VodInfo
 import com.github.tvbox.osc.data.RoomDataManger
 import com.github.tvbox.osc.event.RefreshEvent
 import com.github.tvbox.osc.player.CrossSourceHintPolicy
-import com.github.tvbox.osc.player.CrossSourceUpgradePolicy
 import com.github.tvbox.osc.player.DeviceCapability
 import com.github.tvbox.osc.player.LineQualitySelector
 import com.github.tvbox.osc.player.LineHealthMemory
@@ -193,64 +192,6 @@ class DetailViewModel : ViewModel() {
     /** 当前片当前源是否已收敛(sweep 已出 verdict、不会再自动升档)。跨源提示只在收敛后出场。 */
     private var sourceConverged = false
 
-    /**
-     * **跨源升清的待办 S**(2026-10-13 真机修复):播放侧可能在**源内收敛之前**就发来跨源请求
-     * (它只看 `untriedHigher==0`,不等 sweep)。此时不能丢弃(丢弃 = 该集永不重发,链路失效),
-     * 而是把当前实测 S 挂在这里,等 [markSourceConverged] 时补执行一次。
-     *
-     * <p>0 = 无待办。换片/换源时清除([resetEngineState])。
-     */
-    private var pendingCrossSourceS = 0
-
-    /**
-     * **跨源探测是否已为本集尝试过**(2026-10-13 真机修复,问题 19)。
-     *
-     * <p>## 它防的是什么
-     * 当候选源全部无实测画质(`pool=0`)时,`doCrossSourceUpgrade` 会触发跨源探测并挂起 S,
-     * 探测完成后 replay 再决策。但若**探测失败**(源站 empty-body / 超时),pool 仍为空 ⇒
-     * replay 又触发探测 ⇒ **死循环**。
-     *
-     * <p>真机取证(千与千寻):
-     * <pre>
-     * 21:56:04.950  skip: no measured quality yet, kick probe
-     * 21:56:08.980  xhint-probe empty-body key=aidan          ← 探测失败
-     * 21:56:08.989  replay held after probe-done
-     * 21:56:08.991  skip: no measured quality yet, kick probe ← 又触发(循环)
-     * </pre>
-     *
-     * <p>修法:每集**最多触发一次**跨源探测。试过了还拿不到数据 ⇒ 放弃升清(而不是原地打转)。
-     * 内容边界复位(换片/换集),[resetEngineState] 里清。
-     */
-    private var crossSourceProbed = false
-
-    /**
-     * 标记当前源已收敛并**补执行挂起的跨源升清**(若有)。
-     *
-     * <p>为什么收敛点和补执行要绑在一起:跨源升清的前置条件正是"源内已到头"
-     * (`sourceConverged`),而收敛是异步 sweep 的产物。把"置真"与"补执行"收在一处,
-     * 避免漏掉某个收敛分支(本项目已有多处 `sourceConverged = true`)。
-     */
-    private fun markSourceConverged() {
-        sourceConverged = true
-        replayPendingCrossSourceUpgrade("converge")
-    }
-
-    /**
-     * 补执行挂起的跨源升清(若有待办)。两个触发时机共用:
-     * <ol>
-     *   <li>源内收敛([markSourceConverged] —— 播放侧可能在收敛前就发了请求);</li>
-     *   <li>聚合搜索命中到达([fallbackCandidates] 填充后 —— 候选就绪才谈得上跨源择优)。</li>
-     * </ol>
-     *
-     * @param reason 仅用于日志,便于在真机上区分"是哪条时机触发的补执行"
-     */
-    private fun replayPendingCrossSourceUpgrade(reason: String) {
-        val held = pendingCrossSourceS
-        if (held <= 0) return
-        pendingCrossSourceS = 0
-        LOG.i("echo-xsource replay held S=" + held + " after " + reason)
-        tryCrossSourceUpgrade(held)
-    }
 
     /** 跨源提示的一次性闩(键 = 站点|片id):用户关掉或点过之后,本会话同片不再弹。 */
     private var crossHintDismissedKey = ""
@@ -331,154 +272,6 @@ class DetailViewModel : ViewModel() {
         crossSourceHint.value = if (show) bestHint else null
     }
 
-    /**
-     * 跨源升清(2026-10-13,P0-1):播放侧报告"本源已到头"(携带当前实测 S),
-     * 详情页判断**是否值得跨源切到画质更高的候选源**,值得则自动执行。
-     *
-     * <p>## 为什么这是"升清不能跨源"的解法
-     * 现有升档([DetailViewModel.switchLineForQuality]、PlaybackRetryDelegate.handleNetworkPlentiful)
-     * 的候选被 `sourceKey` 锁死 —— 源A 最高 480P、源B 有 1080P 时系统看不到源B。
-     * 本方法把决策半径从"当前源的线路"扩到"所有候选源",复用详情页**已有的**跨源实测数据
-     * ([VideoQualityMemory.lookupBestBatch],零网络)。
-     *
-     * <p>## 与 [refreshCrossSourceHint] 的关系(同一份数据,两种动作)
-     * 提示是"问用户要不要切",本方法是"系统自己切"。两者**共用同一判据**
-     * ([CrossSourceUpgradePolicy] 与 [CrossSourceHintPolicy] 的 θ/ΔS 完全同口径),
-     * 所以不会出现"系统觉得值但只提示不切"的割裂。**已闩掉提示的片不再自动切**:用户明确
-     * 表达过"不想被这部片打扰",自动切会违背该意图。
-     *
-     * <p>## 三条护栏
-     * <ol>
-     *   <li>**源内优先**:只在 [sourceConverged](本源 sweep 已出结论)后才跨源,
-     *       源内还有更高档没试完时不越过(源内换线代价远小于跨源重取详情);</li>
-     *   <li>**只升不降 + 拿不准不切**:判据在 [CrossSourceUpgradePolicy],未知尺寸直接不切;</li>
-     *   <li>**用户意图优先**:本片已闩掉跨源提示 ⇒ 不自动切。</li>
-     * </ol>
-     *
-     * @param currentSharpness 播放内核报告的当前实测等效清晰度 S;非正 ⇒ 忽略
-     */
-    private fun tryCrossSourceUpgrade(currentSharpness: Int) {
-        if (currentSharpness <= 0) return
-        val info = vodInfo ?: return
-        val titleKey = searchTitle.ifEmpty { vodName }.ifEmpty { vodId }
-        // 与提示同一批前置闸:源内未收敛 / 本片已闩掉 / 正在换源 都不自动切。
-        //
-        // ⚠️ 2026-10-13 真机修复(时序竞态):播放侧在**源内收敛之前**就会发跨源请求
-        // (只要 `untriedHigher==0` 即发,而 sweep 要几秒后才收敛)。若这里直接 return,
-        // 请求被丢弃、而播放侧的 `crossSourceRequested` 闩已置真 ⇒ **本集再也不发** ⇒
-        // 跨源升清整条链路从不生效(真机取证:20:22:10 发出请求,20:22:35 才收敛,
-        // 全程无 echo-xsource decide)。
-        // 修法:**未收敛时挂起待办**,等 [markSourceConverged] 时补执行一次。
-        if (!sourceConverged) {
-            pendingCrossSourceS = currentSharpness
-            LOG.i("echo-xsource defer: not converged yet, hold S=" + currentSharpness)
-            return
-        }
-        if (crossHintDismissedKey == titleKey || fallbackActive || fallbackLoadingCandidate) {
-            LOG.i("echo-xsource skip: dismissed=" + (crossHintDismissedKey == titleKey) +
-                " fallback=" + fallbackActive)
-            return
-        }
-        pendingCrossSourceS = 0
-        doCrossSourceUpgrade(currentSharpness, info)
-    }
-
-    /**
-     * 跨源升清的实际执行体(前置闸已在 [tryCrossSourceUpgrade] 判过)。
-     *
-     * @param currentSharpness 当前实测清晰度 S
-     * @param info             当前详情(避免重复取 [vodInfo])
-     */
-    private fun doCrossSourceUpgrade(currentSharpness: Int, info: com.github.tvbox.osc.bean.VodInfo) {
-        val mode = DeviceCapability.effectiveMode()
-        val qualityFirst = mode == DeviceCapability.QualityMode.QUALITY_FIRST
-        // 用当前 S 构造一个最小 current Variant:S 是唯一参与判据的字段(见 CrossSourceUpgradePolicy),
-        // 宽高只为 known 判定服务 —— 这里已知 S>0,故给一个保守的"已知"占位(1×S² 不可能,用 S×S)。
-        val current = VideoQualityPolicy.Variant(
-            width = currentSharpness, height = currentSharpness,
-            bitrate = 0, confidence = VideoQualityPolicy.Confidence.MEASURED, flag = info.playFlag.orEmpty(),
-        )
-        // 候选 = 其他源各自的最佳实测(零网络批量查询),过滤口径与 publishSourceChips **完全一致**
-        // (排除当前源 + 已用过的源),否则会切到一个不在 chips 里的源,用户看到"凭空换源"
-        val candidates = synchronized(fallbackCandidates) { fallbackCandidates.toList() }
-            .mapNotNull { video ->
-                val k = video.sourceKey.orEmpty()
-                val id = video.id.orEmpty()
-                if (k.isEmpty() || id.isEmpty()) null else k to id
-            }
-            .filter { (k, _) -> k != sourceKey && !usedSourceKeys.contains(k) }
-            .distinct()
-        // ⚠️ 2026-10-13 真机修复(问题 10):候选列表空时**不能静默返回**。
-        //
-        // 根因:`fallbackCandidates` 只在**聚合搜索回包**时填充,而它是"换源链触发"的产物。
-        // 跨源升清是**播放中主动**行为 —— 播放正常时换源链从不触发 ⇒ 候选列表恒空 ⇒
-        // 决策链在 `candidates.isEmpty()` 处静默消失(真机取证:三次 replay 后均无 decide)。
-        //
-        // 修法:候选为空 ⇒ **主动启动聚合搜索**,并把当前 S 重新挂起([pendingCrossSourceS])。
-        // 聚合搜索命中到达后(见聚合回包处的 `fallbackCandidates.addAll` 分支)会再次调
-        // [tryCrossSourceUpgrade] 决策 —— 那时候选已就绪。
-        //
-        // 为什么不在本函数里自己造候选:跨源择优必须知道"**对端源该片的 id**"(不同源 id 不同),
-        // 这个映射只能由聚合搜索产出。自造候选等于凭空猜测 id,必然查不到画质记忆。
-        if (candidates.isEmpty()) {
-            LOG.i("echo-xsource skip: no candidates yet, kick aggregate search curS=" + currentSharpness)
-            pendingCrossSourceS = currentSharpness
-            ensureSourceSearchRunning()
-            return
-        }
-        val bestByTitle = VideoQualityMemory.lookupBestBatch(candidates)
-        val pool = ArrayList<CrossSourceUpgradePolicy.Candidate>(candidates.size)
-        candidates.forEach { (candKey, candId) ->
-            val cand = bestByTitle["$candKey|$candId"] ?: return@forEach
-            pool.add(CrossSourceUpgradePolicy.Candidate(candKey, cand))
-        }
-        // 2026-10-13 真机修复(问题 15/16):候选有、但**全部无实测画质**(pool 空)⇒ 无法择优。
-        // 此时触发跨源探测(用硬盘的迷你探测通道把对端源的最佳画质补上),并把 S 挂起 ——
-        // 探测回填后 [runMiniProbeForCrossSource] 结尾会 replay 一次决策。真机取证:三次 decide
-        // 全是 `candidates=N pool=0 verdict=none`,就是缺这一步。
-        // ⚠️ 只在 pool 为空时触发:非空说明数据够了,再探是浪费。
-        if (pool.isEmpty()) {
-            // 每集最多触发一次探测(问题 19:探测失败后 pool 仍空,replay 会再触发 ⇒ 死循环)
-            if (crossSourceProbed) {
-                LOG.i("echo-xsource give up: probe already tried, still no quality curS=" + currentSharpness)
-                return
-            }
-            crossSourceProbed = true
-            LOG.i("echo-xsource skip: no measured quality yet, kick probe curS=" + currentSharpness)
-            pendingCrossSourceS = currentSharpness
-            runMiniProbeForCrossSource()
-            return
-        }
-        val app = App.getInstance()
-        val capHeight = if (app == null) 0 else DeviceCapability.capHeight(app)
-        val picked = CrossSourceUpgradePolicy.pickCrossSourceUpgrade(
-            candidates = pool,
-            current = current,
-            qualityFirst = qualityFirst,
-            sourceConverged = true,
-            deviceCapHeight = capHeight,
-        )
-        LOG.i(
-            "echo-xsource decide curS=" + currentSharpness + " candidates=" + candidates.size +
-                " pool=" + pool.size + " cap=" + capHeight +
-                " verdict=" + (picked?.sourceKey ?: "none") +
-                " targetS=" + (picked?.let { VideoQualityPolicy.sharpness(it.variant) } ?: -1)
-        )
-        // 问题 11:每个返回点都必须有日志(项目铁律"诊断日志不该有守卫")—— 否则决策链
-        // 在返回点无声消失,排查只能靠推测。此前这里三处 return 全无日志,本次真机就吃了亏。
-        if (picked == null) {
-            return
-        }
-        val video = candidateForKey(picked.sourceKey)
-        if (video == null) {
-            LOG.i("echo-xsource skip: picked key not resolvable key=" + picked.sourceKey)
-            return
-        }
-        // 跨源切换走既有 switchSource 链路(重搜索 + 重取详情),与用户手动换源完全同路 ——
-        // 不新造第二条切换路径,避免两套进度继承/状态复位逻辑漂移。
-        switchSource(video)
-    }
-
     private var vodName = ""
     private var vodPicture = ""
     private var fromCollect = false
@@ -519,22 +312,50 @@ class DetailViewModel : ViewModel() {
     private val candidateKeys = HashSet<String>()
     private val triedKeys = HashSet<String>()
     private val usedSourceKeys = HashSet<String>()
+
     /**
-     * 换源候选池上界:**可配置**(2026-10-13,问题 18)。
+     * **当前搜索轮次**(2026-10-13 动态扩池)。从 [ExpandPoolPolicy.FIRST_ROUND] 起,
+     * 每轮"全部收口且 0 命中"时自增,池按比例扩大,直至全量轮。
+     * 内容边界(换片)复位为 1。
+     */
+    private var poolRound = ExpandPoolPolicy.FIRST_ROUND
+
+    /**
+     * 本次搜索的**源总数**(过滤后、未截断),供搜索协程内判断扩池时对比
+     * ([ExpandPoolPolicy.shouldExpand] 需要 `curSize < total`)。
+     * 用 AtomicInteger:写入在主线程(startSourceSearch),读取在搜索协程(IO)。
+     */
+    private val orderedPoolTotal = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /**
+     * 是否启用**自动扩池**(默认开,可在播放设置关闭)。
      *
-     * <p>聚合订阅可达数百站(实测 359~673 个 site),全量排队会把换源拖到超时;故有上界。
-     * 但此前是**硬编码 120**,源集合 300+ 时其余源永不参与换源(用户观察到"始终只有 120 个待搜索源")。
-     * 现从 [HawkConfig.FALLBACK_POOL_CAP] 读取:默认 120,用户可在设置页调大。
-     * 取不到/非法时回退默认,保证永不因配置异常而崩/归零。
+     * <p>关闭时退化为旧的"固定上界"行为([fallbackPoolCap]),即只搜前 N 个源 —— 给"我就想快、
+     * 不想等全量搜"的用户一个出口。开启时按 [ExpandPoolPolicy] 逐轮扩大。
+     */
+    private val autoExpandPool: Boolean
+        get() = try {
+            KV.get(HawkConfig.AUTO_EXPAND_POOL, true)
+        } catch (th: Throwable) {
+            true
+        }
+
+    /**
+     * 固定池上界:仅当 [autoExpandPool] **关闭**时生效(向后兼容旧行为)。
+     * 从 [HawkConfig.FALLBACK_POOL_CAP] 读取,默认 120,非法(<20)回默认。
      */
     private val fallbackPoolCap: Int
         get() = try {
             val configured = KV.get(HawkConfig.FALLBACK_POOL_CAP, DEFAULT_FALLBACK_POOL_CAP)
-            // 非法配置(小于下界)一律回默认 —— coerceAtLeast 会把 0 抬成 MIN,那不是"回默认"而是"悄悄改语义"
             if (configured < MIN_FALLBACK_POOL_CAP) DEFAULT_FALLBACK_POOL_CAP else configured
         } catch (th: Throwable) {
             DEFAULT_FALLBACK_POOL_CAP
         }
+
+    /** 本轮应搜的源数:开自动扩池按比例;关闭则用固定上界。 */
+    private fun roundPoolSize(total: Int): Int =
+        if (autoExpandPool) ExpandPoolPolicy.poolSizeForRound(total, poolRound)
+        else fallbackPoolCap.coerceAtMost(total)
     private val semaphore = Semaphore(SOURCE_SEARCH_CONCURRENCY)
     private val pendingSearchDone = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
     private val searchCaller = SourceViewModel()
@@ -1190,14 +1011,14 @@ class DetailViewModel : ViewModel() {
             )
             // 源内收敛:verdict 非 switch ⇒ 本源不会再自动升档 ⇒ 允许跨源提示出场
             if (best == null || reject != null) {
-                markSourceConverged()
+                sourceConverged = true
                 refreshCrossSourceHint()
                 // 提示要有数据才出得来:对端没记忆时按闸门去探一次(默认不发请求,见其 KDoc)
                 if (crossSourceHint.value == null) runMiniProbeForCrossSource()
                 return@launch
             }
             if (best.flag.isEmpty() || best.flag == currentFlag) {
-                markSourceConverged()
+                sourceConverged = true
                 refreshCrossSourceHint()
                 if (crossSourceHint.value == null) runMiniProbeForCrossSource()
                 return@launch
@@ -1279,8 +1100,6 @@ class DetailViewModel : ViewModel() {
         lineQualityHeights.value = emptyMap()
         // 换片/换源:源内收敛结论与跨源提示都属于上一个会话,必须清零,否则会串到新片
         sourceConverged = false
-        pendingCrossSourceS = 0
-        crossSourceProbed = false
         crossSourceHint.value = null
         miniProbeJob?.cancel()
         miniProbeJob = null
@@ -1700,6 +1519,11 @@ class DetailViewModel : ViewModel() {
         // ⚠️ 回存必须在**改写 searchTitle 之前**:命中表马上会被清空,而落盘的键取自
         // searchTitle —— 晚一步就写错键(把上一部的命中挂到这一部名下)。
         flushFallbackHitsSave()
+        // 换片 ⇒ 扩池轮次复位(2026-10-13):"上一部扩到第 3 轮"不能带给新片(每部片都从 1/3 起搜)。
+        // 判据用 searchTitle 是否变化:扩池重启是同片(两值相等)⇒ 不复位;换片 ⇒ 复位。
+        if (searchTitle != title) {
+            poolRound = ExpandPoolPolicy.FIRST_ROUND
+        }
         searchTitle = title
         // 新一轮搜索 ⇒ 解冻(上一轮可能因为起播成功被冻结过;那条源后来放不出来时还得靠它)
         searchFrozen = false
@@ -1713,33 +1537,31 @@ class DetailViewModel : ViewModel() {
         val home = ApiConfig.get().getHomeSourceBean()
         val candidatePool = ApiConfig.get().getSourceBeanList()
             .filter { it.isSearchable() && it.isQuickSearch() && (effectiveChecked == null || effectiveChecked.containsKey(it.key)) }
-        // 被屏蔽的源不进自动换源候选池(防滥用封禁机制,P2):放在 take(上限) **之前**,
-        // 免得坏源白占候选名额;整池被滤空时 fail-open 回退,不会让换源直接无候选。
+        // 被屏蔽的源不进自动换源候选池(防滥用封禁机制,P2)。
         //
-        // 降权(2026-10-13):上一轮搜索里超时的源排到队尾 —— 此前换源链**只滤封禁、不读降权**,
-        // 于是同一个"刚超时 5 次的慢源"在搜索页被排到队尾,在这里却照旧占着前几批的并发额度,
-        // 而换源链恰恰是用户已经在等画面的那条路。
+        // 降权(2026-10-13):口径为**连续权重**(SourceWeightMemory,与搜索页同一台账)。
         //
-        // ⚠️ 2026-10-13 真机修复(问题 3):口径从**二值降权**(penalizedKeys)升级为**连续权重**
-        // (SourceWeightMemory,与搜索页 splitFastRoundSourcesByWeight 同一台账)—— 此前两处口径
-        // 不一致,会出现"搜索页已把这源降到队尾、换源却仍优先切过去"。判据仍只有一份(权重台账)。
-        //
-        // ⚠️ 顺序保持"**先 take 截断、再排序**"不变:反过来会让低权重源被上限直接砍掉,
-        // 降权就退化成屏蔽(与 SearchBatchPolicy.orderByWeight 的 KDoc 一致,池大小不因本次改动变化)。
+        // ⚠️ 2026-10-13(动态扩池):候选池大小从"固定截断 fallbackPoolCap"改为
+        // **按轮次比例动态扩池**([ExpandPoolPolicy],用户指定 1/3→1/2→2/3→全量)。
+        // 顺序调整为 **先排序、后按本轮大小截断** —— 这是动态扩池的**正确语义**:
+        // 取"权重最高的前 N 个"(热门/健康源优先),冷门/低权重源由后续轮次补齐。
+        // 若反过来(先 take 后排序),则低权重源会被 N 直接砍掉、永不被搜(降权退化成屏蔽)。
         val weightKeys = candidatePool.map { it.key }
         val weightScores = SourceWeightMemory.scoresOf(weightKeys)
-        val sources = SearchBatchPolicy.orderByWeight(
-            SourceHealthFilter.filter(candidatePool)
-                .sortedBy { it.key != home.key }
-                .take(fallbackPoolCap),
+        val orderedPool = SearchBatchPolicy.orderByWeight(
+            SourceHealthFilter.filter(candidatePool).sortedBy { it.key != home.key },
             homeKey = home.key,
             weightOf = { weightScores[it] ?: SourceWeightPolicy.NEUTRAL },
         )
+        val roundSize = roundPoolSize(orderedPool.size)
+        val sources = orderedPool.take(roundSize)
+        orderedPoolTotal.set(orderedPool.size)
         // 诊断包靠这行判断"预热到底有没有触发、候选池多大" —— 真机日志被 ROM 屏蔽时,
         // 文件日志(仅 diag 包落盘)是唯一可观测点。前缀 echo-source- 已在 LOG 白名单里。
-        // weight-known=N 是"候选池里有多少源已积累权重",与搜索页 echo-searchplan 同口径。
+        // round/pool/total 三者同看,才能确认"动态扩池"真的在逐轮扩大。
         LOG.i(
             "echo-source-search start title=" + title + " pool=" + sources.size +
+                " total=" + orderedPool.size + " round=" + poolRound +
                 " weight-known=" + weightScores.size + " token=$myToken"
         )
         // ⚠️ 必须先取消旧搜索 job(2026-10-09 真机数据修正):分批后旧 job 要跑完全部批才自然结束,
@@ -1815,6 +1637,29 @@ class DetailViewModel : ViewModel() {
             if (tokenStr == currentTokenStr() && fallbackSearchHits.isNotEmpty()) {
                 saveFallbackHitsToCache()
             }
+            // ⚡ 动态扩池(2026-10-13,用户方案):本轮全部收口且 **0 命中** ⇒ 按比例扩大候选池再搜一轮。
+            // 判据见 ExpandPoolPolicy.shouldExpand(三条件缺一不可:收口 / 0 命中 / 还有更多源)。
+            // 这是"源集合 300+ 但固定只搜 120 个 ⇒ 冷门片搜不到"的根本解法。
+            if (tokenStr == currentTokenStr() && !searchFrozen) {
+                val hitCount = synchronized(fallbackCandidates) { fallbackCandidates.size }
+                val fullTotal = orderedPoolTotal.get()
+                if (autoExpandPool && ExpandPoolPolicy.shouldExpand(hitCount, true, sources.size, fullTotal)) {
+                    poolRound += 1
+                    LOG.i(
+                        "echo-source-search expand round=" + poolRound +
+                            " nextSize=" + ExpandPoolPolicy.poolSizeForRound(fullTotal, poolRound) +
+                            " total=" + fullTotal + " token=$myToken"
+                    )
+                    // ⚠️ 必须先置 sourcesSearching=false:**否则** startSourceSearch 开头的
+                    // `if (sourcesSearching.value && searchTitle == title) return` 会把这次扩池重启
+                    // 直接拦掉(同片同 title)⇒ 永远停在第一轮。
+                    sourcesSearching.value = false
+                    searchProgress.value = null
+                    // 以新轮次重启搜索(候选按权重已排序、新轮取更多前 N 个;已搜过的源由 searchActive/去重兜住)
+                    startSourceSearch()
+                    return@launch
+                }
+            }
             // 冻结时状态已由 [freezeFallbackSearch] 收口,这里**不能**再走接管/空态收口:
             // 那两件事是"给还没起播的页面找内容"用的,而冻结的前提正是"画面已经出来了"。
             if (tokenStr == currentTokenStr() && !searchFrozen) {
@@ -1888,9 +1733,6 @@ class DetailViewModel : ViewModel() {
                 maybeCorrectCompleteness()
                 publishSourceChips()
                 refreshCrossSourceHint()
-                // 跨源升清的候选就绪 ⇒ 补执行挂起的决策(2026-10-13 问题 10 修复:
-                // 播放中换源链不触发时,候选只能靠这里"主动启动的聚合搜索"补齐)。
-                replayPendingCrossSourceUpgrade("candidates-ready")
                 if (shouldAutoTakeOver()) loadNextFallbackCandidate()
             }
             val related = videos.filter {
@@ -2825,8 +2667,6 @@ class DetailViewModel : ViewModel() {
         searchProgress.value = null
         // 换源/重扫:新源尚未有收敛结论,跨源提示也必须先撤下,否则会拿着上一个源的结论弹提示
         sourceConverged = false
-        pendingCrossSourceS = 0
-        crossSourceProbed = false
         crossSourceHint.value = null
         pendingCompletenessSkip = false
         completenessCorrected = false
@@ -3096,13 +2936,7 @@ class DetailViewModel : ViewModel() {
                 break
             }
             // 探测有了新记忆 ⇒ 重算提示(可能因此出现一条本来没有的提示)
-            withContext(Dispatchers.Main) {
-                refreshCrossSourceHint()
-                // 2026-10-13 真机修复(问题 15/16):跨源探测回填后**补执行跨源升清决策**。
-                // 真机取证(千与千寻等):`echo-xsource decide ... pool=0` —— 候选源有,但都没实测画质,
-                // 无法择优。探测(本函数)正是填这个数据的,回填后必须再决策一次,否则永远 pool=0。
-                replayPendingCrossSourceUpgrade("probe-done")
-            }
+            withContext(Dispatchers.Main) { refreshCrossSourceHint() }
         }
     }
 
@@ -3318,13 +3152,6 @@ class DetailViewModel : ViewModel() {
         // probeMissingLineQualities 幂等(已测的跳过)且有预算上限,频繁触发也只会白查一次记忆。
         if (event.type == RefreshEvent.TYPE_PROBE_MISSING_LINES) {
             probeMissingLineQualities()
-            return
-        }
-        // 跨源升清(2026-10-13,P0-1):本源已到头,询问是否跨源自动切到画质更高的候选源。
-        // obj = 当前实测 S(int);非正视为拿不到画质,直接忽略(拿不准不切)。
-        if (event.type == RefreshEvent.TYPE_CROSS_SOURCE_UPGRADE) {
-            val curS = (event.obj as? Int) ?: return
-            tryCrossSourceUpgrade(curS)
             return
         }
         if (event.type != RefreshEvent.TYPE_REFRESH) return

@@ -130,6 +130,14 @@ public class HawkConfig {
      * 现改为可配置:默认仍 120(兼顾换源链启动速度),用户可调大到 200/300 以覆盖更多源。
      */
     public static final String FALLBACK_POOL_CAP = "fallback_pool_cap";
+    /**
+     * **自动扩池开关**(2026-10-13,默认开)。
+     *
+     * <p>开启:详情页/聚合搜索按 ExpandPoolPolicy 逐轮扩大候选池(1/3 → 1/2 → 2/3 → 全量),
+     * 解决"源集合 300+ 但固定只搜 120 个 ⇒ 冷门片搜不到"。
+     * 关闭:退化为固定上界(FALLBACK_POOL_CAP)。
+     */
+    public static final String AUTO_EXPAND_POOL = "auto_expand_pool";
     public static final String REMOTE_TVBOX = "remote_tvbox_host";
     public static final String PLAYER_IS_LIVE = "player_is_live";
     public static final String DOH_JSON = "doh_json";

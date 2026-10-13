@@ -454,6 +454,8 @@
     <string name="settings_play_prefer_aac">AAC 优先</string>
     <string name="settings_music_page">音乐播放页</string>
     <string name="settings_music_page_subtitle">识别为纯音频时自动打开</string>
+    <string name="settings_auto_expand_pool">自动扩池</string>
+    <string name="settings_auto_expand_pool_subtitle">候选源搜不到时逐轮扩大搜索范围（1/3→1/2→2/3→全部），直到找到片源或搜完所有源</string>
     <string name="settings_video_quality_mode">画质选项</string>
     <string name="settings_video_quality_mode_subtitle">起播前是否探测各线路的真实分辨率</string>
     <string name="settings_video_quality_mode_paused_subtitle">画质优先已暂停（流量节省开启中）</string>
