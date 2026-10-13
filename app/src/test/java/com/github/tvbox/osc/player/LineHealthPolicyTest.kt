@@ -50,9 +50,18 @@ class LineHealthPolicyTest {
     @Test
     fun `抑制期后恢复正常累计`() {
         var s = LineHealthPolicy.State()
+        // 抖动期内失败 1 次:只记证据,streak 保持 0
         s = LineHealthPolicy.recordFail(s, t0, suppressCount = true)
+        assertEquals("抑制期不累计", 0, s.failStreak)
+        // ⚠️ 抖动期过去后要**重新累计到阈值**才可疑:一次非抑制失败只把 streak 推到 1,
+        //    仍然不是"可疑"(阈值是 2)。所以这里必须给两次 —— 第一版测试只给了一次,
+        //    把"累计已恢复"和"已达阈值"混为一谈,断言错了。
         s = LineHealthPolicy.recordFail(s, t0)
-        assertTrue("抖动期过去后应重新累计", LineHealthPolicy.isSuspect(s, t0))
+        assertEquals(1, s.failStreak)
+        assertFalse("只累计到 1 次还不够", LineHealthPolicy.isSuspect(s, t0))
+        s = LineHealthPolicy.recordFail(s, t0 + 1)
+        assertEquals(2, s.failStreak)
+        assertTrue("抖动期过去后应重新累计到阈值", LineHealthPolicy.isSuspect(s, t0 + 1))
     }
 
     // ---------- 可疑判定:时间闸 ----------
@@ -63,7 +72,11 @@ class LineHealthPolicyTest {
         s = LineHealthPolicy.recordFail(s, t0)
         s = LineHealthPolicy.recordFail(s, t0 + 1)
         assertTrue(LineHealthPolicy.isSuspect(s, t0 + 1))
-        assertFalse("过期必须恢复中性", LineHealthPolicy.isSuspect(s, t0 + LineHealthPolicy.SUSPECT_TTL_MS + 1))
+        // ⚠️ 边界口径:判据是 `now - failAt > TTL`(严格大于),
+        //    所以"刚好 TTL"仍可疑、必须再晚 1ms 才算过期。
+        //    failAt = t0+1 ⇒ 过期点是 t0+1+TTL+1。
+        val justExpired = t0 + 1 + LineHealthPolicy.SUSPECT_TTL_MS + 1
+        assertFalse("过期必须恢复中性", LineHealthPolicy.isSuspect(s, justExpired))
     }
 
     @Test
