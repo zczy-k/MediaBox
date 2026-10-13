@@ -2262,8 +2262,26 @@ class DetailViewModel : ViewModel() {
         // 换源链自己带 4s 候选站超时(见 scheduleDetailTimeout),详情看门狗到此交班,免得两套表互相抢
         disarmDetailWatchdog()
         val currentSource = ApiConfig.get().getSource(sourceKey)
-        // 站点不在当前订阅(切源后残留的历史/收藏条目)时没有"当前源"可换,但同名片仍能靠聚合搜索接管
-        if (currentSource != null && !currentSource.isChangeable()) return false
+        // 站点不在当前订阅(切源后残留的历史/收藏条目)时没有"当前源"可换,但同名片仍能靠聚合搜索接管。
+        //
+        // ⚠️ 判据**不能**只是 `!isChangeable()`(2026-10-13 真机修正)。索引型源
+        // (js_douban:`"searchable":0,"quickSearch":0,"changeable":0`)自己没有任何线路,
+        // 内容只能靠聚合搜索从别站取 —— 它的 `changeable=0` 是"站内没有可换线路",
+        // 不是"不许去别处取内容"。旧判据把它一律拦下 ⇒ 已经灌进候选表的种子候选
+        // (seedCandidatesFromCache)没人消费,链永远起不来。
+        // 真机实测(v1.0.83-diag,16:49:33《潜伏6》二次进入):cache-seed n=1 之后链被否掉,
+        // 直到 16:50:25 新候选迟到才起播 —— 白等 55 秒。
+        // 详见 [FallbackEntryPolicy.blocksFallbackEntry]。
+        if (FallbackEntryPolicy.blocksFallbackEntry(
+                changeable = currentSource?.isChangeable() ?: true,
+                // 与 loadDetail 的 indexSource 判据**完全一致**:两处口径不同会让"该早退的没早退"
+                // 或"该放行的被拦住",而这正是本条修复要消灭的那类不一致。
+                indexLike = currentSource?.isIndexSource() == true || DetailNoListMemory.isIndexLike(sourceKey),
+                onChain = fallbackActive,
+            )
+        ) {
+            return false
+        }
         // 已在换源链上又收到"线路耗尽" ⇒ 刚切换过去那个候选站也挂了,必须继续往下取候选。
         // 原来这里直接 return true 会让换源链只跳一跳,之后永久卡死在那个坏站上(既不换源也不再报错推进)。
         if (fallbackActive) {
