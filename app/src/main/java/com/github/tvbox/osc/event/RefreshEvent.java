@@ -64,6 +64,22 @@ public class RefreshEvent {
      * 且用户画质档位允许探测)。爬虫型线路因同类 Spider 不能并发,不在此列(见探测函数 KDoc)。
      */
     public static final int TYPE_PROBE_MISSING_LINES = 27;
+    /**
+     * 跨源升清(2026-10-13,P0-1):源内经 sweep 已收敛(无更高实测档),但**对端候选源**有
+     * 明显更高的实测画质 → 询问详情页"要不要跨源自动切过去"。
+     *
+     * <p>与 {@link #TYPE_PROBE_MISSING_LINES} 的区别:那个只填本源的记忆、不切换;
+     * 这个在记忆已齐、源内到头之后,把决策半径从"当前源"扩到"所有候选源"。
+     *
+     * <p>谁发:PlaybackRetryDelegate.handleNetworkPlentiful(源内 pickUpgrade 无候选、
+     * 已发出补探测且记忆已回填之后的下一次富余检查)。为什么由播放侧发、详情侧决策:
+     * **只有播放内核知道"当前实测画质"**([currentMeasuredVariant]),而**只有详情页掌握跨源候选**
+     * ([fallbackCandidates] + [VideoQualityMemory.lookupBestBatch])。两侧各持一半信息,
+     * 事件是唯一不引入反向依赖的桥。
+     *
+     * <p>obj 携带当前实测 S(int,取 sharpness);无 obj 或非正 = 拿不到当前画质,详情页直接忽略。
+     */
+    public static final int TYPE_CROSS_SOURCE_UPGRADE = 28;
     public int type;
     public Object obj;
 

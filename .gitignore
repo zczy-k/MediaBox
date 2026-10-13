@@ -130,3 +130,5 @@ logs/
 *.keystore
 # 本地签名口令(由 build.gradle.kts 的 signingProp() 读取)
 keystore.properties
+# 本地纯函数验证脚本与产物(kotlinc+JUnit 直编,绕开 Gradle),不入库
+.verify/

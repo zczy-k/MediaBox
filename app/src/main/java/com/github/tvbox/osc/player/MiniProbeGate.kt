@@ -42,17 +42,27 @@ object MiniProbeGate {
      * @param alreadyUsed 该源就在当前播放链上(自己跟自己比画质没意义)
      * @param healthBlocked 该源已被健康台账封禁
      * @param extendWarm type 4 专用:其 extend 是否已在进程内缓存(冷则解析要额外往返)
+     * @param recoveryProbe 该源是**四层恢复的 L2 探活候选**(含源类证据、快到期)。
+     *       置真时**放行被封禁的源**去探测 —— 这正是"给被判死的源一次自证机会"
+     *       的落地(2026-10-13,P0-3)。见 [com.github.tvbox.osc.util.RecoveryPolicy.probeCandidates]。
+     *
+     *        <p>为什么放在这里而不是外层另开一条探测路径:迷你探测已有一整套预算/负冷却/类型闸,
+     *        L2 只是把"被封"这一条**在候选范围内**临时豁免 —— 复用同一通道,不新增网络框架。
+     *        ⚠️ 豁免**仅限** recoveryProbe:普通候选仍受 healthBlocked 拦截(封禁源不探)。
      */
     @JvmStatic
+    @JvmOverloads
     fun decide(
         sourceType: Int,
         indexSource: Boolean,
         alreadyUsed: Boolean,
         healthBlocked: Boolean,
         extendWarm: Boolean,
+        recoveryProbe: Boolean = false,
     ): Decision = when {
         alreadyUsed -> Decision.Skip("xhint-skip used")
-        healthBlocked -> Decision.Skip("xhint-skip blocked")
+        // 封禁源默认不探;但 L2 探活候选放行(给一次自证机会)
+        healthBlocked && !recoveryProbe -> Decision.Skip("xhint-skip blocked")
         indexSource -> Decision.Skip("xhint-skip index-only")
         sourceType == 3 -> Decision.Skip("xhint-skip spider")
         sourceType == 4 && !extendWarm -> Decision.Skip("xhint-skip extend-cold")

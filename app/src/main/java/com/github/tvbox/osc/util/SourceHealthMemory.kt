@@ -202,7 +202,40 @@ object SourceHealthMemory {
             if (newlyBanned) bumpRevision()
             scheduleFlush()
         }
+        // 权重镜像:与源健康同一份证据,P1-1 接线(见 mirrorWeight 说明)
+        mirrorWeight(key, kind)
         return newlyBanned
+    }
+
+    // ==================== 权重镜像(2026-10-13,P1-1 接线) ====================
+
+    /**
+     * 把源级证据**同步镜像**到连续权重台账([SourceWeightMemory])。
+     *
+     * <p>## 为什么放在台账内部,而不是让每个调用点各记一次
+     * 权重与源健康是**同一份证据的两个视图**(二值封禁 vs 连续权重)。若让
+     * `SearchViewModel` / `DetailViewModel` 各自"记完健康再记权重",任何一处漏写都会让
+     * 权重表长期缺数据 —— 而缺数据表现为"全中性 = 退化回旧行为",**静默且难查**。
+     * 内联在这里,新增调用点自动获得权重记录(与"判据只在一处出口"同款思路)。
+     *
+     * <p>⚠️ 与源健康一样**受断网闸保护**:断网时 [recordFail] 已提前返回,这里不会再被调到;
+     * [recordAnswered] 不设断网闸(答话本身即证据),故此处也照记。
+     *
+     * <p>**幂等性**:同一 token 内 [recordFail] 每源只调一次(见 `failRecordedForToken`),
+     * 所以权重也只被扣一次,不会重复计分。
+     */
+    private fun mirrorWeight(sourceKey: String, kind: SourceFailKind?) {
+        if (!SourceWeightMemory.isEnabled()) return
+        val evidence = when (kind) {
+            SourceFailKind.SEARCH_TIMEOUT -> SourceWeightPolicy.EvidenceKind.SEARCH_TIMEOUT
+            SourceFailKind.SEARCH_FAILED -> SourceWeightPolicy.EvidenceKind.SEARCH_FAILED
+            // PLAY_FAILED 已退出源级判据(真机误封教训),故这里不映射为播放类证据;
+            // 播放失败改由线路级台账(LineHealthRecorder)记账,见《源与线路的权重模型》§3.3。
+            SourceFailKind.PLAY_FAILED -> null
+            null -> SourceWeightPolicy.EvidenceKind.SEARCH_ANSWERED
+
+        } ?: return
+        SourceWeightMemory.record(sourceKey, evidence)
     }
 
     /**
@@ -227,16 +260,22 @@ object SourceHealthMemory {
             // 而"慢但一直答话"的源恰恰最可能从没失败过(它不超时、不报错)。
             // 结果是耗时学习只覆盖了已经出过问题的源,治不到真正的病根。
             // 现在缺条目时按空状态建立,让采样对所有源都生效。
+            //
+            // ⚠️ 注意:这里**不能**用 `return` 提前退出 —— `synchronized` 是内联函数,
+            // 块内 return 会非局部返回、跳过下方的权重镜像(权重需要"答话"这一正向证据)。
             val before = bucket.health[key] ?: SourceHealthState()
             val after = SourceHealthPolicy.recordAnswered(before, t, elapsedMs)
-            if (after == before) return
-            bucket.health[key] = after
-            dirty = true
-            LOG.i(
-                "echo-srcban answered source=" + key + " streak=0" +
-                    " elapsed=" + (if (elapsedMs > 0) elapsedMs.toString() else "?")
-            )
+            if (after != before) {
+                bucket.health[key] = after
+                dirty = true
+                LOG.i(
+                    "echo-srcban answered source=" + key + " streak=0" +
+                        " elapsed=" + (if (elapsedMs > 0) elapsedMs.toString() else "?")
+                )
+            }
         }
+        // 权重镜像:答话(含无命中)是"源是活的"的正向证据,无论健康台账是否有变化都要记
+        mirrorWeight(key, null)
         scheduleFlush()
     }
 
@@ -365,6 +404,88 @@ object SourceHealthMemory {
     }
 
     // ==================== 解除 ====================
+
+    /**
+     * **L1 网络恢复平反**(2026-10-13,P0-3):网络恢复时,把"仅由网络类证据支撑"的封禁立即解除。
+     *
+     * <p>## 为什么需要它
+     * 封禁是**单向门**:被封的源会被 [SourceHealthFilter] 移出搜索池 ⇒ **再也没机会答话自证**,
+     * 只能等满整段封禁。而规则 2(连续超时,内容无关的最弱证据)在**雪崩保险丝触发前的少量源**
+     * 上仍可能因一次弱网抖动误封 30 分钟 —— 那些源其实早已随网络恢复而可用。
+     * 本方法是它们的"网络一好就放行"通道。
+     *
+     * <p>## 只平反纯网络类([RecoveryPolicy.isNetworkOnlyBan])
+     * 含任何源类证据(SEARCH_FAILED)的封禁**不动** —— 那无法区分"网络坏"与"源坏",
+     * 强行平反等于把真坏源放回搜索池。宁可漏平反(等 L4 自然过期 / L2 探活),不可误平反。
+     *
+     * <p>⚠️ **永久封禁永不动**(只能 L3 手动解除)。
+     *
+     * @return 本次平反的源数量(供日志/诊断)
+     */
+    fun liftNetworkBans(): Int {
+        if (!isEnabled()) return 0
+        val t = now()
+        var lifted = 0
+        synchronized(lock) {
+            val bucket = load()
+            for ((key, state) in bucket.health) {
+                if (!RecoveryPolicy.isNetworkOnlyBan(state, t)) continue
+                bucket.health[key] = RecoveryPolicy.liftNetworkBan(state)
+                lifted++
+            }
+            if (lifted > 0) dirty = true
+        }
+        if (lifted > 0) {
+            LOG.i("echo-recover layer=L1 network-restored lifted=$lifted")
+            flushNow()
+            bumpRevision()
+        }
+        return lifted
+    }
+
+    /**
+     * **L2 探活候选**(2026-10-13,P0-3):挑出"含源类证据 + 快到期"的封禁源,供调用方探活。
+     *
+     * <p>只选谁、不发起网络 —— 真正的探测由调用方注入(复用迷你探测通道的预算闸)。
+     * 判据见 [RecoveryPolicy.probeCandidates]。
+     */
+    fun probeRecoverableKeys(limit: Int = RecoveryPolicy.DEFAULT_PROBE_LIMIT): List<String> {
+        if (!isEnabled()) return emptyList()
+        val t = now()
+        synchronized(lock) {
+            return RecoveryPolicy.probeCandidates(load().health, t, limit = limit)
+        }
+    }
+
+    /**
+     * **L2 探活成功 ⇒ 平反**指定源(2026-10-13,P0-3)。
+     *
+     * <p>由调用方在探活成功后调用:清掉封禁与证据,让源重回搜索池。
+     * 只对**非永久封禁**生效(永久封禁只能手动解除)。
+     *
+     * @return true = 确实平反了(该源此前在封禁态)
+     */
+    fun liftByProbe(sourceKey: String?): Boolean {
+        if (!isEnabled()) return false
+        val key = sourceKey?.trim().orEmpty()
+        if (key.isEmpty()) return false
+        val t = now()
+        var lifted = false
+        synchronized(lock) {
+            val bucket = load()
+            val state = bucket.health[key] ?: return false
+            if (state.manualLocked || state.bannedUntil <= t) return false
+            bucket.health[key] = RecoveryPolicy.liftNetworkBan(state)
+            dirty = true
+            lifted = true
+        }
+        if (lifted) {
+            LOG.i("echo-recover layer=L2 probe-ok key=$key")
+            flushNow()
+            bumpRevision()
+        }
+        return lifted
+    }
 
     /** 全部解除(设置页入口)。保留升级次数 —— 再犯仍按原档位升级 */
     fun unblockAll() {
@@ -586,6 +707,42 @@ object SourceHealthMemory {
             caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
         } catch (th: Throwable) {
             true
+        }
+    }
+
+    // ==================== 网络恢复监听(L1 平反的触发源) ====================
+
+    /** 是否已注册网络回调(幂等闩) */
+    private var networkWatcherInstalled = false
+
+    /**
+     * **L1 的网络监听**(2026-10-13,P0-3):网络**重新可用**时调用 [liftNetworkBans]。
+     *
+     * <p>幂等:重复调用只装一次。由 `App.onCreate` 调用(应用级生命周期,注册一次即可)。
+     * 注册失败(无上下文/异常)只记日志 —— 平反是"锦上添花",装不上不该影响启动。
+     */
+    @JvmStatic
+    fun installNetworkWatcher() {
+        if (networkWatcherInstalled) return
+        networkWatcherInstalled = true
+        try {
+            val context = AppContextHolder.context() ?: return
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+            cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: android.net.Network) {
+                    // 网络恢复:立即平反纯网络类封禁。onAvailable 在系统网络线程回调,
+                    // liftNetworkBans 内部自带锁,可在任意线程调用。
+                    try {
+                        val lifted = liftNetworkBans()
+                        if (lifted > 0) LOG.i("echo-recover network available, lifted=$lifted")
+                    } catch (th: Throwable) {
+                        LOG.i("echo-recover lift failed: " + th.message)
+                    }
+                }
+            })
+            LOG.i("echo-recover network watcher installed")
+        } catch (th: Throwable) {
+            LOG.i("echo-recover watcher install failed: " + th.message)
         }
     }
 }

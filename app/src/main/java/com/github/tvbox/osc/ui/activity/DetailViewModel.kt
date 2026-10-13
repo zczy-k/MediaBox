@@ -24,6 +24,7 @@ import com.github.tvbox.osc.bean.VodInfo
 import com.github.tvbox.osc.data.RoomDataManger
 import com.github.tvbox.osc.event.RefreshEvent
 import com.github.tvbox.osc.player.CrossSourceHintPolicy
+import com.github.tvbox.osc.player.CrossSourceUpgradePolicy
 import com.github.tvbox.osc.player.DeviceCapability
 import com.github.tvbox.osc.player.LineQualitySelector
 import com.github.tvbox.osc.player.LineHealthMemory
@@ -42,6 +43,7 @@ import com.github.tvbox.osc.util.OkGoHelper
 import com.github.tvbox.osc.util.SearchHelper
 import com.github.tvbox.osc.util.SourceHealthFilter
 import com.github.tvbox.osc.util.SourceHealthMemory
+import com.github.tvbox.osc.util.SourceWeightMemory
 import com.github.tvbox.osc.util.TrailerPolicy
 import com.github.tvbox.osc.util.SourceIdentityMask
 import com.github.tvbox.osc.util.TitleMatcher
@@ -264,6 +266,90 @@ class DetailViewModel : ViewModel() {
             sourceConverged = true,
         )
         crossSourceHint.value = if (show) bestHint else null
+    }
+
+    /**
+     * 跨源升清(2026-10-13,P0-1):播放侧报告"本源已到头"(携带当前实测 S),
+     * 详情页判断**是否值得跨源切到画质更高的候选源**,值得则自动执行。
+     *
+     * <p>## 为什么这是"升清不能跨源"的解法
+     * 现有升档([DetailViewModel.switchLineForQuality]、PlaybackRetryDelegate.handleNetworkPlentiful)
+     * 的候选被 `sourceKey` 锁死 —— 源A 最高 480P、源B 有 1080P 时系统看不到源B。
+     * 本方法把决策半径从"当前源的线路"扩到"所有候选源",复用详情页**已有的**跨源实测数据
+     * ([VideoQualityMemory.lookupBestBatch],零网络)。
+     *
+     * <p>## 与 [refreshCrossSourceHint] 的关系(同一份数据,两种动作)
+     * 提示是"问用户要不要切",本方法是"系统自己切"。两者**共用同一判据**
+     * ([CrossSourceUpgradePolicy] 与 [CrossSourceHintPolicy] 的 θ/ΔS 完全同口径),
+     * 所以不会出现"系统觉得值但只提示不切"的割裂。**已闩掉提示的片不再自动切**:用户明确
+     * 表达过"不想被这部片打扰",自动切会违背该意图。
+     *
+     * <p>## 三条护栏
+     * <ol>
+     *   <li>**源内优先**:只在 [sourceConverged](本源 sweep 已出结论)后才跨源,
+     *       源内还有更高档没试完时不越过(源内换线代价远小于跨源重取详情);</li>
+     *   <li>**只升不降 + 拿不准不切**:判据在 [CrossSourceUpgradePolicy],未知尺寸直接不切;</li>
+     *   <li>**用户意图优先**:本片已闩掉跨源提示 ⇒ 不自动切。</li>
+     * </ol>
+     *
+     * @param currentSharpness 播放内核报告的当前实测等效清晰度 S;非正 ⇒ 忽略
+     */
+    private fun tryCrossSourceUpgrade(currentSharpness: Int) {
+        if (currentSharpness <= 0) return
+        val info = vodInfo ?: return
+        val titleKey = searchTitle.ifEmpty { vodName }.ifEmpty { vodId }
+        // 与提示同一批前置闸:源内未收敛 / 本片已闩掉 / 正在换源 都不自动切
+        if (!sourceConverged || crossHintDismissedKey == titleKey ||
+            fallbackActive || fallbackLoadingCandidate
+        ) {
+            LOG.i("echo-xsource skip: not-ready converged=" + sourceConverged +
+                " dismissed=" + (crossHintDismissedKey == titleKey) + " fallback=" + fallbackActive)
+            return
+        }
+        val mode = DeviceCapability.effectiveMode()
+        val qualityFirst = mode == DeviceCapability.QualityMode.QUALITY_FIRST
+        // 用当前 S 构造一个最小 current Variant:S 是唯一参与判据的字段(见 CrossSourceUpgradePolicy),
+        // 宽高只为 known 判定服务 —— 这里已知 S>0,故给一个保守的"已知"占位(1×S² 不可能,用 S×S)。
+        val current = VideoQualityPolicy.Variant(
+            width = currentSharpness, height = currentSharpness,
+            bitrate = 0, confidence = VideoQualityPolicy.Confidence.MEASURED, flag = info.playFlag.orEmpty(),
+        )
+        // 候选 = 其他源各自的最佳实测(零网络批量查询),过滤口径与 publishSourceChips **完全一致**
+        // (排除当前源 + 已用过的源),否则会切到一个不在 chips 里的源,用户看到"凭空换源"
+        val candidates = synchronized(fallbackCandidates) { fallbackCandidates.toList() }
+            .mapNotNull { video ->
+                val k = video.sourceKey.orEmpty()
+                val id = video.id.orEmpty()
+                if (k.isEmpty() || id.isEmpty()) null else k to id
+            }
+            .filter { (k, _) -> k != sourceKey && !usedSourceKeys.contains(k) }
+            .distinct()
+        if (candidates.isEmpty()) return
+        val bestByTitle = VideoQualityMemory.lookupBestBatch(candidates)
+        val pool = ArrayList<CrossSourceUpgradePolicy.Candidate>(candidates.size)
+        candidates.forEach { (candKey, candId) ->
+            val cand = bestByTitle["$candKey|$candId"] ?: return@forEach
+            pool.add(CrossSourceUpgradePolicy.Candidate(candKey, cand))
+        }
+        val app = App.getInstance()
+        val capHeight = if (app == null) 0 else DeviceCapability.capHeight(app)
+        val picked = CrossSourceUpgradePolicy.pickCrossSourceUpgrade(
+            candidates = pool,
+            current = current,
+            qualityFirst = qualityFirst,
+            sourceConverged = true,
+            deviceCapHeight = capHeight,
+        )
+        LOG.i(
+            "echo-xsource decide curS=" + currentSharpness + " candidates=" + pool.size +
+                " cap=" + capHeight + " verdict=" + (picked?.sourceKey ?: "none") +
+                " targetS=" + (picked?.let { VideoQualityPolicy.sharpness(it.variant) } ?: -1)
+        )
+        if (picked == null) return
+        val video = candidateForKey(picked.sourceKey) ?: return
+        // 跨源切换走既有 switchSource 链路(重搜索 + 重取详情),与用户手动换源完全同路 ——
+        // 不新造第二条切换路径,避免两套进度继承/状态复位逻辑漂移。
+        switchSource(video)
     }
 
     private var vodName = ""
@@ -2306,6 +2392,15 @@ class DetailViewModel : ViewModel() {
      * 排序分 = [SourceCompletenessPolicy.rankScore](权威已知时按档位+先验集数,未知时中性)。
      * 稳定排序:同分保留到达序。取候选前重排一次 —— 换源链推进中权威随详情加载单调上涨,
      * 后面的候选会随着信息变多获得更准的排序。
+     *
+     * <p>2026-10-13(优化方案 C):在"完整度 → 标称画质"之后追加**实测源权重**作最末次键。
+     * 与 [SearchBatchPolicy.splitFastRoundSourcesByWeight] 同一份权重台账([SourceWeightMemory]),
+     * 使"换源链"与"搜索首轮"对同一个源的判断口径一致 —— 否则会出现
+     * "搜索时已把这源降到队尾,换源却仍优先切过去"的自相矛盾。
+     *
+     * <p>⚠️ 权重**只作最末次键**:完整度(能不能看全)与标称画质(清不清晰)都比"这源历史快不快"
+     * 更贴近用户当下诉求;权重只在两者都并列时起 tie-break 作用。且**只重排不剔除** ——
+     * 低权重源仍会被试到(与《源与线路的权重模型》"降权≠屏蔽"一致)。
      */
     private fun sortFallbackCandidatesByCompleteness() = synchronized(fallbackCandidates) {
         val snap = CompletenessMemory.snapshot(completenessTitleKey)
@@ -2330,6 +2425,9 @@ class DetailViewModel : ViewModel() {
                 // 电影(权威未知,全员同分)由此获得画质排序——多集剧集数仍主导
             }.thenByDescending { video ->
                 QualityLabelPolicy.priorityFromLabel(video.note)
+                // 最末次键:实测源权重(与搜索首轮同一台账),同分并列时让"历史更靠谱的源"优先
+            }.thenByDescending { video ->
+                SourceWeightMemory.scoreOf(video.sourceKey)
             }
         )
     }
@@ -2712,6 +2810,10 @@ class DetailViewModel : ViewModel() {
         // 探测协程在 IO 上遍历它属于跨线程读 —— 快照一次既去掉这个竞争,也固定了这一轮的口径。
         val usedSnapshot = HashSet(usedSourceKeys)
         val curSourceKey = sourceKey
+        // L2 探活候选(2026-10-13,P0-3):含源类证据、快到期、被封着的源 —— 让它们借这次迷你探测
+        // **自证一次**(MiniProbeGate 会对这批放行被封禁的源),探活成功即平反放回搜索池。
+        // 这正是"拉黑后源无法自证"痛点的落地。
+        val recoveryKeys = SourceHealthMemory.probeRecoverableKeys().toHashSet()
         // ⚠️ 必须用**独立** Job:本方法是从 sweep 协程(qualityProbeJob)内部调用的,
         // 若复用 qualityProbeJob 就会把正在运行的 sweep 自己取消掉。
         miniProbeJob?.cancel()
@@ -2729,6 +2831,8 @@ class DetailViewModel : ViewModel() {
                     alreadyUsed = candKey == curSourceKey || usedSnapshot.contains(candKey),
                     healthBlocked = SourceHealthMemory.isBlocked(candKey),
                     extendWarm = SourceRuntimeState.isExtendWarm(bean.ext),
+                    // L2 探活候选:放行被测所以给"被判死的源"一次自证机会(见 MiniProbeGate.decide)
+                    recoveryProbe = recoveryKeys.contains(candKey),
                 )
                 if (gate is MiniProbeGate.Decision.Skip) {
                     LOG.i("xhint-skip " + gate.reason + " key=" + candKey)
@@ -2798,6 +2902,13 @@ class DetailViewModel : ViewModel() {
                         " size=" + measured.width + "x" + measured.height +
                         " flag=" + flag,
                 )
+                // L2 探活成功 ⇒ 平反(2026-10-13,P0-3):这个源此前因源类证据被封着,
+                // 但它的详情/取流刚刚实测成功、连尺寸都拿到了 —— 证据确凿地"活着",放回搜索池。
+                // 只在它确实是探活候选时才平反(避免把普通探测的成功也当成"平反")。
+                if (recoveryKeys.contains(candKey)) {
+                    val lifted = SourceHealthMemory.liftByProbe(candKey)
+                    if (lifted) LOG.i("echo-recover layer=L2 probe-lifted key=" + candKey)
+                }
                 // 探到一个就够:拿到能撑起提示的数据即可,不必把所有源都问一遍
                 break
             }
@@ -3018,6 +3129,13 @@ class DetailViewModel : ViewModel() {
         // probeMissingLineQualities 幂等(已测的跳过)且有预算上限,频繁触发也只会白查一次记忆。
         if (event.type == RefreshEvent.TYPE_PROBE_MISSING_LINES) {
             probeMissingLineQualities()
+            return
+        }
+        // 跨源升清(2026-10-13,P0-1):本源已到头,询问是否跨源自动切到画质更高的候选源。
+        // obj = 当前实测 S(int);非正视为拿不到画质,直接忽略(拿不准不切)。
+        if (event.type == RefreshEvent.TYPE_CROSS_SOURCE_UPGRADE) {
+            val curS = (event.obj as? Int) ?: return
+            tryCrossSourceUpgrade(curS)
             return
         }
         if (event.type != RefreshEvent.TYPE_REFRESH) return

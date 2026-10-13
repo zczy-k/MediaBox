@@ -54,6 +54,12 @@ public class App extends Application {
         instance = this;
         // 下层(util/data/server/catvod)读 Context 一律走这里,不再反向依赖 App 类
         AppContextHolder.install(this);
+        // 源健康「L1 网络恢复平反」的网络监听(2026-10-13,P0-3):网络重新可用时,
+        // 立即解除"纯网络类证据"支撑的封禁(误封的源不必等满 30 分钟)。幂等,注册一次。
+        com.github.tvbox.osc.util.SourceHealthMemory.installNetworkWatcher();
+        // 线路健康「L1 线路级恢复」的网络监听(2026-10-13,P0-3):网络恢复时复位"弱网期被打成可疑"的线路,
+        // 让它们不必从队尾爬起。与源级各自独立注册,避免 util 反向依赖 player 的内部实现。
+        com.github.tvbox.osc.player.LineHealthMemory.installNetworkWatcher();
         // 启动看门狗(2026-09-21):装崩溃记录器。必须最早装 —— 第三方爬虫可能在
         // Application.onCreate 之后的任意时刻于自己的线程上闪退,晚了就记不到。
         com.github.tvbox.osc.util.BootGuard.install();

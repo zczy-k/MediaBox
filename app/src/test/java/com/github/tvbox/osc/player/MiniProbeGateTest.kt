@@ -18,7 +18,8 @@ class MiniProbeGateTest {
         used: Boolean = false,
         blocked: Boolean = false,
         warm: Boolean = false,
-    ) = MiniProbeGate.decide(type, index, used, blocked, warm)
+        recovery: Boolean = false,
+    ) = MiniProbeGate.decide(type, index, used, blocked, warm, recovery)
 
     @Test
     fun type1_json_allowed() {
@@ -61,6 +62,20 @@ class MiniProbeGateTest {
     @Test
     fun healthBlocked_skipped() {
         assertEquals("xhint-skip blocked", decide(type = 1, blocked = true).toString())
+    }
+
+    @Test
+    fun recoveryProbe_liftsHealthBlocked() {
+        // L2 探活候选:被封禁也放行,给"被判死的源"一次自证机会(P0-3)
+        assertEquals(MiniProbeGate.Decision.Allow, decide(type = 1, blocked = true, recovery = true))
+    }
+
+    @Test
+    fun recoveryProbe_doesNotBypassOtherGates() {
+        // 豁免只针对 healthBlocked:type3 spider 仍跳过
+        assertEquals("xhint-skip spider", decide(type = 3, blocked = true, recovery = true).toString())
+        // 已用过仍跳过
+        assertEquals("xhint-skip used", decide(type = 1, used = true, blocked = true, recovery = true).toString())
     }
 
     @Test

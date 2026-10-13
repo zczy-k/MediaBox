@@ -114,6 +114,14 @@ public class HawkConfig {
      * {@code source_health_<md5(源地址)>}(源 key 只属于具体源集合,不分桶会让换仓后误屏蔽一批源)。
      */
     public static final String SOURCE_HEALTH = "source_health";
+    /**
+     * 源**连续权重**台账(JSON 字符串,2026-10-13)。**按点播源地址分桶**:
+     * 实际键名是 {@code source_weight_<md5(源地址)>},与 {@link #SOURCE_HEALTH} 同口径。
+     *
+     * <p>判据见 {@code util/SourceWeightPolicy}(只降权不封禁 + 时间衰减 + 保底配额),
+     * 存取见 {@code util/SourceWeightMemory}。这是《源与线路的权重模型》设计稿的落地存储。
+     */
+    public static final String SOURCE_WEIGHT = "source_weight";
     public static final String REMOTE_TVBOX = "remote_tvbox_host";
     public static final String PLAYER_IS_LIVE = "player_is_live";
     public static final String DOH_JSON = "doh_json";

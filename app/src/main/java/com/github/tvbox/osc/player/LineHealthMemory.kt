@@ -193,6 +193,89 @@ object LineHealthMemory {
         0
     }
 
+    /**
+     * **L1 线路级恢复**(2026-10-13,P0-3):网络恢复时,把"可疑"线路的失败痕迹清掉。
+     *
+     * <p>## 为什么需要它
+     * 线路级的"可疑"是 TTL 制([LineHealthPolicy.SUSPECT_TTL_MS] = 15 分钟),本身会自动过期;
+     * 但一次**弱网抖动**可能把一批好线路同时推过 [LineHealthPolicy.SUSPECT_STREAK],
+     * 网络恢复后它们仍要从队尾爬起 —— 用户明明网已好,却还在等坏线。本方法让"网络一好就复位"。
+     *
+     * <p>## ⚠️ 只清"可疑"的,不清健康的
+     * 判据用 [LineHealthPolicy.isSuspect](即连续失败 ≥ 2 且未成功过):
+     * <ul>
+     *   <li>**可疑** ⇒ 失败痕迹清零(复位为中性),网络恢复后不再压队尾;</li>
+     *   <li>**健康/中性**(failStreak &lt; 2)⇒ 不动 —— 本来就没降权,清了也是空操作,
+     *       而且"顺手清所有条目"会把真实坏线的证据一起抹掉。</li>
+     * </ul>
+     *
+     * <p>⚠️ 与源级 [com.github.tvbox.osc.util.SourceHealthMemory.liftNetworkBans] 同款:
+     * **保留 playedAt/resolveMs**(那是"看过/多快"的事实,与"网络恢复"无关),只清失败计数。
+     * 也不动源级封禁 —— 那是另一个层的职责。
+     *
+     * @return 本次复位的线路条数
+     */
+    @Synchronized
+    fun liftSuspectOnNetworkRestore(now: Long = System.currentTimeMillis()): Int {
+        if (!isEnabled()) return 0
+        return try {
+            val all = loadAll()
+            var lifted = 0
+            val keys = all.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val current = decode(all.optJSONObject(k))
+                // 只复位"可疑"的:健康条目本就没降权,顺手清会把真坏线证据一起抹掉
+                if (!LineHealthPolicy.isSuspect(current, now)) continue
+                // 复位:失败计数与失败时刻清零,保留"看过/取流耗时"这类与网络无关的事实
+                all.put(k, encode(current.copy(failStreak = 0, failAt = 0L)))
+                lifted++
+            }
+            if (lifted > 0) persist(all)
+            if (lifted > 0) LOG.i("echo-recover layer=L1 line-suspect lifted=" + lifted)
+            lifted
+        } catch (th: Throwable) {
+            LOG.i("echo-recover line-suspect failed: " + th.message)
+            0
+        }
+    }
+
+    /** 是否已注册网络回调(幂等闩) */
+    private var networkWatcherInstalled = false
+
+    /**
+     * **L1 线路级的网络监听**(2026-10-13,P0-3):网络**重新可用**时调用 [liftSuspectOnNetworkRestore]。
+     *
+     * <p>与 [com.github.tvbox.osc.util.SourceHealthMemory.installNetworkWatcher] 对称、**各自独立注册**:
+     * 源级(util 包)与线路级(player 包)分属两层,让各自管自己的监听,避免 util 反向依赖 player
+     * 的内部实现([LineHealthMemory])。两个回调都监听"默认网络可用",互不干扰。
+     *
+     * <p>幂等,注册失败只记日志(恢复是锦上添花)。
+     */
+    @JvmStatic
+    fun installNetworkWatcher() {
+        if (networkWatcherInstalled) return
+        networkWatcherInstalled = true
+        try {
+            val context = com.github.tvbox.osc.util.AppContextHolder.context() ?: return
+            val cm = context.getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
+                as? android.net.ConnectivityManager ?: return
+            cm.registerDefaultNetworkCallback(object : android.net.ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: android.net.Network) {
+                    try {
+                        liftSuspectOnNetworkRestore()
+                    } catch (th: Throwable) {
+                        LOG.i("echo-recover line-lift failed: " + th.message)
+                    }
+                }
+            })
+            LOG.i("echo-recover line network watcher installed")
+        } catch (th: Throwable) {
+            LOG.i("echo-recover line watcher install failed: " + th.message)
+        }
+    }
+
+
     /** 清空当前订阅的线路记忆(设置页"清缓存"用) */
     @Synchronized
     fun clear() {

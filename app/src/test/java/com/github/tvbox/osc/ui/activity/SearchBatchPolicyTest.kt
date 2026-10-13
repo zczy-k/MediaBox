@@ -266,4 +266,57 @@ class SearchBatchPolicyTest {
         assertFalse(SearchBatchPolicy.shouldFreezeOnPlaybackStarted(playbackStarted = true, searchRunning = false))
         assertFalse(SearchBatchPolicy.shouldFreezeOnPlaybackStarted(playbackStarted = false, searchRunning = false))
     }
+
+    // ==================== 弱网超时自适应(P2-2) ====================
+
+    @Test
+    fun batchTimeout_defaultWhenEnoughAnswers() {
+        // 样本够大但超时不过半 ⇒ 常规超时
+        assertEquals(
+            SearchBatchPolicy.BATCH_TIMEOUT_MS,
+            SearchBatchPolicy.batchTimeoutMs(settledCount = 50, timeoutCount = 10),
+        )
+    }
+
+    @Test
+    fun batchTimeout_degradedWhenTimeoutMajority() {
+        // 超时 ≥ 一半 ⇒ 降级
+        assertEquals(
+            SearchBatchPolicy.BATCH_TIMEOUT_DEGRADED_MS,
+            SearchBatchPolicy.batchTimeoutMs(settledCount = 50, timeoutCount = 25),
+        )
+        assertEquals(
+            SearchBatchPolicy.BATCH_TIMEOUT_DEGRADED_MS,
+            SearchBatchPolicy.batchTimeoutMs(settledCount = 10, timeoutCount = 9),
+        )
+    }
+
+    @Test
+    fun batchTimeout_smallSampleNotDegraded() {
+        // 小批次的比例不可信:1/2 过半但不降级
+        assertEquals(
+            SearchBatchPolicy.BATCH_TIMEOUT_MS,
+            SearchBatchPolicy.batchTimeoutMs(settledCount = 2, timeoutCount = 2),
+        )
+        assertEquals(
+            SearchBatchPolicy.BATCH_TIMEOUT_MS,
+            SearchBatchPolicy.batchTimeoutMs(
+                settledCount = SearchBatchPolicy.MIN_SAMPLE_FOR_DEGRADE - 1,
+                timeoutCount = SearchBatchPolicy.MIN_SAMPLE_FOR_DEGRADE - 1,
+            ),
+        )
+    }
+
+    @Test
+    fun batchTimeout_boundaryRatio() {
+        // 恰好 8 个全超时 ⇒ 降级;7 个全超时 ⇒ 不降(样本不足)
+        assertEquals(
+            SearchBatchPolicy.BATCH_TIMEOUT_DEGRADED_MS,
+            SearchBatchPolicy.batchTimeoutMs(settledCount = 8, timeoutCount = 8),
+        )
+        assertEquals(
+            SearchBatchPolicy.BATCH_TIMEOUT_MS,
+            SearchBatchPolicy.batchTimeoutMs(settledCount = 7, timeoutCount = 7),
+        )
+    }
 }

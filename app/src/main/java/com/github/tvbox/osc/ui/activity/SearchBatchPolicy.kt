@@ -1,6 +1,7 @@
 package com.github.tvbox.osc.ui.activity
 
 import com.github.tvbox.osc.bean.SourceBean
+import com.github.tvbox.osc.util.SourceWeightPolicy
 
 /** 纯逻辑分批策略,避免一次把数百源都启动。 */
 internal object SearchBatchPolicy {
@@ -72,6 +73,88 @@ internal object SearchBatchPolicy {
     }
 
     /**
+     * 权重驱动的分批(2026-10-13,《源与线路的权重模型》P1-1)。
+     *
+     * <p>与 [splitFastRoundSources] 的两点差异:
+     * <ol>
+     *   <li>降权判据从**二值** `penalized` 升级为**连续权重** `weightOf` ——
+     *       同为"被降权"的源,权重 45 与权重 5 不再被判成一样靠后;</li>
+     *   <li>首轮强制纳入**保底配额**(权重最低的 N 个)—— 这是"只降权"的安全网(设计稿 §5.1)。
+     *       没有它,降权源排到 328 源队尾后首轮 24 个源就出结果,用户不再滚动 ⇒ **队尾永不被搜到**,
+     *       即"没有安全网的事实封禁"。</li>
+     * </ol>
+     *
+     * <p>⚠️ 与旧口径一致的三条不变量:
+     * **首页源永不被降权**(用户正从它浏览);**一个源都不能少**(降权 ≠ 屏蔽);
+     * **快速源仍优先进首轮**(权重只在 fast/deferred 之内做次序,不改变"快源优先"的总策略)。
+     *
+     * <p>## 分层次序(低权重优先于"快速源"判定)
+     * 一条低权重源即便带 quickSearch 标记,也**不该**进首轮 —— 否则"低权重"对快源完全失效,
+     * 而那恰是"反复超时的快源"最常见的形态。故判定顺序为:
+     * <ol>
+     *   <li>首页源 ⇒ 首轮(无条件);</li>
+     *   <li>否则低权重(权重 &lt; 绿档阈值)⇒ 延后(除非被保底配额捞入首轮);</li>
+     *   <li>否则快速源 ⇒ 首轮;其余健康源 ⇒ 延后。</li>
+     * </ol>
+     *
+     * @param sources        已过滤排序的源
+     * @param homeKey        首页源 key
+     * @param weightOf       取某源的有效权重;缺失按 [SourceWeightPolicy.NEUTRAL]
+     * @param lastSearchedAtOf 取某源"上次被搜时刻"(0=无);供保底配额轮换
+     * @param floorQuotaN    保底配额数(权重最低的强制进首轮);&lt;=0 关闭
+     * @param onFloorPicked  可选回调:保底配额**实际捞进首轮**的 key 列表(供调用方打日志/诊断)。
+     *                       本类刻意不依赖 LOG(保持纯逻辑可单测),故用回调把"捞了谁"交给调用方。
+     *                       这是"证明兜底真实生效"的唯一可观测点 —— 没有它,只能看到计数、看不到成员。
+     * @return 首轮 key(去重)与延后 key(健康延后在前、低权重垫底)
+     */
+    @JvmOverloads
+    fun splitFastRoundSourcesByWeight(
+        sources: List<SourceBean>,
+        homeKey: String,
+        weightOf: (String) -> Int,
+        lastSearchedAtOf: (String) -> Long = { 0L },
+        floorQuotaN: Int = SourceWeightPolicy.FLOOR_QUOTA_N,
+        onFloorPicked: ((List<String>) -> Unit)? = null,
+    ): Pair<List<String>, List<String>> {
+        if (sources.isEmpty()) return emptyList<String>() to emptyList()
+        // ① 保底配额:权重最低(并列时最久未搜)的 N 个,强制进首轮(首页源除外,它本就在首轮)
+        val floorKeys: Set<String> = SourceWeightPolicy.floorQuota(
+            candidates = sources.map { it.key },
+            scoreAt = { weightOf(sources[it].key) },
+            lastSearchedAtAt = { lastSearchedAtOf(sources[it].key) },
+            n = floorQuotaN,
+        ).toSet()
+        val fast = LinkedHashSet<String>()
+        val healthyDeferred = ArrayList<String>()
+        val lowWeightDeferred = ArrayList<String>()
+        for (source in sources) {
+            val isHome = source.key == homeKey
+            val isLow = weightOf(source.key) < SourceWeightPolicy.TIER_GREEN
+            when {
+                // 首页源永不被降权:用户正从它浏览,排到队尾等于"首轮一定慢"
+                isHome -> fast.add(source.key)
+                // 低权重优先于"快速源"判定:反复超时的快源正是最常见的低权重源
+                isLow -> lowWeightDeferred.add(source.key)
+                source.isQuickSearch() -> fast.add(source.key)
+                else -> healthyDeferred.add(source.key)
+            }
+        }
+        // ② 保底配额补进首轮:只补"本会落到延后列表"的,避免重复
+        val floorAdded = ArrayList<String>()
+        for (key in floorKeys) {
+            if (key != homeKey && !fast.contains(key)) {
+                fast.add(key)
+                floorAdded.add(key)
+            }
+        }
+        // 上报实际捞进首轮的保底成员(调用方打 echo-weight floor 日志)
+        if (floorAdded.isNotEmpty()) onFloorPicked?.invoke(floorAdded)
+        // ③ 延后列表里,被保底捞走的要去掉(它已在首轮),其余保持原次序
+        val deferred = (healthyDeferred + lowWeightDeferred).filterNot { fast.contains(it) }
+        return fast.toList() to deferred
+    }
+
+    /**
      * 把**降权源**排到队尾,**不改变候选取舍**(返回列表与入参元素完全相同,只变顺序)。
      *
      * <p>## 为什么单独有它,而不是复用 [splitFastRoundSources]
@@ -116,6 +199,56 @@ internal object SearchBatchPolicy {
     /** 首批/本批完全无命中时自动续搜,避免空屏被误认为全库无结果。 */
     fun shouldAutoContinue(hasAnyResult: Boolean, queuedSourceCount: Int): Boolean =
         !hasAnyResult && queuedSourceCount > 0
+
+    // ==================== 弱网超时自适应(2026-10-13,优化方案 P2-2) ====================
+
+    /** 常规单源超时(与 SearchViewModel.SEARCH_TIMEOUT_MS 同口径) */
+    const val BATCH_TIMEOUT_MS = 8_000L
+
+    /**
+     * 弱网下的单源超时(ms)。
+     *
+     * <p>取 4.5s:与本仓详情换源链的快探超时(4s)同量级。弱网时若仍等 8s,
+     * 一批 50 个源里有大半会各占满 8s,把**首屏**硬拖到"一个 8s 波次之后"——
+     * 而这批源在弱网下大概率等满也只有超时,提前让出额度反而让少数能答话的源更快上屏。
+     *
+     * <p>⚠️ **超时不等于丢证据**:让出的只是协程额度,请求仍在跑,晚到的结果照样计入
+     * (与 [DETAIL_PROBE_TIMEOUT_MS] 同款说明)。
+     */
+    const val BATCH_TIMEOUT_DEGRADED_MS = 4_500L
+
+    /**
+     * 本批超时占比达到此比例 ⇒ 判定弱网,下一批缩短超时。
+     *
+     * <p>取 0.5:一半以上都超时,说明大概率是**整体网络**问题而非个别源;
+     * 低于一半时仍按常规超时,避免"个别慢源"被误当成弱网而全面缩短超时(那会让好源也被提前掐断)。
+     */
+    const val DEGRADED_TIMEOUT_RATIO = 0.5
+
+    /**
+     * 根据**上一批**的结算结果推导本批单源超时(纯函数)。
+     *
+     * <p>判据:[settled] 总数 ≥ [MIN_SAMPLE_FOR_DEGRADE] 且超时占比 ≥ [DEGRADED_TIMEOUT_RATIO]
+     * 才降级。两者都要:
+     * <ul>
+     *   <li>**最小样本**:批很小时(比如只剩 2 个源)1 个超时就过半,不足以判弱网;</li>
+     *   <li>**比例阈值**:见 [DEGRADED_TIMEOUT_RATIO]。</li>
+     * </ul>
+     *
+     * <p>只有两种返回值(常规 / 降级),**不做多级**:超时是粗信号,多级调节会让行为难以解释,
+     * 而收益有限。
+     *
+     * @param settledCount 上一批**已结算**(终态)的源数
+     * @param timeoutCount 其中判为超时的源数
+     */
+    fun batchTimeoutMs(settledCount: Int, timeoutCount: Int): Long {
+        if (settledCount < MIN_SAMPLE_FOR_DEGRADE) return BATCH_TIMEOUT_MS
+        val ratio = timeoutCount.toDouble() / settledCount
+        return if (ratio >= DEGRADED_TIMEOUT_RATIO) BATCH_TIMEOUT_DEGRADED_MS else BATCH_TIMEOUT_MS
+    }
+
+    /** 判定弱网所需的最小样本:小批次的比例不可信(1/2 也过半) */
+    const val MIN_SAMPLE_FOR_DEGRADE = 8
 
     // ==================== 详情换源链的"快探"(2026-10-13) ====================
 

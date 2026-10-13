@@ -20,6 +20,8 @@ import com.github.tvbox.osc.util.SearchSettings
 import com.github.tvbox.osc.util.SourceFailKind
 import com.github.tvbox.osc.util.SourceHealthFilter
 import com.github.tvbox.osc.util.SourceHealthMemory
+import com.github.tvbox.osc.util.SourceWeightMemory
+import com.github.tvbox.osc.util.SourceWeightPolicy
 import com.github.tvbox.osc.util.TitleIndexMemory
 import com.github.tvbox.osc.util.UA
 import com.github.tvbox.osc.sourcedata.SourceViewModel
@@ -494,15 +496,34 @@ class SearchViewModel : ViewModel() {
         // 降权(2026-10-09):上一轮搜索里超时的源排到队尾。超时是"内容无关"的证据 ——
         // 与这次搜什么片无关,所以跨关键词同样成立。降权不放宽准确度:它们照搜,只是不占首轮额度,
         // 于是"首屏"由上一轮**答过话**的源组成,命中更快;死源在队尾被慢慢消化。
-        val penalized = SourceHealthFilter.penalizedKeys()
-        val (fastKeys, deferredKeys) = SearchBatchPolicy.splitFastRoundSources(sources, home.key, penalized)
+        //
+        // 权重模型(2026-10-13,P1-1):把上面的**二值**降权升级为**连续权重 + 保底配额**。
+        // 二值的致命漏洞是"排到队尾 = 没有安全网的事实封禁"(首轮 24 源出结果,用户不再滚动,
+        // 队尾永不被搜)。权重版额外做两件事:① 按分值排序而非二值分层;
+        // ② 每轮强制纳入权重最低的 N 个源(保底配额),让它们仍有机会自证清白。
+        // 见《源与线路的权重模型》§2/§5,判据在 util/SourceWeightPolicy。
+        val weightKeys = sources.map { it.key }
+        val weightScores = SourceWeightMemory.scoresOf(weightKeys)
+        val lastSearched = SourceWeightMemory.lastSearchedAt(weightKeys)
+        val (fastKeys, deferredKeys) = SearchBatchPolicy.splitFastRoundSourcesByWeight(
+            sources,
+            homeKey = home.key,
+            weightOf = { weightScores[it] ?: SourceWeightPolicy.NEUTRAL },
+            lastSearchedAtOf = { lastSearched[it] ?: 0L },
+            // 保底配额实际捞进了哪些延后源(可观测,证明"兜底"是真的)。
+            // 没有这条日志只能看到 fast/deferred 计数,无法证明"权重最低的 N 个确实被塞回首轮"
+            // —— 而"兜底有没有生效"= "权重模型是不是真安全网"的唯一证据(见《源与线路的权重模型》§5.1)。
+            onFloorPicked = { keys ->
+                LOG.i("echo-weight floor n=" + keys.size + " keys=" + keys.joinToString(","))
+            },
+        )
         queuedSourceKeys = fastKeys + deferredKeys
         hasMore.value = queuedSourceKeys.isNotEmpty()
         batchingPaused = false
         LOG.i(
             "echo-searchplan token=" + token + " total=" + sources.size +
                 " fast=" + fastKeys.size + " deferred=" + deferredKeys.size +
-                " defer=" + penalized.size +
+                " weight-known=" + weightScores.size +
                 " variants=" + queryVariants.size + " threads=" + semaphorePermits
         )
         if (sources.isEmpty()) {
@@ -563,7 +584,13 @@ class SearchViewModel : ViewModel() {
             hasMore.value = false
             return
         }
-        launchBatch(keys)
+        // 弱网超时自适应(P2-2):上一批超时过半 ⇒ 本批缩短单源超时,让能答话的源更快上屏
+        val timeoutMs = SearchBatchPolicy.batchTimeoutMs(lastBatchSettled, lastBatchTimeout)
+        if (timeoutMs != SearchBatchPolicy.BATCH_TIMEOUT_MS) {
+            LOG.i("echo-searchplan weak-net timeout degraded -> " + timeoutMs +
+                "ms (last settled=" + lastBatchSettled + " timeout=" + lastBatchTimeout + ")")
+        }
+        launchBatch(keys, timeoutMs)
     }
 
     /**
@@ -594,6 +621,9 @@ class SearchViewModel : ViewModel() {
             searchedCount.value += keys.size
             // 队列被消耗过就不是首轮了:下一批恢复 DEFAULT_BATCH_SIZE,把延后源一批批搜完
             if (queuedSourceKeys.isNotEmpty()) startedNonFastRound = true
+            // 记"这些源本轮被搜过" —— 供保底配额的**轮换**(下次优先最久未搜的),
+            // 这是"权重最低的几个源不会被反复搜/也不会永远不被搜"的调度事实(见 SourceWeightMemory.markSearched)。
+            keys.forEach { SourceWeightMemory.markSearched(it) }
         }
         markPending(keys)
         running.value = true
@@ -960,6 +990,9 @@ class SearchViewModel : ViewModel() {
         val failed = settled.count { it.state == ResultState.Failed }
         val timeout = settled.count { it.state == ResultState.Timeout }
         val slowest = settled.filter { it.elapsedMs >= 0 }.maxByOrNull { it.elapsedMs }
+        // 记录本批统计,供下一批做弱网超时自适应(P2-2):超时过半 ⇒ 下一批缩短单源超时
+        lastBatchSettled = settled.size
+        lastBatchTimeout = timeout
         LOG.i(
             "echo-searchplan batch-summary token=" + token + " batch=" + batch + " size=" + size +
                 " settled=" + settled.size + " hit=" + hit + " empty=" + empty +
@@ -968,6 +1001,12 @@ class SearchViewModel : ViewModel() {
                 " queued=" + queuedSourceKeys.size
         )
     }
+
+    /** 上一批已结算源数(供 [SearchBatchPolicy.batchTimeoutMs] 判弱网) */
+    private var lastBatchSettled = 0
+
+    /** 上一批超时源数 */
+    private var lastBatchTimeout = 0
 
 
     /**

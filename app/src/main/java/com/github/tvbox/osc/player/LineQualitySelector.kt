@@ -205,4 +205,70 @@ object LineQualitySelector {
         // 一次到位:直接取画质最高的那条
         return candidates.maxByOrNull { VideoQualityPolicy.score(it) }?.flag
     }
+
+    /**
+     * 升档选线(**档内**用 [QualityScore] 择优,2026-10-13 优化方案 D)。
+     *
+     * <p>## 与 [pickUpgrade] 的关系(为什么不是改它,而是新增)
+     * [pickUpgrade] 的"一次到位取最高清晰度"是**已验证的用户可见行为**,不该动
+     * (项目《选线机制设计》附录 A 的修订记录明确反对逐级)。本函数**保留该语义**,
+     * 只在**同一清晰度档内**改用 [QualityScore] 挑"更稳更快"的那条 ——
+     * 这才是速度/稳定性维度的**正确发挥点**:
+     * <ul>
+     *   <li>两档之间:清晰度说话(与 [pickUpgrade] 完全一致);</li>
+     *   <li>同档之内:谁不卡、谁快,谁优先(新增收益,且不改用户可见的"升到哪一档")。</li>
+     * </ul>
+     *
+     * <p>## 铁律不变
+     * 候选筛选(known / 高于当前 / 未试过)与 [pickUpgrade]**逐字一致**;设备上限仍由上层门控。
+     * 本函数只改"同档内怎么挑",不改"能不能挑"。
+     *
+     * @param scene        播放场景(权重来源,见 [QualityScore.sceneOf])
+     * @param resolveMsOf  取某 flag 的历史取流耗时(ms);&lt;0/无数据按中性参与
+     * @param failStreakOf 取某 flag 的连续失败次数(0 = 健康)
+     * @param deviceCapHeight 设备上限;>0 时超限候选直接排除
+     **/
+    @JvmStatic
+    fun pickUpgradeByQualityScore(
+        measured: List<VideoQualityPolicy.Variant>,
+        currentFlag: String,
+        current: VideoQualityPolicy.Variant?,
+        triedFlags: Set<String>,
+        scene: QualityScore.Scene,
+        resolveMsOf: (String) -> Long = { -1L },
+        failStreakOf: (String) -> Int = { 0 },
+        deviceCapHeight: Int = 0,
+    ): String? {
+        val currentS = current?.let { VideoQualityPolicy.sharpness(it) } ?: 0
+        if (currentS <= 0) return null
+        val candidates = measured.filter {
+            it.flag.isNotEmpty() && it.flag != currentFlag && it.known &&
+                VideoQualityPolicy.sharpness(it) > currentS && !triedFlags.contains(it.flag)
+        }
+        if (candidates.isEmpty()) return null
+        // ① 先按清晰度分档,取**最高**那一档(与 pickUpgrade 的"一次到位"同语义)
+        val bestS = candidates.maxOf { VideoQualityPolicy.sharpness(it) }
+        val topTier = candidates.filter { VideoQualityPolicy.sharpness(it) == bestS }
+        if (topTier.size == 1) return topTier[0].flag
+        // ② 档内多个候选:用 QualityScore 挑"更稳更快"的(这正是 D 的收益所在)
+        var best: VideoQualityPolicy.Variant? = null
+        var bestScore = Double.NEGATIVE_INFINITY
+        for (v in topTier) {
+            val score = QualityScore.compute(
+                variant = v,
+                resolveMs = resolveMsOf(v.flag),
+                failStreak = failStreakOf(v.flag),
+                scene = scene,
+                deviceCapHeight = deviceCapHeight,
+            )
+            if (score == QualityScore.REJECTED) continue
+            // 严格 > :同分保留列表靠前者(候选已按站点/画质排好,不打乱)
+            if (score > bestScore) {
+                bestScore = score
+                best = v
+            }
+        }
+        // 全部被设备上限排除 ⇒ 退回清晰度最优(pickUpgrade 口径),不让"档内择优"变成"不升档"
+        return (best ?: topTier[0]).flag
+    }
 }

@@ -104,6 +104,15 @@ final class PlaybackRetryDelegate {
     /** 回滚后锁定:本集会话不再升档(防"升→卡→降→再升"振荡) */
     private boolean upgradeLockedThisSession = false;
 
+    /**
+     * 跨源升清请求的**会话节流闩**(2026-10-13,P0-1)。
+     *
+     * <p>看门狗每 30s 报一次"网络富余",而跨源升清是**重代价**动作(整源切换 = 重搜索 + 重取详情)。
+     * 没有这个闩,一次播放里会反复请求;有了它,每集最多发一次请求 —— 详情页自己再按
+     * [CrossSourceUpgradePolicy] 判"值不值得切",两道闸叠加。
+     */
+    private boolean crossSourceRequested = false;
+
     /** 补探测完成后的立即复查(不等看门狗下一个 30s 周期);主线程,与看门狗同 looper */
     private final Handler upgradeHandler = new Handler(Looper.getMainLooper());
 
@@ -557,6 +566,7 @@ final class PlaybackRetryDelegate {
         episodeStartElapsed = 0L;
         upgradesDone = 0;
         upgradeLockedThisSession = false;
+        crossSourceRequested = false;
         // 线路健康的**会话去重**集合随内容边界清空(2026-10-12):
         // 否则同一部片第二次播放时,"本会话已记过"会让失败记不进去,
         // 表现为"明明又失败了却不更新证据"。
@@ -633,6 +643,17 @@ final class PlaybackRetryDelegate {
                 upgradeRecheckScheduled = true;
                 upgradeHandler.postDelayed(upgradeRecheck, UPGRADE_RECHECK_DELAY_MS);
                 LOG.i("echo-quality probe-request posted, recheck in 5s");
+            } else if (untriedHigher == 0 && !crossSourceRequested
+                    && !DeviceCapability.trafficSaverOn()) {
+                // 跨源升清(2026-10-13,P0-1):本源已到头(无候选、也无未试的更高档),
+                // 但**对端候选源**可能有更高档。请详情页按 CrossSourceUpgradePolicy 决策是否跨源切。
+                // ⚠️ 只在 untriedHigher==0 时发:本源还有没试完的更高档时,跨源是舍近求远
+                // (源内换线不重取详情,代价远小于跨源)。
+                // ⚠️ 会话节流:每集最多一次,避免看门狗每 30s 重复请求(跨源是重代价动作)。
+                crossSourceRequested = true;
+                EventBus.getDefault().post(new RefreshEvent(
+                        RefreshEvent.TYPE_CROSS_SOURCE_UPGRADE, VideoQualityPolicy.sharpness(current)));
+                LOG.i("echo-quality cross-source request posted curS=" + VideoQualityPolicy.sharpness(current));
             }
             return;
         }
