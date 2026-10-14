@@ -157,6 +157,10 @@ class SettingsViewModel : ViewModel() {
             val text = withContext(Dispatchers.IO) {
                 FileUtils.clearCache()
                 FileUtils.clearSpiderCacheFiles()
+                // KV(MMKV)里那两类可再生缓存也要一起清,否则"清除缓存"只是目录数字归零,
+                // 而 KV 里的搜索命中缓存与 JS 运行时缓存随源数量只增不减。爬虫业务数据 cache_*
+                // **保留**(不少 spider 在里面存登录态/token)。
+                FileUtils.clearRebuildableKvCaches()
                 // 拼音索引也是"可重建的缓存"(2026-10-11):它由搜索/历史/收藏在使用中重新积累。
                 // 清缓存却留着索引会让用户困惑 —— 他期望"清干净"。
                 TitleIndexMemory.clear()

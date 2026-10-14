@@ -389,6 +389,13 @@ fun PlaySettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewM
                         onValueChangeFinished = {
                             if (sliderCacheSize != state.exoCacheSizeMb) {
                                 vm.put(HawkConfig.EXO_CACHE_SIZE_MB, sliderCacheSize)
+                                // 容量是在 App 启动时注入共享 SimpleCache 的(首次 getSharedCache 之前),
+                                // 运行中改不了 —— 不说的话用户会以为这个滑块没作用。
+                                Toast.makeText(
+                                    context,
+                                    context.getString(R.string.toast_cache_size_restart),
+                                    Toast.LENGTH_LONG,
+                                ).show()
                             }
                         },
                     )

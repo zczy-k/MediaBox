@@ -443,6 +443,36 @@ public class FileUtils {
         clearJsModuleCache();
     }
 
+    /**
+     * 清掉 KV 里**可再生**的两类缓存(2026-10-14):此前「清除缓存」只删文件目录,
+     * KV(MMKV)里的缓存一个都不动 —— 用户看到目录数字归零,实际 KV 里的搜索命中缓存与
+     * JS 运行时缓存(爬虫每次跑都会写一份编译产物)一直躺着,而且**随源数量只增不减**。
+     *
+     * <p>只清"丢了能自己长回来"的:
+     * <ul>
+     *   <li>{@code search_cache_*}:搜索命中缓存,下次搜同一词自然会再写;</li>
+     *   <li>{@code jsRuntime_*}:JS 运行时代码缓存,下次加载该源重新编译。</li>
+     * </ul>
+     *
+     * <p>⚠️ **绝不清** {@code cache_*}:那是爬虫自己写的业务数据,不少 spider 拿它存
+     * 登录态/token/分页游标,清掉会让那些源直接不可用(用户得重新登录)。这正是"清除缓存"
+     * 与"清除数据"必须分开的理由。
+     */
+    public static void clearRebuildableKvCaches() {
+        int removed = 0;
+        for (String prefix : new String[]{"search_cache_", "jsRuntime_"}) {
+            try {
+                for (String key : KV.keys(prefix)) {
+                    KV.delete(key);
+                    removed++;
+                }
+            } catch (Exception e) {
+                LOG.e("FileUtils", e);
+            }
+        }
+        LOG.i("clearCache kv removed=" + removed);
+    }
+
     /** 爬虫 jar 目录保留上限:文件名 = MD5(jarUrl),同 URL 不累积,但订阅更替会只增不减。 */
     private static final int CSP_JAR_MAX_KEEP = 20;
 

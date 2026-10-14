@@ -370,6 +370,14 @@ class DetailViewModel : ViewModel() {
     private val evidenceRecordedKeys = HashSet<String>()
 
     /**
+     * 本轮**已经交出过候选**的源(2026-10-14,变体补发的判据)。
+     *
+     * <p>只对"答了话却一条候选都没给"的源补发查询变体 —— 有命中的源不再多问一次,
+     * 请求量才不会随变体数线性翻倍。
+     */
+    private val sourcesWithHit = HashSet<String>()
+
+    /**
      * 本轮应搜的源数(按 [ExpandPoolPolicy] 逐轮扩大:1/3 → 1/2 → 2/3 → 全量)。
      *
      * <p>2026-10-14 移除「自动扩池」开关与"固定上界"退路:那条退路存在的唯一理由是"我怕全量搜太慢",
@@ -1591,6 +1599,7 @@ class DetailViewModel : ViewModel() {
         // 新一轮 ⇒ 失败证据去重表清空:同一源在新一轮里再次没答话是**新的一次证据**,该再扣一次
         // (与搜索页 failRecordedForToken 的"每轮一次"口径一致 —— 那边是按 token,这里按轮次天然等价)
         evidenceRecordedKeys.clear()
+        sourcesWithHit.clear()
         val myToken = searchToken
         val tokenStr = "detail_$myToken"
         val checked = SearchHelper.getSourcesForSearch()
@@ -1726,6 +1735,8 @@ class DetailViewModel : ViewModel() {
                 )
             }
             val poolView = orderedPool.take(effectiveTotal)  // 本轮有效范围(按权重降序);每波只 take 前 N 个并滤掉已投
+            // 查询变体(原词 + 去分隔符 + 去年份 + 去季/版本后缀 + 简繁互转),用于"该源零候选时补发一次"
+            val searchVariants = SearchSettings.queryVariants(title)
             var waveSize = roundSize    // 当前波宽度(首轮 = 外层算好的 roundSize)
             val total = poolView.size
             while (true) {
@@ -1765,64 +1776,79 @@ class DetailViewModel : ViewModel() {
                                         SearchBatchPolicy.DETAIL_PROBE_TIMEOUT_MS,
                                         SOURCE_SEARCH_TIMEOUT_MS,
                                     )
-                                    val done = CompletableDeferred<Unit>()
-                                    pendingSearchDone.put(bean.key, done)?.complete(Unit)
-                                    val answered = try {
-                                        withTimeoutOrNull(sourceTimeoutMs) {
-                                            withContext(Dispatchers.IO) {
-                                                searchCaller.getSearch(bean.key, title, tokenStr)
+                                    // 一次提问 = 发请求 + 等这个源的回包事件(或本次超时)。
+                                    // 抽成局部函数是为了让**查询变体补发**能复用同一套超时/清理/取消语义。
+                                    val askOnce: suspend (String) -> Boolean = { word ->
+                                        val done = CompletableDeferred<Unit>()
+                                        pendingSearchDone.put(bean.key, done)?.complete(Unit)
+                                        try {
+                                            withTimeoutOrNull(sourceTimeoutMs) {
+                                                withContext(Dispatchers.IO) {
+                                                    searchCaller.getSearch(bean.key, word, tokenStr)
+                                                }
+                                                done.await()
+                                            } != null
+                                        } catch (ce: CancellationException) {
+                                            // **协程取消不是"源没答话"**(2026-10-14 真机日志抓到误判):
+                                            // 换片/换源/新一轮都会 cancel 上一轮 job,在途 async 抛的是
+                                            // JobCancellationException —— 我方主动撤请求,与源质量无关。
+                                            // 必须原样抛回:吞掉它会破坏结构化并发(job 撤不下来、额度不回收)。
+                                            throw ce
+                                        } catch (th: Throwable) {
+                                            // 到这里才是"源自己出错"(Spider 抛异常 / HTTP 异常 / 解析崩)。
+                                            // 单源异常绝不能掀掉整波:async 里未捕获的异常会取消整个
+                                            // coroutineScope,一个坏 Spider 就能让剩下的几百个源一起收摊。
+                                            LOG.i(
+                                                "echo-source-search threw key-len=" + bean.key.length +
+                                                    " err=" + th.javaClass.simpleName
+                                            )
+                                            if (searchActive(tokenStr)) {
+                                                recordDetailSearchTimeout(
+                                                    bean.key,
+                                                    SourceWeightPolicy.EvidenceKind.SEARCH_FAILED,
+                                                )
                                             }
-                                            done.await()
-                                        } != null
-                                    } catch (ce: CancellationException) {
-                                        // **协程取消不是"源没答话"**(2026-10-14 真机日志抓到误判):
-                                        // 换片/换源/新一轮都会 cancel 上一轮 job,在途的 async 抛
-                                        // JobCancellationException —— 那是**我方**主动撤请求,与源的质量无关。
-                                        // v1.1.5-diag 一轮就误罚了 60 次(-25/次),把无辜的慢网络源往下压。
-                                        // 必须原样抛回:吞掉它会破坏结构化并发(job 撤不下来、额度不回收)。
-                                        throw ce
-                                    } catch (th: Throwable) {
-                                        // 到这里才是"源自己出错"(Spider 抛异常 / HTTP 异常 / 解析崩)。
-                                        // 单源异常绝不能掀掉整波:async 里未捕获的异常会取消整个
-                                        // coroutineScope,一个坏 Spider 就能让剩下的几百个源一起收摊。
-                                        LOG.i(
-                                            "echo-source-search threw key-len=" + bean.key.length +
-                                                " err=" + th.javaClass.simpleName
-                                        )
+                                            false
+                                        } finally {
+                                            pendingSearchDone.remove(bean.key)
+                                        }
+                                    }
+                                    val answered = askOnce(title)
+                                    // **答了话却一个候选都没出 → 换查询变体再问一次**(去年份 / 去季与版本后缀 /
+                                    // 简繁互转 / 紧凑形)。此前详情页只发原词一次,而站方写片名没有规范:
+                                    // 「功夫女足(2026)」「夢華錄」这类源用原词问就是"没有",表现为明明有源搜不到。
+                                    // 只在"这个源一个候选都没给"时补发 ⇒ 有命中的源不会被重复问,请求量不会翻倍。
+                                    var variantIndex = 1
+                                    var variantTimeout = false
+                                    if (answered) {
+                                        while (variantIndex < searchVariants.size &&
+                                            bean.key !in sourcesWithHit && searchActive(tokenStr)
+                                        ) {
+                                            val again = askOnce(searchVariants[variantIndex])
+                                            variantIndex++
+                                            if (!again) {
+                                                variantTimeout = true
+                                                break
+                                            }
+                                        }
+                                    }
+                                    if (!answered || variantTimeout) {
+                                        // **源没答话也要留证据**(2026-10-14 审查修正):此前详情页只记"收到回包",
+                                        // 超时/异常一行证据都不写,而扣分只在搜索页发生 ⇒ 从不手动搜索的用户,
+                                        // 权重台账对换源链恒为空,慢源每轮都占着首轮名额。
+                                        // ⚠️ 只写**权重台账**,不写 SourceHealthMemory.recordFail:那是封禁证据,
+                                        // 必须守住"换源链不生产封禁证据"这条不变量(见 recordFallbackSourceAnswered)。
+                                        // ⚠️ 也要过 searchActive:本轮已被冻结/作废时的超时不算源的错。
                                         if (searchActive(tokenStr)) {
+                                            timeoutsThisWave.incrementAndGet()
                                             recordDetailSearchTimeout(
                                                 bean.key,
-                                                SourceWeightPolicy.EvidenceKind.SEARCH_FAILED,
+                                                SourceWeightPolicy.EvidenceKind.SEARCH_TIMEOUT,
                                             )
                                         }
-                                        false
-                                    } finally {
-                                        pendingSearchDone.remove(bean.key)
-                                        // 收口只记 doneCount(诊断用),**不再改进度分子** ——
-                                        // 分子已在投出时逐条入账;若这里再上报会掩盖"逐条"语义,
-                                        // 且旧口径下正是靠它在慢源收口时补报,现由投出点上报告承担。
-                                        if (searchActive(tokenStr)) doneCount.incrementAndGet()
                                     }
-                                    // **源没答话也要留证据**(2026-10-14 审查修正):
-                                    // 此前详情页这条路径只在"收到回包"时记 recordAnswered,超时/异常**一行证据都不写**,
-                                    // 而扣分只发生在搜索页 —— 于是从不手动搜索的用户,权重台账对换源链永远是空的,
-                                    // "有权重按权重降序"退化成"全部按源列表自然序",慢源每轮都占着前 108 个名额。
-                                    //
-                                    // ⚠️ 只写**权重台账**,绝不写 SourceHealthMemory.recordFail:
-                                    // 后者是封禁证据,而本文件既有不变量"换源链不生产封禁证据"必须守住 ——
-                                    // 换源链每开一张卡片就可能跑一整轮(几百个源),若它开始报失败,
-                                    // 同一个源在几部片之间会迅速凑满规则 1(≥3 次且≥2 部影片)被判 6 小时封禁,
-                                    // 而雪崩保险丝只回滚规则 2、管不到规则 1。降权只影响"多容易被选中",
-                                    // 且 30 分钟半衰期会自己涨回中性(见 SourceWeightPolicy),不存在误封死锁。
-                                    //
-                                    // ⚠️ 判据同样要过 [searchActive]:本轮已被冻结/作废时的超时不算源的错。
-                                    if (!answered && searchActive(tokenStr)) {
-                                        timeoutsThisWave.incrementAndGet()
-                                        recordDetailSearchTimeout(
-                                            bean.key,
-                                            SourceWeightPolicy.EvidenceKind.SEARCH_TIMEOUT,
-                                        )
-                                    }
+                                    // 收口只记 doneCount(诊断用),**不再改进度分子** —— 分子已在投出时逐条入账
+                                    if (searchActive(tokenStr)) doneCount.incrementAndGet()
                                 }
                             }
                         }.awaitAll()
@@ -2006,6 +2032,7 @@ class DetailViewModel : ViewModel() {
                     && it.sourceKey != sourceKey
             }.filter { candidateKeys.add(candidateKey(it)) }
             if (candidates.isNotEmpty()) {
+                data.sourceKey?.let { sourcesWithHit.add(it) }
                 synchronized(fallbackCandidates) { fallbackCandidates.addAll(candidates) }
                 sortFallbackCandidatesByCompleteness()
                 maybeCorrectCompleteness()

@@ -592,18 +592,105 @@ object SearchSettings {
      * {@code runSourceSearch}:只有原词这一轮**没有任何有效命中**时才发紧凑形式,
      * 因此普通片名(无分隔符)全程仍是每源一次请求。
      */
+    /**
+     * 一次搜索允许使用的查询变体数上限。
+     *
+     * <p>每个变体都意味着"某个源原词没命中时要再问一次" —— 数百源规模下,变体数直接乘在请求量上。
+     * 4 个是"覆盖率收益 / 请求量代价"的折中:再多就只是在给慢源加压。
+     */
+    private const val MAX_QUERY_VARIANTS = 4
+
+    /** 年份:半角/全角括号内的 19xx/20xx,括号外的也剥(标题常写"片名 2024") */
+    private val YEAR_PATTERN = Regex("[（(\\[【]?\\s*(?:19|20)\\d{2}\\s*[)\\]）】]?")
+
+    /** 季/部/集数/版本后缀:这些在站方标题里位置不定,剥掉后按"核心片名"再问一次 */
+    private val EDITION_PATTERN = Regex(
+        "第\\s*[0-9一二三四五六七八九十]+\\s*[季部集]|Season\\s*\\d+|\\d+\\s*集全?|更新至\\s*\\d+\\s*集|" +
+            "完结|全集|高清|标清|蓝光|HD|BD|TC|CD|版",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** 折叠连续空白(剥完年份/后缀会留下空洞) */
+    private val MULTI_SPACE_PATTERN = Regex("\\s+")
+
+    /**
+     * 搜索关键词的**查询变体**(原词在前),用于"某个源用原词没命中时再问一次"。
+     *
+     * <p>## 为什么要变体
+     * 站方写片名没有统一规范:`功夫女足` / `功夫女足(2026)` / `功夫女足 HD` / `知否, 知否` /
+     * 繁体 `夢華錄` —— 只用用户输入的原词去问,这些源会答"没有",表现为**明明有源却搜不到**。
+     *
+     * <p>## 变体集(按代价从低到高,总数封顶 [MAX_QUERY_VARIANTS])
+     * ① 原词;② 去掉空白与连接符的紧凑形(番号最常差这个,如 `MIAA-195` → `MIAA195`);
+     * ③ 去年份;④ 去年份 + 去季/集/版本后缀;⑤ 简繁互转(繁中用户搜简体片名、以及源站只存繁体的情况)。
+     * 简繁转换靠 ICU,**任何异常都降级成"没有这个变体"** —— 它只是加分项,不能把搜索带崩。
+     */
     fun queryVariants(keyword: String?): List<String> {
         val raw = keyword?.trim().orEmpty()
         if (raw.isEmpty()) return emptyList()
         val variants = LinkedHashSet<String>()
-        variants.add(raw)
-        val compact = raw.filterNot { ch ->
+
+        /** 到上限就静默丢弃:变体是"值钱的先要"(紧凑形与去年份能覆盖绝大多数漏搜) */
+        fun offer(candidate: String?) {
+            if (variants.size >= MAX_QUERY_VARIANTS) return
+            val value = candidate?.trim().orEmpty()
+            if (value.isNotEmpty()) variants.add(value)
+        }
+
+        offer(raw)
+        offer(raw.filterNot { ch ->
             ch.isWhitespace() || ch == '-' || ch == '_' || ch == '.' ||
                 ch == '－' || ch == '—' || ch == '–' || ch == '−'
-        }
-        if (compact.isNotEmpty() && compact != raw) variants.add(compact)
+        })
+        val noYear = collapse(YEAR_PATTERN.replace(raw, " "))
+        offer(noYear)
+        offer(collapse(EDITION_PATTERN.replace(noYear, " ")))
+        offer(s2t(raw))
+        offer(t2s(raw))
         return variants.toList()
     }
+
+    private fun collapse(text: String): String =
+        text.replace(MULTI_SPACE_PATTERN, " ").trim()
+
+    /** 简繁互转的候选 ID:各 ICU 版本命名不一,按序试,能真正转出结果的那个才算数 */
+    private val TRANS_TO_SIMPLIFIED = arrayOf("Hant-Hans", "Traditional-Simplified", "HanSimp")
+    private val TRANS_TO_TRADITIONAL = arrayOf("Hans-Hant", "Simplified-Traditional", "HanTrad")
+
+    /** 自检用的探针词:**造得出实例但转不动的 ID 一律不用**(那样只会白占一个变体名额) */
+    private const val PROBE_TRADITIONAL = "夢華錄"
+    private const val PROBE_SIMPLIFIED = "梦华录"
+
+    private fun workingTransliterator(
+        ids: Array<String>,
+        probeInput: String,
+        probeExpected: String,
+    ): android.icu.text.Transliterator? {
+        for (id in ids) {
+            val transliterator =
+                runCatching { android.icu.text.Transliterator.getInstance(id) }.getOrNull() ?: continue
+            val probed = runCatching { transliterator.transliterate(probeInput) }.getOrNull()
+            if (probed != null && probed.contains(probeExpected)) return transliterator
+        }
+        return null
+    }
+
+    // ICU 的 Transliterator **不是线程安全的**(与 PinyinTransliterator 同一取舍),按线程各持一份。
+    // JVM 单测环境没有 android.icu ⇒ 实例恒为 null,简繁变体静默缺席、其余变体照常(不许把搜索带崩)。
+    private val toSimplified = ThreadLocal.withInitial {
+        workingTransliterator(TRANS_TO_SIMPLIFIED, PROBE_TRADITIONAL, "梦")
+    }
+    private val toTraditional = ThreadLocal.withInitial {
+        workingTransliterator(TRANS_TO_TRADITIONAL, PROBE_SIMPLIFIED, "夢")
+    }
+
+    /** 繁体→简体;无可用转换器 ⇒ null */
+    private fun t2s(text: String): String? =
+        toSimplified.get()?.let { runCatching { it.transliterate(text) }.getOrNull() }?.takeIf { it != text }
+
+    /** 简体→繁体 */
+    private fun s2t(text: String): String? =
+        toTraditional.get()?.let { runCatching { it.transliterate(text) }.getOrNull() }?.takeIf { it != text }
 
     /** 搜索结果展示方式:竖排(左侧站点栏 + 右侧结果,**默认**)/ 横排(各源分区 + 横向卡片行) */
     fun resultLayout(): SearchLayout =

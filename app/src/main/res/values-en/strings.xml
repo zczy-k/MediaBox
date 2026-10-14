@@ -292,6 +292,7 @@
     <string name="preload_play_cache">Cache while playing</string>
     <string name="preload_play_cache_subtitle">May make the Media3 player unusable when enabled</string>
     <string name="preload_cache_size">Cache size</string>
+    <string name="toast_cache_size_restart">The new cache size applies on the next launch</string>
 
     <!-- Search page -->
     <string name="search_field_hint">Search titles and actors</string>
@@ -507,7 +508,7 @@
     <string name="settings_history_limit_subtitle">Maximum number of records to keep</string>
     <string name="settings_history_limit_value">%1$d items</string>
     <string name="settings_clear_cache">Clear Cache</string>
-    <string name="settings_clear_cache_subtitle">Clear the app usage cache</string>
+    <string name="settings_clear_cache_subtitle">Clears playback cache, spider caches and search hits (keeps spider sign-in state)</string>
     <string name="settings_doh_subtitle">Secure DNS</string>
     <string name="settings_about">About</string>
     <string name="settings_about_subtitle">View details</string>

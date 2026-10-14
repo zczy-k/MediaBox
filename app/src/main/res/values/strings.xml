@@ -306,6 +306,7 @@
     <string name="preload_play_cache">边播边缓存</string>
     <string name="preload_play_cache_subtitle">开启后可能导致Media3播放器无法使用</string>
     <string name="preload_cache_size">缓存容量</string>
+    <string name="toast_cache_size_restart">缓存容量将在下次启动时生效</string>
 
     <!-- 搜索页 -->
     <string name="search_field_hint">搜索片名、演员</string>
@@ -529,7 +530,7 @@
     <string name="settings_history_limit_subtitle">最多保留多少条记录</string>
     <string name="settings_history_limit_value">%1$d条</string>
     <string name="settings_clear_cache">清除缓存</string>
-    <string name="settings_clear_cache_subtitle">清理应用的使用缓存</string>
+    <string name="settings_clear_cache_subtitle">清理播放缓存、爬虫缓存与搜索命中缓存（保留爬虫登录状态）</string>
     <string name="settings_doh_subtitle">安全DNS</string>
     <string name="settings_about">关于</string>
     <string name="settings_about_subtitle">查看详细信息</string>
