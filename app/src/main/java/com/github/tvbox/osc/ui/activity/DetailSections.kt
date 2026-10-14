@@ -76,6 +76,7 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int) {
     @Suppress("UNUSED_EXPRESSION") revision
     val sourceChips by vm.sourceChips.collectAsStateWithLifecycle()
     val sourcesSearching by vm.sourcesSearching.collectAsStateWithLifecycle()
+    val searchProgress by vm.searchProgress.collectAsStateWithLifecycle()
     val crossHint by vm.crossSourceHint.collectAsStateWithLifecycle()
     val chipPage by vm.chipPage.collectAsStateWithLifecycle()
     // 2026-10-14(详情页「换源」分页设计):**不再"空列表就整块不渲染"** ——
@@ -105,7 +106,14 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int) {
             }
             Text(
                 text = if (sourcesSearching) {
-                    stringResource(R.string.detail_source_switching, totalCandidates)
+                    // 进度用 "搜索进度(xx/总数)" —— 用户明确要看"还剩多少个源没搜完"。
+                    // xx = 已收口源数(done),总数 = 全量源数(total,如 322);扩池后分母不变、分子递增。
+                    val p = searchProgress
+                    if (p != null && p.total > 0) {
+                        stringResource(R.string.detail_source_switching, p.done, p.total)
+                    } else {
+                        stringResource(R.string.detail_source_switch_hint)
+                    }
                 } else {
                     stringResource(R.string.detail_source_switch_hint)
                 },

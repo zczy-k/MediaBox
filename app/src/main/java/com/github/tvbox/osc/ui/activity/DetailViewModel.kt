@@ -1596,7 +1596,10 @@ class DetailViewModel : ViewModel() {
         searchJob?.cancel()
         sourcesSearching.value = sources.isNotEmpty()
         relatedVideos.value = emptyList()
-        searchProgress.value = if (sources.isEmpty()) null else SearchProgress(0, sources.size, 0)
+        // 进度分母用**全量源数**(orderedPool.size),不是首轮宽度 sources.size ——
+        // 用户要看到的是"共 322 个源、已搜 xx 个"的真实进度,而首轮只投 1/3(108)。
+        // 若分母写首轮宽度,进度条一到 108/108 就"满"了,后面扩池的 214 个源无从体现。
+        searchProgress.value = if (sources.isEmpty()) null else SearchProgress(0, orderedPool.size, 0)
         // 历史命中先灌一批候选(2026-10-13)。
         // ⚠️ 必须在调用方(startFallbackIfNeeded → loadNextFallbackCandidate)之前:
         //    它随后取候选时就能直接命中,不必等聚合搜索的首批收口(实测 9.8~10.8s)。
@@ -1682,11 +1685,17 @@ class DetailViewModel : ViewModel() {
                 if (!searchActive(tokenStr)) return@launch
                 // 扩池判定:本波收口且**本轮 0 命中**且还有更多源 ⇒ 加大宽度进下一波(**不重启、不重投**)。
                 // ⚠️ hitCount 必须传"本轮新增命中"(newHitsThisWave),不能传累计候选数 —— 见上注释。
-                // 用户主动换源(manualSwitchActive)时**强制扩池**:用户点「换源」的意图就是"还要继续找",
+                // 用户主动换源(manualSwitchActive)时**放宽命中判据**:用户点「换源」的意图就是"还要继续找",
                 // 此时即便本轮偶有命中也要把剩余源搜完(与"搜索跑全量直到用户退出"的定案一致)。
-                if (autoExpandPool &&
+                //
+                // ⚠️⚠️ 但"还有更多源可搜"(searchedSourceKeys.size < total)是**不可绕过的硬边界**:
+                //   若 manual 时连它一起短路 ⇒ 源搜尽后(searched==total)仍每轮 expand、wave=0 空转,
+                //   poolRound 无限自增、日志刷屏、CPU 空转(2026-10-14 v1.0.99 真机死循环现场:
+                //   round 566→576… 每轮 1ms)。故 manual 只放宽 hitCount,不放宽"还有源"这一条。
+                val hasMoreSources = searchedSourceKeys.size < total
+                val canExpand = hasMoreSources &&
                     (manualSwitchActive || ExpandPoolPolicy.shouldExpand(newHitsThisWave, true, searchedSourceKeys.size, total))
-                ) {
+                if (autoExpandPool && canExpand) {
                     poolRound += 1
                     waveSize = ExpandPoolPolicy.poolSizeForRound(total, poolRound)
                     LOG.i(
