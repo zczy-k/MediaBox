@@ -1625,6 +1625,8 @@ class DetailViewModel : ViewModel() {
             while (true) {
                 val wave = poolView.take(waveSize).filter { searchedSourceKeys.add(it.key) }
                 val waveSizeBefore = doneCount.get()
+                // 记录本波投出前的候选数 —— 波后与它对减得到"本轮新命中"(扩池判据只用增量,不用累计)。
+                val candidatesBeforeWave = synchronized(fallbackCandidates) { fallbackCandidates.size }
                 if (wave.isNotEmpty()) {
                     coroutineScope {
                         wave.mapIndexed { index, bean ->
@@ -1662,24 +1664,36 @@ class DetailViewModel : ViewModel() {
                     }
                 }
                 val hitCount = synchronized(fallbackCandidates) { fallbackCandidates.size }
+                // 本轮(本波)**新搜到**的候选数 —— 扩池判据只认它,不认累计候选:
+                // fallbackCandidates 是累计表(含 cache-seed 灌入的历史命中),若拿它的绝对数当"本轮命中",
+                // 则"有 1 个历史命中"就会把 shouldExpand 的 hitCount>0 短路掉 ⇒ 永不扩池。
+                // 2026-10-14 真机日志:click ... candidates=1 / wave-done ... hit=1 但 wave=0(本轮未投源),
+                // 扩池因 hit=1 被拦 → 换源点了等于没搜。故必须用"波前/波后增量"。
+                val newHitsThisWave = hitCount - candidatesBeforeWave
                 LOG.i(
                     "echo-source-search wave-done done=${doneCount.get()}" +
                         " wave=" + (doneCount.get() - waveSizeBefore) +
                         " searched=" + searchedSourceKeys.size + " round=" + poolRound +
                         " frozen=$searchFrozen token=$myToken" +
                         " waveSize=$waveSize autoExpand=$autoExpandPool" +
-                        " cap=$fallbackPoolCap hit=$hitCount"
+                        " cap=$fallbackPoolCap hit=$hitCount newHit=$newHitsThisWave"
                 )
                 // 让路:换片/冻结后立即停(别再投下一波、也别走收口)
                 if (!searchActive(tokenStr)) return@launch
-                // 扩池判定:本波收口且 0 命中且还有更多源 ⇒ 加大宽度进下一波(**不重启、不重投**)
-                if (autoExpandPool && ExpandPoolPolicy.shouldExpand(hitCount, true, searchedSourceKeys.size, total)) {
+                // 扩池判定:本波收口且**本轮 0 命中**且还有更多源 ⇒ 加大宽度进下一波(**不重启、不重投**)。
+                // ⚠️ hitCount 必须传"本轮新增命中"(newHitsThisWave),不能传累计候选数 —— 见上注释。
+                // 用户主动换源(manualSwitchActive)时**强制扩池**:用户点「换源」的意图就是"还要继续找",
+                // 此时即便本轮偶有命中也要把剩余源搜完(与"搜索跑全量直到用户退出"的定案一致)。
+                if (autoExpandPool &&
+                    (manualSwitchActive || ExpandPoolPolicy.shouldExpand(newHitsThisWave, true, searchedSourceKeys.size, total))
+                ) {
                     poolRound += 1
                     waveSize = ExpandPoolPolicy.poolSizeForRound(total, poolRound)
                     LOG.i(
                         "echo-source-search expand round=" + poolRound +
                             " nextSize=" + waveSize + " total=" + total +
-                            " searched=" + searchedSourceKeys.size + " token=$myToken"
+                            " searched=" + searchedSourceKeys.size + " token=$myToken" +
+                            " manual=$manualSwitchActive"
                     )
                     continue  // 继续下一波:只投"新增的"源(searchedSourceKeys 已滤掉已搜的)
                 }
