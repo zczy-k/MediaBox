@@ -415,6 +415,11 @@
     <string name="detail_switch_source">换源</string>
     <string name="detail_source_score">%1$d分</string>
     <string name="detail_source_no_score">暂无评分</string>
+    <string name="detail_source_switch_action">换源</string>
+    <string name="detail_source_switch_hint">点击搜索其他片源</string>
+    <string name="detail_source_switching">正在搜索其他片源…（已找到 %1$d 个）</string>
+    <string name="detail_source_prev_page">上一页</string>
+    <string name="detail_source_next_page">下一页</string>
     <string name="detail_finding_source">寻找片源中…</string>
     <string name="detail_cross_hint">%1$s 上次观看实测为 %2$s</string>
     <string name="detail_cross_hint_go">去看看</string>

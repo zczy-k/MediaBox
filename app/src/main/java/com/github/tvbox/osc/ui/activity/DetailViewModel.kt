@@ -137,6 +137,23 @@ class DetailViewModel : ViewModel() {
     val sourcesSearching = MutableStateFlow(false)
 
     /**
+     * 候选源列表的**当前页**(2026-10-14 详情页「换源」分页设计,0 起)。
+     *
+     * <p>每页 [CandidatePager.PAGE_SIZE] 个;`sourceChips` 里存的是**当前页的切片**
+     * (而非全量),由 [publishSourceChips] 按页切出。翻页走 [nextChipPage]/[prevChipPage]。
+     */
+    val chipPage = MutableStateFlow(0)
+
+    /**
+     * 用户是否**主动发起过换源**([onSwitchSourceClick])。
+     *
+     * <p>作用:换源是"用户明确要找别的源"⇒ 搜索跑全量,**不再因起播成功而冻结**
+     * (冻结会像现在这样,候选没积累完就停,用户看不到源列表)。
+     * 内容边界(换片/换源/退出)复位。
+     */
+    private var manualSwitchActive = false
+
+    /**
      * 聚合搜索进度(S6 分批递进,2026-10-09):详情页 Loading 态据实显示"正在搜索片源 N/M"。
      * 修复前无候选时用户对着转圈最长 ~59s 零反馈(120 源 × 单源 8s 超时 ÷ 并发 12),
      * 搜索本身不变,只是把"系统在动"这件事告诉用户;搜索结束/换代/链收口时置 null。
@@ -1821,6 +1838,12 @@ class DetailViewModel : ViewModel() {
      * 排队等额度的源在 [searchActive] 处直接退出,所以并发额度会立刻陆续释放。
      */
     private fun freezeFallbackSearch() {
+        // 2026-10-14:用户**主动换源**期间不冻结 —— 换源就是要搜全量找别的源,
+        // 一起播就冻结会让候选没积累完就停(用户"看不到源列表"的真机问题根因之一)。
+        if (manualSwitchActive) {
+            LOG.i("echo-source-switch skip-freeze (manual switch active)")
+            return
+        }
         // 判据抽成纯函数:它很容易被改成"无条件冻结",而那会伤到"起播失败要靠搜索救命"的场景
         if (!SearchBatchPolicy.shouldFreezeOnPlaybackStarted(true, sourcesSearching.value)) return
         if (searchFrozen) return
@@ -1953,19 +1976,24 @@ class DetailViewModel : ViewModel() {
         !fallbackLoadingCandidate && (fallbackAutoSwitch || currentSourceConfirmedEmpty)
 
     private fun publishSourceChips() {
-        val candidates = synchronized(fallbackCandidates) { fallbackCandidates.toList() }
-            .filter { !usedSourceKeys.contains(it.sourceKey) && it.sourceKey != sourceKey }
+        // 2026-10-14(详情页「换源」分页设计):候选池**不再永久排除"切过的源"**。
+        // 旧实现 `.filter { !usedSourceKeys.contains(...) }` 会让用户切过的源从列表消失 ⇒
+        // 切几轮之后列表越来越空、"想切回之前那个好源"都找不到(用户真机反馈)。
+        // 现在:只排除**当前源**(它没有"换到自己"的意义),切过的源**保留**(可切回),只是不特殊标注。
+        val all = synchronized(fallbackCandidates) { fallbackCandidates.toList() }
+            .filter { it.sourceKey != sourceKey }
             .distinctBy { it.sourceKey }
         // 源评分(2026-10-14 出路 A):有历史数据的源显示评分,无数据的显式标"暂无评分"。
         // ⚠️ score() 对无数据也返回中性 60,所以这里必须**另行判断"是否真无数据"**并置 null ——
         // 直接把 60 显示成"60分"是误导(用户会以为"这源就 60 分",实际是"没有证据")。
         val snap = CompletenessMemory.snapshot(completenessTitleKey)
         val confirmed = EpisodeSetMath.confirmed(snap.values)
-        val keys = candidates.mapNotNull { it.sourceKey?.takeIf { k -> k.isNotBlank() } }.toSet()
+        val keys = all.mapNotNull { it.sourceKey?.takeIf { k -> k.isNotBlank() } }.toSet()
         val weightScores = SourceWeightMemory.scoresOf(keys)
         val penalized = SourceHealthFilter.penalizedKeys()
         val blocked = SourceHealthFilter.blockedKeys()
-        sourceChips.value = candidates.map { video ->
+        // 全量算分 → 不排序(自然顺序,用户终稿) → 按当前页切片
+        val full = all.map { video ->
             val key = video.sourceKey.orEmpty()
             val weightScore = weightScores[key] ?: -1
             val set = snap[key]
@@ -1991,6 +2019,58 @@ class DetailViewModel : ViewModel() {
             }
             SourceChip(key, score)
         }
+        // 页号钳制:列表可能因换片/翻页后变短,越界会显示空白(用户以为"没有源")
+        chipPage.value = CandidatePager.clampPage(chipPage.value, full.size)
+        sourceChips.value = CandidatePager.pageSlice(full, chipPage.value)
+    }
+
+    /**
+     * 用户点击「换源」按钮(2026-10-14 详情页「换源」分页设计的入口)。
+     *
+     * <p>## 语义
+     * 用户对当前源不满意,主动要搜"其他源"。与"进详情页自动搜索"的区别是**用户明确意图**:
+     * 因此**解冻搜索**(起播成功后搜索会被冻结,若不解冻则搜索跑不动 → 用户看不到源列表),
+     * 并**标记 [manualSwitchActive]** 让后续"起播成功"**不再重新冻结**(否则一起播就停,又功亏一篑)。
+     *
+     * <p>复用现有搜索 job([startSourceSearch]):同片 ⇒ `searchTitle` 不变 ⇒
+     * [searchedSourceKeys] 不清空 ⇒ **天然增量续搜**(已搜过的源不重搜),无需新建搜索通道。
+     *
+     * <p>搜索**跑全量**(直到所有源搜完或用户退出),不因"够 5 个"或"切了某源"而停 ——
+     * 用户明确说过"用户切了源不代表找到满意的,应把剩下的搜完"。
+     */
+    fun onSwitchSourceClick() {
+        manualSwitchActive = true
+        chipPage.value = 0
+        // 解冻:否则 startSourceSearch 内 searchActive 恒 false,搜索跑不动
+        searchFrozen = false
+        // 先按当前已有候选刷一次(可能有 cache-seed 的历史命中),再启动/续搜
+        publishSourceChips()
+        startSourceSearch()
+        LOG.i("echo-source-switch click title=$searchTitle searching=${sourcesSearching.value}")
+    }
+
+    /** 下一页(仅在有下一页时生效;钳制由 [CandidatePager.hasNext] 保证)。 */
+    fun nextChipPage() {
+        val total = synchronized(fallbackCandidates) {
+            fallbackCandidates.count { it.sourceKey != sourceKey }
+        }
+        if (!CandidatePager.hasNext(total, chipPage.value)) return
+        chipPage.value += 1
+        publishSourceChips()
+        LOG.i("echo-source-switch next page=${chipPage.value}")
+    }
+
+    /** 上一页(仅在有上一页时生效)。 */
+    fun prevChipPage() {
+        if (!CandidatePager.hasPrev(chipPage.value)) return
+        chipPage.value -= 1
+        publishSourceChips()
+        LOG.i("echo-source-switch prev page=${chipPage.value}")
+    }
+
+    /** 候选源总数(全量,非当前页):供界面判断"是否有下一页"。 */
+    fun totalCandidateCount(): Int = synchronized(fallbackCandidates) {
+        fallbackCandidates.count { it.sourceKey != sourceKey }
     }
 
     /**
@@ -2762,6 +2842,12 @@ class DetailViewModel : ViewModel() {
         fallbackLoadingCandidate = false
         detailTimeoutScheduled = false
         searchProgress.value = null
+        // 2026-10-14(换源分页):换源(keepChips=true)时**保留** manualSwitchActive —— 用户还在
+        // "换源浏览"状态,搜索应继续跑全量;换片(keepChips=false)才复位(新片重新开始)。
+        if (!keepChips) {
+            manualSwitchActive = false
+            chipPage.value = 0
+        }
         // 换源/重扫:新源尚未有收敛结论,跨源提示也必须先撤下,否则会拿着上一个源的结论弹提示
         sourceConverged = false
         crossSourceHint.value = null

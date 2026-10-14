@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
+
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -76,11 +77,13 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int) {
     val sourceChips by vm.sourceChips.collectAsStateWithLifecycle()
     val sourcesSearching by vm.sourcesSearching.collectAsStateWithLifecycle()
     val crossHint by vm.crossSourceHint.collectAsStateWithLifecycle()
-    // 搜索中且还没有候选时,整行不渲染 —— 过去这里会先画出标题 + 空的换源行,
-    // 正是截图里"暂无片源下面挂着一个孤零零的换源"的成因。
-    if (sourceChips.isEmpty()) return
+    val chipPage by vm.chipPage.collectAsStateWithLifecycle()
+    // 2026-10-14(详情页「换源」分页设计):**不再"空列表就整块不渲染"** ——
+    // 那样用户在"没有候选/搜索没跑"时**没有任何入口发起换源**(真机反馈的核心问题)。
+    // 现在无条件渲染:「换源」按钮始终可见,候选列表有内容时才在下方展开。
+    val totalCandidates = vm.totalCandidateCount()
     val listState = rememberLazyListState()
-    LaunchedEffect(sourceChips.size) {
+    LaunchedEffect(chipPage, sourceChips.size) {
         if (sourceChips.isNotEmpty()) listState.scrollToItem(0)
     }
     Column(
@@ -89,6 +92,7 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int) {
             .background(MaterialTheme.colorScheme.surfaceBright, RoundedCornerShape(20.dp))
             .padding(vertical = 12.dp)
     ) {
+        // ① 「换源」按钮行(无条件可见,放最前面方便用户发起)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -96,21 +100,21 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SectionTitleIcon(painterResource(R.drawable.ic_detail_switch_source))
+            TextButton(onClick = { vm.onSwitchSourceClick() }) {
+                Text(stringResource(R.string.detail_source_switch_action))
+            }
             Text(
-                text = vm.sourceSectionTitle(),
-                style = MaterialTheme.typography.titleLarge,
-                color = MaterialTheme.colorScheme.onSurface,
+                text = if (sourcesSearching) {
+                    stringResource(R.string.detail_source_switching, totalCandidates)
+                } else {
+                    stringResource(R.string.detail_source_switch_hint)
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
                     .weight(1f)
-                    .padding(start = 8.dp),
+                    .padding(start = 4.dp),
             )
-            if (sourcesSearching) {
-                Text(
-                    text = stringResource(R.string.detail_finding_source),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
         }
         crossHint?.let { hint ->
             // 只说"对端实测画质"这一事实,不带站名;匿名序号由 sourceLabelFor 按 chip 下标给出
@@ -146,29 +150,48 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int) {
                 }
             }
         }
-        LazyRow(
-            state = listState,
-            contentPadding = PaddingValues(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            // 标签只由下标生成(源 1 / 源 2 …),**不含真实站名** —— 见本函数 KDoc。
-            // 2026-10-14(出路 A):追加源评分 —— 有数据显示"· 75分",无历史数据显示"· 暂无评分"。
-            // 让用户在候选源里"有依据地挑",而不是在匿名序号里盲选。
-            itemsIndexed(sourceChips, key = { _, c -> c.key }) { index, chip ->
-                val label = vm.sourceLabelFor(index)
-                if (label.isEmpty()) return@itemsIndexed
-                val scoreText = chip.score?.let {
-                    stringResource(R.string.detail_source_score, Math.round(it).toInt())
-                } ?: stringResource(R.string.detail_source_no_score)
-                FilterChip(
-                    selected = false,
-                    onClick = { vm.candidateForKey(chip.key)?.let { vm.switchSource(it) } },
-                    label = { Text("$label · $scoreText") },
-                    shape = RoundedCornerShape(20.dp),
-                    colors = MaterialTheme.colorScheme.filterChipColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                    ),
-                )
+        // ② 候选源分页(有候选才展开)。每页 5 个,双向翻页;评分随 chip 显示。
+        if (sourceChips.isNotEmpty()) {
+            LazyRow(
+                state = listState,
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                // 上一页(仅非首页显示)
+                if (CandidatePager.hasPrev(chipPage)) {
+                    item(key = "prev") {
+                        TextButton(onClick = { vm.prevChipPage() }) {
+                            Text(stringResource(R.string.detail_source_prev_page))
+                        }
+                    }
+                }
+                // 标签只由**全局下标**生成(源 1 / 源 2 …),跨页连续、**不含真实站名**。
+                // 全局下标 = 页号*每页数 + 页内下标,让用户翻页时序号连续(源6、源7…)。
+                itemsIndexed(sourceChips, key = { _, c -> c.key }) { index, chip ->
+                    val globalIndex = chipPage * CandidatePager.PAGE_SIZE + index
+                    val label = vm.sourceLabelFor(globalIndex)
+                    if (label.isEmpty()) return@itemsIndexed
+                    val scoreText = chip.score?.let {
+                        stringResource(R.string.detail_source_score, Math.round(it).toInt())
+                    } ?: stringResource(R.string.detail_source_no_score)
+                    FilterChip(
+                        selected = false,
+                        onClick = { vm.candidateForKey(chip.key)?.let { vm.switchSource(it) } },
+                        label = { Text("$label · $scoreText") },
+                        shape = RoundedCornerShape(20.dp),
+                        colors = MaterialTheme.colorScheme.filterChipColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        ),
+                    )
+                }
+                // 下一页(仅在还有下一页时显示)
+                if (CandidatePager.hasNext(totalCandidates, chipPage)) {
+                    item(key = "next") {
+                        TextButton(onClick = { vm.nextChipPage() }) {
+                            Text(stringResource(R.string.detail_source_next_page))
+                        }
+                    }
+                }
             }
         }
     }
