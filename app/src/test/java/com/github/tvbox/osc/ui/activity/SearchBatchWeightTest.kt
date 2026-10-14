@@ -36,6 +36,46 @@ class SearchBatchWeightTest {
     )
 
     /**
+     * 换源池纳入慢源后的**分层**(2026-10-14):慢搜源整层排后,首轮宽度内仍然全是快搜源 ⇒
+     * "找得全"不以牺牲第一次出候选的速度为代价。
+     */
+    @Test
+    fun `orderByWeight 把非快搜源整层排到后面`() {
+        val sources = listOf(
+            source("home", quick = true),
+            source("slowHigh", quick = false),   // 权重很高但是慢源
+            source("fastLow", quick = true),     // 权重很低的快源
+        )
+        val weights = mapOf("slowHigh" to 95, "fastLow" to 20)
+        val ordered = SearchBatchPolicy.orderByWeight(
+            sources,
+            homeKey = "home",
+            weightOf = { weights[it] ?: SourceWeightPolicy.NEUTRAL },
+            hasWeightOf = { weights.containsKey(it) },
+            quickSearchOf = { it.key == "fastLow" || it.key == "home" },
+        )
+        // 首页源仍最前;其后快源先于慢源,**与权重无关**
+        assertEquals(listOf("home", "fastLow", "slowHigh"), ordered.map { it.key })
+    }
+
+    @Test
+    fun `不分层时排序行为与旧版一致`() {
+        val sources = listOf(
+            source("slowHigh", quick = false),
+            source("fastLow", quick = true),
+        )
+        val weights = mapOf("slowHigh" to 95, "fastLow" to 20)
+        val ordered = SearchBatchPolicy.orderByWeight(
+            sources,
+            homeKey = "none",
+            weightOf = { weights[it] ?: SourceWeightPolicy.NEUTRAL },
+            hasWeightOf = { weights.containsKey(it) },
+        )
+        // 默认参数 = 不分层 ⇒ 仍按权重降序(搜索页一字不变)
+        assertEquals(listOf("slowHigh", "fastLow"), ordered.map { it.key })
+    }
+
+    /**
      * 保底配额把权重最低的源**捞进首轮** —— 否则它排到 300 源队尾永不被搜,
      * 就是"没有安全网的事实封禁"。
      */

@@ -277,6 +277,9 @@ final class SourceResultParser {
         AbsXml data = new AbsXml();
         data.sourceKey = sourceKey;
         data.searchToken = searchToken;
+        // 走到这里的只有两种情况:xstream/json 解析抛异常、或响应体为空 —— 都不是"源答话说没有这部剧"。
+        // 打上 parseFailed,让搜索页按 Failed 结算而不是 Empty(否则会给坏源记一次"有效应答"+20 权重)。
+        data.parseFailed = true;
         if (searchResult == result) {
             EventBus.getDefault().post(new RefreshEvent(RefreshEvent.TYPE_SEARCH_RESULT, data));
         } else if (result != null) {

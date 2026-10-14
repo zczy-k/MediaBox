@@ -1051,6 +1051,15 @@ class SearchViewModel : ViewModel() {
         val mode = matchMode.value
         val keyword = searchedTitle.value
         val raw = data.movie?.videoList.orEmpty()
+        // **解析失败/空响应不是"这个源没有这部剧"**(2026-10-14 审查修正):
+        // 旧路径两者都投空 AbsXml → 这里判 Empty → recordAnswered(权重 +20、连续超时清零),
+        // 于是"每次都崩"的源被系统性奖励成高分源,而按权重排序与自适应并发吃的正是这份数据。
+        // 现在按 Failed 结算:记 SEARCH_FAILED(-25),不答话就不算答过。
+        if (data.parseFailed && raw.isEmpty()) {
+            pendingSources.remove(sourceKey)?.complete(Unit)
+            pendingOutcomes.remove(sourceKey)?.complete(ResultState.Failed)
+            return
+        }
         val videos = raw
             // 2026-10-08:别名一起参与匹配 —— 只看 name 会把"源站按别名/英文名搜到"的条目整批丢掉
             .filter { SearchSettings.matches(it.name, it.alias, keyword, mode) }

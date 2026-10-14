@@ -226,11 +226,20 @@ internal object SearchBatchPolicy {
         homeKey: String,
         weightOf: (String) -> Int,
         hasWeightOf: (String) -> Boolean = { true },
+        /**
+         * 快搜源分层(2026-10-14,详情页换源用):true = 快搜源、false = 需现算地址的慢源。
+         *
+         * <p>换源池此前**硬性排除**慢源 ⇒ 那些源永远不参与换源(用户"找得全"的诉求落空)。
+         * 改为纳入但整层排后:首轮 1/3 仍然全是快源(换源首轮速度不受影响),慢源由后续轮次补齐。
+         * 默认 `{ true }` = 不分层,搜索页行为一字不变。
+         */
+        quickSearchOf: (SourceBean) -> Boolean = { true },
     ): List<SourceBean> {
         if (sources.size < 2) return sources
         // 稳定排序:同层内保留原到达序(无权重源据此保持自然序)。
         return sources.sortedWith(
             compareByDescending<SourceBean> { it.key == homeKey }
+                .thenByDescending { quickSearchOf(it) }
                 .thenByDescending { hasWeightOf(it.key) }
                 .thenByDescending { if (hasWeightOf(it.key)) weightOf(it.key) else 0 },
         )

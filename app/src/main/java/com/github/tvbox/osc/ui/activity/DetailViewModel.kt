@@ -1599,7 +1599,12 @@ class DetailViewModel : ViewModel() {
         val effectiveChecked = if (checked == null || SearchHelper.isSelectionStale(checked)) null else checked
         val home = ApiConfig.get().getHomeSourceBean()
         val candidatePool = ApiConfig.get().getSourceBeanList()
-            .filter { it.isSearchable() && it.isQuickSearch() && (effectiveChecked == null || effectiveChecked.containsKey(it.key)) }
+            // 2026-10-14 用户定案"在意找得全":不再硬性排除**非快搜源**。
+            // 旧口径 `&& it.isQuickSearch()` 让那类源(要现算播放地址的 spider/慢源)**永远不参与换源**,
+            // 用户表现为"这部片明明有源,换源列表里就是没有"。
+            // 排除它们当初只为保换源首轮速度 —— 这件事改由排序分层解决(见下面 quickSearchOf:
+            // 首轮 1/3 仍然全是快搜源,慢源从第二轮起补齐),既找得全也不牺牲首轮。
+            .filter { it.isSearchable() && (effectiveChecked == null || effectiveChecked.containsKey(it.key)) }
         // 被屏蔽的源不进自动换源候选池(防滥用封禁机制,P2)。
         //
         // 降权(2026-10-13):口径为**连续权重**(SourceWeightMemory,与搜索页同一台账)。
@@ -1617,6 +1622,8 @@ class DetailViewModel : ViewModel() {
             homeKey = home.key,
             weightOf = { weightScores[it] ?: SourceWeightPolicy.NEUTRAL },
             hasWeightOf = { weightScores.containsKey(it) },
+            // 快搜源整层排在前:首轮 1/3 与慢源无关 ⇒ 纳入慢源不拖慢第一次出候选
+            quickSearchOf = { it.isQuickSearch() },
         )
         // 2026-10-14 用户定案:**「换源」点击后就要并行找到所有符合本片名的源**。
         // 旧口径下手动换源仍走 1/3→1/2→2/3 三道**波间屏障**(每波要 awaitAll 全部收口才投下一波),
@@ -1962,14 +1969,21 @@ class DetailViewModel : ViewModel() {
             val data = event.obj as? AbsXml ?: return
             if (data.searchToken != currentTokenStr()) return
             pendingSearchDone.remove(data.sourceKey)?.complete(Unit)
-            recordFallbackSourceAnswered(data)
+            // **解析失败/空响应不算"源答过话"**(2026-10-14 审查修正,与搜索页同一处修复):
+            // 旧路径给它也走 recordFallbackSourceAnswered → recordAnswered → 权重 +20 且清零连续超时,
+            // 于是每次崩的源被越奖励越靠前。这里改记 SEARCH_FAILED(只写权重,仍不写封禁证据)。
             val videos = data.movie?.videoList.orEmpty()
+            if (data.parseFailed && videos.isEmpty()) {
+                recordDetailSearchTimeout(data.sourceKey, SourceWeightPolicy.EvidenceKind.SEARCH_FAILED)
+                return
+            }
+            recordFallbackSourceAnswered(data)
             // 命中回存(2026-10-13):只收**同名**条目,供"同一部片再次进入"秒出候选。
             // 按源覆盖:同一源后到的结果更全(查询变体可能回包多次)。
             val hitSourceKey = data.sourceKey
             if (!hitSourceKey.isNullOrEmpty() && videos.isNotEmpty()) {
                 val sameTitle = videos.filter {
-                    !it.id.isNullOrEmpty() && TitleMatcher.isSameTitle(it.name, searchTitle)
+                    !it.id.isNullOrEmpty() && CandidateMatchPolicy.isSameTitleScore(candidateRelevance(it))
                 }
                 if (sameTitle.isNotEmpty()) {
                     fallbackSearchHits[hitSourceKey] = sameTitle
@@ -1979,13 +1993,20 @@ class DetailViewModel : ViewModel() {
                     scheduleFallbackHitsSave()
                 }
             }
-            val fresh = videos.filter {
-                !it.id.isNullOrEmpty() && TitleMatcher.isSameTitle(it.name, searchTitle)
-                        && !usedSourceKeys.contains(it.sourceKey)
-                        && it.sourceKey != sourceKey
+            // 分级(2026-10-14,与搜索页统一相关度判定):
+            //   ≥3 分 = 认定同一部片 → 换源候选(可被自动换源链接管起播);
+            //   1~2 分 = 只是名字像/仅别名相等/每个词都出现 → 进**相关推荐**,看得见但不自动起播;
+            //   0/负分 = 丢弃。
+            // 旧实现是二值 isSameTitle,且归一化比搜索页弱(不删括注、无 NFKC/假名折叠)
+            // ⇒ "搜索页能找到、点换源却找不到"的漏搜就从这里产生。
+            val candidates = videos.filter {
+                !it.id.isNullOrEmpty()
+                    && CandidateMatchPolicy.verdictOf(candidateRelevance(it)) == CandidateMatchPolicy.Verdict.CANDIDATE
+                    && !usedSourceKeys.contains(it.sourceKey)
+                    && it.sourceKey != sourceKey
             }.filter { candidateKeys.add(candidateKey(it)) }
-            if (fresh.isNotEmpty()) {
-                synchronized(fallbackCandidates) { fallbackCandidates.addAll(fresh) }
+            if (candidates.isNotEmpty()) {
+                synchronized(fallbackCandidates) { fallbackCandidates.addAll(candidates) }
                 sortFallbackCandidatesByCompleteness()
                 maybeCorrectCompleteness()
                 publishSourceChips()
@@ -1993,8 +2014,9 @@ class DetailViewModel : ViewModel() {
                 if (shouldAutoTakeOver()) loadNextFallbackCandidate()
             }
             val related = videos.filter {
-                !it.id.isNullOrEmpty() && !TitleMatcher.isSameTitle(it.name, searchTitle)
-                        && !(it.sourceKey == sourceKey && it.id == vodId)
+                !it.id.isNullOrEmpty()
+                    && CandidateMatchPolicy.verdictOf(candidateRelevance(it)) != CandidateMatchPolicy.Verdict.CANDIDATE
+                    && !(it.sourceKey == sourceKey && it.id == vodId)
             }
             if (related.isNotEmpty()) {
                 val seen = relatedVideos.value.mapTo(HashSet()) { candidateKey(it) }
@@ -2151,6 +2173,20 @@ class DetailViewModel : ViewModel() {
      * <p>过滤口径与 [onSearchResultEvent] 完全一致(同名 / 未用过 / 非当前源 / 未登记过),
      * 否则会灌进重复候选、或把已经试过的源又排在前面。
      */
+    /**
+     * 候选与本片名的**相关度**(与搜索页同一份分档 + 查询意图修正)。
+     *
+     * <p>2026-10-14:此前换源链自己用 [TitleMatcher.isSameTitle] 二值判同名,而搜索页早就有
+     * [SearchSettings.relevanceScore](5 全等 / 4 前缀 / 3 包含 / 2 每词都现或剥长音符 / 1 仅别名 / 0 不匹配)
+     * 加上别名、年份/季数意图修正。两套并存的直接后果就是**换源比搜索页漏得多**
+     * (那份归一化不删括注、无 NFKC/假名折叠,标题写成"XX(2024)""《XX》第2季"就不认)。
+     */
+    private fun candidateRelevance(video: Movie.Video, title: String = searchTitle): Int {
+        val intent = SearchSettings.parseIntent(title)
+        return SearchSettings.relevanceScore(video.name, video.alias, title, video.note) +
+            SearchSettings.intentModifier(intent, video.name, video.year)
+    }
+
     private fun seedCandidatesFromCache(title: String) {
         val normalized = SearchSettings.normalizedTitle(title)
         if (normalized.isEmpty()) return
@@ -2160,7 +2196,7 @@ class DetailViewModel : ViewModel() {
         for ((_, videos) in cached) {
             for (v in videos) {
                 if (v.id.isNullOrEmpty()) continue
-                if (!TitleMatcher.isSameTitle(v.name, title)) continue
+                if (!CandidateMatchPolicy.isSameTitleScore(candidateRelevance(v, title))) continue
                 if (usedSourceKeys.contains(v.sourceKey)) continue
                 if (v.sourceKey == sourceKey) continue
                 if (!candidateKeys.add(candidateKey(v))) continue
@@ -2852,6 +2888,10 @@ class DetailViewModel : ViewModel() {
         }
         fallbackCandidates.sortWith(
             compareByDescending<Movie.Video> { watchabilityOf(it) }
+                // 第二键(2026-10-14):**相关度**。用户定案"相关度越高的越排在前面"。
+                // 放在可看性之后、权重之前 —— 名字更像的那条先赢:权重再高,标题差得远就不该抢位置;
+                // 而"能不能连着看"仍是第一优先(残源排再前也没意义,这是上一轮定的口径)。
+                .thenByDescending { candidateRelevance(it) }
                 .thenByDescending { hasWeight(it) }
                 .thenByDescending { weightOf(it) },
         )
