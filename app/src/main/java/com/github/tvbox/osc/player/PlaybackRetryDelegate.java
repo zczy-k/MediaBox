@@ -829,7 +829,34 @@ final class PlaybackRetryDelegate {
             if (!tryNextLineIfEnabled()) reportExhausted();
             return;
         }
+        // ⚠️ 2026-10-14 真机修复(线路切换缺陷,第二次):
+        // 本函数的语义是"**换线后起播超时**" —— 刚切过去的那条线已经明确起不出来了。
+        // 原实现直接进 [autoRetry] 的全套阶梯(重解析→**同址重播**→软解→换内核→才换线),
+        // 于是表现为"反复重播刚超时的那条线"(真机日志:switchLinePlay timeout → autoRetry
+        // replay same url,循环数次),用户看到的是"**没换线就直接换源**"。
+        //
+        // 修法:换线后超时 ⇒ **优先换下一条线**(本源内,代价最小且最对症),
+        // 而不是先对该线做无意义的重播。仅当 [tryNextLineIfEnabled] 判定换线被禁用
+        // 且已无路可走时,才回落 [autoRetry] 赌一次"软解/换内核能救" —— 保留这条兜底,
+        // 因为换线后超时**也可能是**内核/解码问题而非线路问题。
+        if (st.allowAutoSwitchLine && KV.get(HawkConfig.AUTO_SWITCH_LINE, true)) {
+            if (tryNextLine()) return;   // 已换到下一线;本源轮完则内部已 handOverToSourceFallback
+            if (reportExhaustedIfNoFallback()) return;
+        }
         if (!autoRetry()) reportExhausted();
+    }
+
+    /**
+     * 换线已无候选、且换源也接管不了时,报"全部失效"并返回 true;否则返回 false(交上层继续)。
+     *
+     * <p>抽出来只是为了让 [handleSwitchLinePlayTimeout] 的"换线→换源→报错"三级收口可读;
+     * 复用 [handOverToSourceFallback] 的既有语义(它内部会判定是否还有候选源)。
+     */
+    private boolean reportExhaustedIfNoFallback() {
+        if (handOverToSourceFallback()) return false;   // 换源已接管
+        LOG.i("echo-quality: all sources and lines exhausted");
+        reportExhausted();
+        return true;
     }
 
     private void showErrorTip(String err) {
