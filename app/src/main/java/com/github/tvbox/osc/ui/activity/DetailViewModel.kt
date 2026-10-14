@@ -1605,7 +1605,7 @@ class DetailViewModel : ViewModel() {
         searchProgress.value = if (sources.isEmpty()) null else SearchProgress(0, orderedPool.size, 0)
         // [临时诊断 2026-10-14 #1] 搜索启动时刻的 UI 状态快照(searchProgress 分母应为全量源数)。
         LOG.i(
-            "echo-search-ui-diag on-start searching=${sourcesSearching.value}" +
+            "echo-source-diag on-start searching=${sourcesSearching.value}" +
                 " progressTotal=${searchProgress.value?.total} sources=${sources.size}" +
                 " title=$searchTitle token=$searchToken"
         )
@@ -1778,7 +1778,7 @@ class DetailViewModel : ViewModel() {
         // [临时诊断 2026-10-14 #1] 节流:每 25 个源打一次 + 首尾必打,避免刷屏又能看到进度在走。
         if (searched == 1 || searched == total || searched % 25 == 0) {
             LOG.i(
-                "echo-searchprogress-diag searched=$searched total=$total" +
+                "echo-source-diag progress searched=$searched total=$total" +
                     " searching=${sourcesSearching.value} frozen=$searchFrozen" +
                     " title=$searchTitle token=$searchToken"
             )

@@ -84,7 +84,7 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int) {
     // 用来判定"搜索在途时 UI 到底拿到的是 true 还是 false"。定位后移除。
     LaunchedEffect(sourcesSearching, searchProgress) {
         com.github.tvbox.osc.util.LOG.i(
-            "echo-ui-diag SourceSection searching=$sourcesSearching" +
+            "echo-source-diag ui searching=$sourcesSearching" +
                 " progress=${searchProgress?.done}/${searchProgress?.total}" +
                 " chips=${sourceChips.size}"
         )
