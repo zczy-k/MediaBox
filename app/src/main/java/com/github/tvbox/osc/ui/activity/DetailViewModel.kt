@@ -1577,6 +1577,7 @@ class DetailViewModel : ViewModel() {
             SourceHealthFilter.filter(candidatePool).sortedBy { it.key != home.key },
             homeKey = home.key,
             weightOf = { weightScores[it] ?: SourceWeightPolicy.NEUTRAL },
+            hasWeightOf = { weightScores.containsKey(it) },
         )
         val roundSize = roundPoolSize(orderedPool.size)
         val sources = orderedPool.take(roundSize)
@@ -1626,13 +1627,18 @@ class DetailViewModel : ViewModel() {
             var waveSize = roundSize    // 当前波宽度(首轮 = 外层算好的 roundSize)
             val total = poolView.size
             while (true) {
-                val wave = poolView.take(waveSize).filter { searchedSourceKeys.add(it.key) }
+                // ⚠️ 2026-10-14 进度口径修正(用户定稿:"逐条真实 + 走满 322"):
+                // 旧实现用 `filter { searchedSourceKeys.add(it.key) }` **在波投前一次性把整波
+                // (首轮 108 个)全标记为已投** ⇒ 波前那一次 publishSearchProgress 让分子瞬间 0→108,
+                // 用户看到"一进来就 108/322、前面根本没搜"。
+                // 现改为:**波前只做去重选取**(用局部判定,不写全局表),对
+                // [searchedSourceKeys] 的 add 移到每个源**真正投出**(进入 withPermit)时逐条执行,
+                // 并逐条 publishSearchProgress ⇒ 分子一条一条 +1(受信号量 12 限流分批),
+                // 且分母仍是全量 total,最终**走满 322**。这同时满足"逐条真实"与"走满"。
+                val wave = poolView.take(waveSize).filter { it.key !in searchedSourceKeys }
                 val waveSizeBefore = doneCount.get()
                 // 记录本波投出前的候选数 —— 波后与它对减得到"本轮新命中"(扩池判据只用增量,不用累计)。
                 val candidatesBeforeWave = synchronized(fallbackCandidates) { fallbackCandidates.size }
-                // 波一投出就立即上报进度:分子(searchedSourceKeys.size)已增长,用户能马上看到"已搜 xx/共 N"。
-                // 不能只在源收口时上报 —— 慢源/超时源一直不返回,进度就会长时间不动(用户反馈"卡住没反应")。
-                if (searchActive(tokenStr)) publishSearchProgress()
                 if (wave.isNotEmpty()) {
                     coroutineScope {
                         wave.mapIndexed { index, bean ->
@@ -1640,6 +1646,10 @@ class DetailViewModel : ViewModel() {
                                 if (!searchActive(tokenStr)) return@async
                                 semaphore.withPermit {
                                     if (!searchActive(tokenStr)) return@withPermit
+                                    // 逐条入账 + 逐条上报:这是"已投源数"分子增长的真实时点。
+                                    // 放在 withPermit 内(真正获得并发额度、即将发请求)而非波投前,
+                                    // 使进度从 0 逐条爬升,不再"波投即满"。
+                                    if (searchedSourceKeys.add(bean.key)) publishSearchProgress()
                                     // 优先级最高的前 N 个源用快探超时:它们是为"首屏候选"下注的那批,
                                     // 让额度更快回收 ⇒ 后续源更早被投出去。结果晚到仍会经事件通道计入(不丢证据)。
                                     val sourceTimeoutMs = SearchBatchPolicy.detailSourceTimeoutMs(
@@ -1659,11 +1669,10 @@ class DetailViewModel : ViewModel() {
                                         }
                                     } finally {
                                         pendingSearchDone.remove(bean.key)
-                                        // 取消/换代/冻结后的旧 job 不回写进度:免得旧计数覆盖新搜索的 N/M 显示
-                                        if (searchActive(tokenStr)) {
-                                            doneCount.incrementAndGet()
-                                            publishSearchProgress()
-                                        }
+                                        // 收口只记 doneCount(诊断用),**不再改进度分子** ——
+                                        // 分子已在投出时逐条入账;若这里再上报会掩盖"逐条"语义,
+                                        // 且旧口径下正是靠它在慢源收口时补报,现由投出点上报告承担。
+                                        if (searchActive(tokenStr)) doneCount.incrementAndGet()
                                     }
                                 }
                             }
@@ -1743,7 +1752,12 @@ class DetailViewModel : ViewModel() {
      * 分子 = searchedSourceKeys.size = 已投出去的源数(用户要的"已搜 xx / 共 N 个"),
      * 分母 = 全量源数 total。
      *
-     * 刻意不用"收口数"(doneCount):有些源会超时不出结果,收口数永远达不到 total,
+     * <p>2026-10-14 用户定稿:**"逐条真实 + 走满 322"**。分子口径仍是"已投源数",
+     * 但入账时点从**波投前批量**改到**每个源真正投出时**(见波次循环内的 `searchedSourceKeys.add`),
+     * 从而使进度从 0 逐条爬升(信号量 12 限流,分批 +1),既不"波投即满"、也不会像
+     * "收口数 doneCount"那样停在 214(超时源永不收口)。
+     *
+     * <p>刻意不用"收口数"(doneCount):有些源会超时不出结果,收口数永远达不到 total,
      * 进度条会卡在"214/322"这种数字上不动(2026-10-14 真机现场:searched 已到 322、
      * 进度却停在 214 附近就 all-done)。用户口径明确是"已搜源数 / 总源数",故以投出去为准。
      */

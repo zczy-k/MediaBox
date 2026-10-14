@@ -206,16 +206,33 @@ internal object SearchBatchPolicy {
      *       这里再按权重排会削弱"首页优先";故**首页源固定在最前**,其余按权重。</li>
      * </ul>
      *
+     * <p><b>2026-10-14 用户定稿 —— "有权重按权重降序 + 无权重按自然序"</b>:
+     * 旧实现只按 `weightOf` 降序,对**无记录源**返回 [SourceWeightPolicy.NEUTRAL](60),
+     * 于是"从没搜过的新源"会和"历史衰减到 60 的源"混排、被虚假插入到中间,
+     * 破坏了"无数据就按源列表自然序排在后面"的语义。现改为**三层**:
+     * <ol>
+     *   <li>首页源固定置顶;</li>
+     *   <li>其余:**有权重记录的源整体在前**,其内按权重降序;</li>
+     *   <li>**无权重记录的源**统一排在最后,且**保持自然序**(稳定排序,不写 tie-break)。</li>
+     * </ol>
+     *
      * @param sources       已过滤的候选池
      * @param homeKey       首页源 key(固定置顶)
-     * @param weightOf      取某源有效权重;缺失按 [SourceWeightPolicy.NEUTRAL]
+     * @param weightOf      取某源有效权重;仅对**有权重记录**的源调用
+     * @param hasWeightOf   该源**是否有权重记录**(决定进"按权重降序"层还是"自然序"层)
      */
-    fun orderByWeight(sources: List<SourceBean>, homeKey: String, weightOf: (String) -> Int): List<SourceBean> {
+    fun orderByWeight(
+        sources: List<SourceBean>,
+        homeKey: String,
+        weightOf: (String) -> Int,
+        hasWeightOf: (String) -> Boolean = { true },
+    ): List<SourceBean> {
         if (sources.size < 2) return sources
-        // 稳定排序:sortedByDescending 在 Kotlin 中是稳定排序,同权重保留原到达序
+        // 稳定排序:同层内保留原到达序(无权重源据此保持自然序)。
         return sources.sortedWith(
             compareByDescending<SourceBean> { it.key == homeKey }
-                .thenByDescending { weightOf(it.key) },
+                .thenByDescending { hasWeightOf(it.key) }
+                .thenByDescending { if (hasWeightOf(it.key)) weightOf(it.key) else 0 },
         )
     }
 
