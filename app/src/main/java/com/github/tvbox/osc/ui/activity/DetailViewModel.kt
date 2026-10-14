@@ -56,6 +56,7 @@ import com.github.tvbox.osc.sourcedata.SourceRuntimeState
 import com.github.tvbox.osc.sourcedata.MiniProbeReader
 import com.github.tvbox.osc.sourcedata.observeAsFlow
 import com.lzy.okgo.OkGo
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -1756,18 +1757,27 @@ class DetailViewModel : ViewModel() {
                                             }
                                             done.await()
                                         } != null
+                                    } catch (ce: CancellationException) {
+                                        // **协程取消不是"源没答话"**(2026-10-14 真机日志抓到误判):
+                                        // 换片/换源/新一轮都会 cancel 上一轮 job,在途的 async 抛
+                                        // JobCancellationException —— 那是**我方**主动撤请求,与源的质量无关。
+                                        // v1.1.5-diag 一轮就误罚了 60 次(-25/次),把无辜的慢网络源往下压。
+                                        // 必须原样抛回:吞掉它会破坏结构化并发(job 撤不下来、额度不回收)。
+                                        throw ce
                                     } catch (th: Throwable) {
-                                        // 单源抛异常绝不能掀掉整波:async 里未捕获的异常会取消整个
-                                        // coroutineScope,一个坏 Spider 就能让剩下的几百个源一起收摊
-                                        // (2026-10-14 审查发现)。这里就地吞掉并记一次"源侧失败"。
+                                        // 到这里才是"源自己出错"(Spider 抛异常 / HTTP 异常 / 解析崩)。
+                                        // 单源异常绝不能掀掉整波:async 里未捕获的异常会取消整个
+                                        // coroutineScope,一个坏 Spider 就能让剩下的几百个源一起收摊。
                                         LOG.i(
                                             "echo-source-search threw key-len=" + bean.key.length +
                                                 " err=" + th.javaClass.simpleName
                                         )
-                                        recordDetailSearchTimeout(
-                                            bean.key,
-                                            SourceWeightPolicy.EvidenceKind.SEARCH_FAILED,
-                                        )
+                                        if (searchActive(tokenStr)) {
+                                            recordDetailSearchTimeout(
+                                                bean.key,
+                                                SourceWeightPolicy.EvidenceKind.SEARCH_FAILED,
+                                            )
+                                        }
                                         false
                                     } finally {
                                         pendingSearchDone.remove(bean.key)
@@ -1787,8 +1797,13 @@ class DetailViewModel : ViewModel() {
                                     // 同一个源在几部片之间会迅速凑满规则 1(≥3 次且≥2 部影片)被判 6 小时封禁,
                                     // 而雪崩保险丝只回滚规则 2、管不到规则 1。降权只影响"多容易被选中",
                                     // 且 30 分钟半衰期会自己涨回中性(见 SourceWeightPolicy),不存在误封死锁。
-                                    if (!answered) {
-                                        recordDetailSearchTimeout(bean.key, SourceWeightPolicy.EvidenceKind.SEARCH_TIMEOUT)
+                                    //
+                                    // ⚠️ 判据同样要过 [searchActive]:本轮已被冻结/作废时的超时不算源的错。
+                                    if (!answered && searchActive(tokenStr)) {
+                                        recordDetailSearchTimeout(
+                                            bean.key,
+                                            SourceWeightPolicy.EvidenceKind.SEARCH_TIMEOUT,
+                                        )
                                     }
                                 }
                             }
