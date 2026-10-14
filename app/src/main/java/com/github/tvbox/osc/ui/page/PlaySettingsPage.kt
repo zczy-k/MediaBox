@@ -177,20 +177,13 @@ fun PlaySettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewM
                     // `Column(weight(1f)) + RowValue`,无行数限制的长 valueText 会吃满宽度,
                     // 把标题列挤成每字一行的竖排(真机 v1.0.43 回归,已修)。
                     val mode = qualityMode
-                    // ⚠️ 显示顺序与枚举 ordinal **不同**:ordinal 是 KV 里的历史值(0=画质优先 1=自动
-                    // 2=速度优先 3=省流),重排会让存量用户的设置错位。这里按"为画质付的代价从高到低"排。
-                    val ladder = listOf(
-                        DeviceCapability.QualityMode.QUALITY_FIRST,
-                        DeviceCapability.QualityMode.AUTO,
-                        DeviceCapability.QualityMode.DATA_SAVER,
-                        DeviceCapability.QualityMode.SPEED_FIRST,
-                    )
+                    // 三档就是枚举本身,顺序即"为画质付的代价从高到低",不需要额外的显示表。
                     SettingsOptionMenuRow(
                         title = stringResource(R.string.settings_video_quality_mode),
                         subtitle = stringResource(R.string.settings_video_quality_mode_subtitle),
                         valueText = stringResource(qualityModeLabel(mode)),
-                        options = ladder.map { stringResource(qualityModeLabel(it)) },
-                        selectedIndex = ladder.indexOf(mode).coerceAtLeast(0),
+                        options = DeviceCapability.QualityMode.entries.map { stringResource(qualityModeLabel(it)) },
+                        selectedIndex = mode.ordinal,
                         onSelect = { idx ->
                             val picked = DeviceCapability.QualityMode.values()[idx]
                             qualityMode = picked
@@ -477,13 +470,12 @@ fun PlaySettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewM
 }
 
 /**
- * 画质策略四档的档名。四档是一条单调的"为画质付多少代价"阶梯:
- * 画质优先(等首帧)→ 自动(不等,后台补救升档)→ 省流(照扫但不升档)→ 速度优先(什么都不做)。
+ * 画质策略三档的档名,代价从高到低:
+ * 画质优先(等首帧、一次到位)→ 自动(不等、后台扫完自动升档)→ 省流(不等、只填记忆、绝不换线)。
  */
 private fun qualityModeLabel(mode: DeviceCapability.QualityMode): Int = when (mode) {
     DeviceCapability.QualityMode.QUALITY_FIRST -> R.string.video_quality_quality_first
     DeviceCapability.QualityMode.AUTO -> R.string.video_quality_auto
-    DeviceCapability.QualityMode.DATA_SAVER -> R.string.video_quality_data_saver
     DeviceCapability.QualityMode.SPEED_FIRST -> R.string.video_quality_speed_first
 }
 

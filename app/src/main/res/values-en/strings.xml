@@ -444,8 +444,7 @@
     <string name="settings_video_quality_mode_subtitle">How much you are willing to pay for quality: waiting before start, and whether to upgrade automatically after playback begins</string>
     <string name="video_quality_quality_first">Quality First</string>
     <string name="video_quality_auto">Auto</string>
-    <string name="video_quality_data_saver">Data Saver</string>
-    <string name="video_quality_speed_first">Speed First</string>
+    <string name="video_quality_speed_first">Data Saver</string>
     <string name="settings_video_quality_ceiling">Quality Ceiling</string>
     <string name="settings_video_quality_ceiling_subtitle">Lines above this resolution are never selected or upgraded to. Default 4K on TV, 1080P on phone; raise it here to allow 4K when the phone drives a TV</string>
     <string name="video_quality_ceiling_device">Follow device</string>

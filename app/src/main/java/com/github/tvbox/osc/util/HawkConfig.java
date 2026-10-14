@@ -53,7 +53,8 @@ public class HawkConfig {
     public static final String VIDEO_QUALITY_MEMORY = "video_quality_memory";
     /** 设备最高可播高度(像素,0=不限制;由降档实测学习,见 player/DeviceCapability) */
     public static final String VIDEO_QUALITY_CAP = "video_quality_cap";
-    /** 「画质选项」四档(int:0=画质优先 1=自动画质 2=速度优先 3=省流画质;取值口径见 DeviceCapability.QualityMode) */
+    /** 「画质策略」三档(int:0=画质优先 1=自动画质 2=省流画质;取值口径见 DeviceCapability.QualityMode)。
+     *  v1.1.7 曾短暂存在 ordinal=3 的第四档,三档定案后读到时归一到 2。 */
     public static final String VIDEO_QUALITY_MODE = "video_quality_mode";
     /**
      * 「画质上限」(int,像素高度;0=跟随设备默认)。

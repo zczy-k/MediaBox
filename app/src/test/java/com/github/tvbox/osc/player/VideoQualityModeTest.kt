@@ -1,17 +1,20 @@
 package com.github.tvbox.osc.player
 
+import com.github.tvbox.osc.player.DeviceCapability.QualityMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 「画质策略」四档的口径锁。
+ * 「画质策略」三档的口径锁。
  *
- * <p>`stored()` / `current()` 依赖 KV(真机 MMKV),不在纯单测范围;这里锁的是 enum 常量本身的口径 ——
- * 尤其 **ordinal 即 KV 协议值**(0=画质优先 1=自动 2=速度优先 3=省流画质),换序/改名都会让老用户
- * 读到脏档位,必须先改这里再动 KV。设置页的**显示顺序**与 ordinal 不同(按代价从高到低),
- * 那层映射写在 PlaySettingsPage 的 ladder 里,不要误改枚举顺序。
+ * <p>三档 = 画质优先 / 自动画质 / 省流画质。2026-10-14 定案封顶三档:
+ * 曾经有过第四档(以及独立的「流量节省」开关),但"扫了不切"和"什么都不做"对用户是**同一个可观察
+ * 行为**(都不换线),不该占两个档位 —— 档位要按用户看得见的差别切,不按内部账目切。
+ *
+ * <p>这里锁死的是**ordinal 即 KV 协议值**(0=画质优先 1=自动 2=省流),换序或再加档都会让老用户
+ * 读到脏档位;要动必须先动这里。
  */
 class VideoQualityModeTest {
 
@@ -19,9 +22,14 @@ class VideoQualityModeTest {
     fun ordinalIsTheKvProtocol() {
         assertEquals(0, DeviceCapability.QualityMode.QUALITY_FIRST.ordinal)
         assertEquals(1, DeviceCapability.QualityMode.AUTO.ordinal)
+        // 省流画质沿用历史上"速度优先"的存储位 2 —— 两档合并后老用户零迁移
         assertEquals(2, DeviceCapability.QualityMode.SPEED_FIRST.ordinal)
-        // 省流画质是 2026-10-14 **追加**的第四档:必须排在末尾,前面三档的 ordinal 一个都不能动
-        assertEquals(3, DeviceCapability.QualityMode.DATA_SAVER.ordinal)
+    }
+
+    @Test
+    fun threeModesOnly_noFourthModeSneaksBackIn() {
+        // 三档封顶:再加一档必须先回答"用户能看见的差别是什么",看不见就别加
+        assertEquals(3, DeviceCapability.QualityMode.values().size)
     }
 
     @Test
@@ -32,7 +40,7 @@ class VideoQualityModeTest {
 
     @Test
     fun onlyQualityFirstBlocksStartForProbing() {
-        // 2026-10-14 定案:自动档不再为画质等首帧(探测后置到起播后的有界扫描)
+        // 2026-10-14 定案:自动档/省流档都不为画质等首帧(探测后置到起播后的有界扫描)
         assertTrue(DeviceCapability.QualityMode.QUALITY_FIRST.probeBlocksStart)
         DeviceCapability.QualityMode.values()
             .filter { it != DeviceCapability.QualityMode.QUALITY_FIRST }
@@ -40,12 +48,13 @@ class VideoQualityModeTest {
     }
 
     @Test
-    fun speedFirstSkipsProbeEntirely() {
-        val mode = DeviceCapability.QualityMode.SPEED_FIRST
-        assertFalse(mode.shouldProbeOnFirstWatch)
-        assertFalse(mode.probeBlocksStart)
-        assertEquals(0L, mode.probeBudgetMs)
-        assertEquals(0, mode.probeLines)
+    fun speedFirstDoesNothingExtraForQuality() {
+        val saver = DeviceCapability.QualityMode.SPEED_FIRST
+        // 省流档:不扫描、不等首帧、不换线 —— "不主动做任何画质动作"就是它对用户的定义
+        assertFalse(saver.shouldProbeOnFirstWatch)
+        assertFalse(saver.probeBlocksStart)
+        assertEquals(0L, saver.probeBudgetMs)
+        assertEquals(0, saver.probeLines)
     }
 
     @Test

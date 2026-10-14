@@ -444,8 +444,7 @@
     <string name="settings_video_quality_mode_subtitle">為畫質願意付多少代價：起播前等不等、起播後會不會自動升檔</string>
     <string name="video_quality_quality_first">畫質優先</string>
     <string name="video_quality_auto">自動畫質</string>
-    <string name="video_quality_data_saver">省流畫質</string>
-    <string name="video_quality_speed_first">速度優先</string>
+    <string name="video_quality_speed_first">省流畫質</string>
     <string name="settings_video_quality_ceiling">畫質上限</string>
     <string name="settings_video_quality_ceiling_subtitle">高於此解析度的線路不選用、也不會自動升上去。預設電視 4K、手機 1080P；手機接電視想上 4K 可在這裡放開</string>
     <string name="video_quality_ceiling_device">跟隨裝置</string>

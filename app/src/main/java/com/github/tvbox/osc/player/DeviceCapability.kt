@@ -100,11 +100,12 @@ object DeviceCapability {
     }
 
     /**
-     * 「画质选项」三档。**只分化"起播前做什么"**,起播后的故障链(降档 → 换线 → 换源 → 收口)
-     * 三档完全一致 —— 卡顿降档的决策是读内存,零耗时,任何档都不该关掉它。
+     * 「画质策略」三档。**只分化"愿不愿意为画质付等待与切换的代价"**,起播后的故障链
+     * (降档 → 换线 → 换源 → 收口)三档完全一致 —— 卡顿降档读的是内存,零耗时,任何档都不该关掉它。
      *
-     * <p>为什么画质功夫全部前置到起播前:播放中"升档"会造成画面跳变 + 音画不同步,只降不升;
-     * 所以"画质 vs 速度"这笔账只会在起播前结算一次。
+     * <p>2026-10-14 改口径:旧的"画质功夫全部前置到起播前、只降不升"已经不成立 ——
+     * 现在自动档起播**不等网络**,画质由起播后的有界扫描补救,所以**允许向上换线一次**
+     * (代价是一次可见的重新缓冲)。省流档则连这一跳也不做:它只填实测记忆,永不因为画质去换线。
      */
     enum class QualityMode(
         val shouldProbeOnFirstWatch: Boolean,
@@ -121,21 +122,34 @@ object DeviceCapability {
         /** 默认:记忆命中 0ms 选最高;无记忆**不等网络**,立即按站点原序起播,画质由起播后扫描补救 */
         AUTO(true, false, 0L, 0),
 
-        /** 跳过全部探测(起播前后都不做),站点原序即播;实测记忆回写不受档位影响,照常积累 */
-        SPEED_FIRST(false, false, 0L, 0),
-
         /**
-         * 省流画质(2026-10-14 由独立的「流量节省」开关并进来):
-         * **允许扫描填实测记忆**(单条 ≤256KB、一次性),但**拒绝一切向上切换** ——
-         * 切到更高码率才是持续大开销。所以它就是"自动档的探测行为 + 不许升档"。
+         * 省流画质(2026-10-14 三档定案:由旧的「速度优先」档 + 独立的「流量节省」开关**合成一档**)。
+         *
+         * <p>合成理由:四档里"扫了但不换线"和"什么都不做"对用户是**同一个可观察行为**(都不换线),
+         * 差别只剩"后台有没有悄悄发探测请求",那是内部账目,不该做成一个档位。
+         *
+         * <p>这一档就是"不主动做任何画质动作":不等首帧、不扫描线路、绝不因为画质去换线。
+         * 故障兜底(卡顿降档 / 换线 / 换源)照旧 —— 那是流畅,不是画质,任何档都不该关掉它。
+         * 正在播的那条线路仍会被内核实测回写画质标签(那条路径不受档位影响),所以列表不会变成一片空白。
+         *
+         * <p>⚠️ ordinal 仍是 2 —— 历史上这里是"速度优先",两档合并后**沿用它的存储位**,
+         * 老用户读到的值不用迁移;v1.1.7 短暂引入过的 ordinal=3 由 [stored] 归一到 2。
          */
-        DATA_SAVER(true, false, 0L, 0);
+        SPEED_FIRST(false, false, 0L, 0);
 
         companion object {
-            /** KV 脏值兜底:越界/缺省一律落自动档 —— 跨版本升级可能读到任意 int,不可让播放路径抛异常 */
+            /**
+             * KV 脏值兜底:越界/缺省一律落自动档 —— 跨版本升级可能读到任意 int,不可让播放路径抛异常。
+             *
+             * <p>ordinal=3 是 v1.1.7 那一版短暂存在的「省流画质」档(同义合并到 2),
+             * 显式归一而不是靠 `getOrNull` 落空,否则选了那档的用户会莫名回到自动档。
+             */
             @JvmStatic
-            fun stored(): QualityMode =
-                values().getOrNull(KV.get(HawkConfig.VIDEO_QUALITY_MODE, AUTO.ordinal)) ?: AUTO
+            fun stored(): QualityMode {
+                val raw = KV.get(HawkConfig.VIDEO_QUALITY_MODE, AUTO.ordinal)
+                val normalized = if (raw == 3) SPEED_FIRST.ordinal else raw
+                return values().getOrNull(normalized) ?: AUTO
+            }
 
             /**
              * 旧「流量节省」开关的**一次性迁移**:老用户存过 true 且还没重新选过档位 ⇒ 视为省流档。
@@ -145,7 +159,7 @@ object DeviceCapability {
              */
             @JvmStatic
             fun resolveMode(stored: QualityMode, legacySaverOn: Boolean): QualityMode =
-                if (stored != DATA_SAVER && legacySaverOn) DATA_SAVER else stored
+                if (stored != SPEED_FIRST && legacySaverOn) SPEED_FIRST else stored
 
             /** 实际生效档位。决策点必须读这个。 */
             @JvmStatic
@@ -159,12 +173,12 @@ object DeviceCapability {
      * 是否处于"省流"语义 ⇒ **拒绝一切向上切换**(升档追踪 / 有界扫描换线),但**仍然允许**
      * 画质探测与实测记忆积累(单条 ≤256KB、一次性;切到更高码率才是持续大开销)。
      *
-     * <p>它现在是档位 [QualityMode.DATA_SAVER] 的**派生视图**,不再直接读那个旧开关 ——
+     * <p>它现在是档位 [QualityMode.SPEED_FIRST]（「省流画质」）的**派生视图**,不再直接读那个旧开关 ——
      * 保留这个名字是因为多处调用点用它表达"不许向上",改定义比改七个调用点更稳。
      * 老存量的 `traffic_saver=true` 由 [QualityMode.resolveMode] 一次性迁移进来。
      */
     @JvmStatic
-    fun trafficSaverOn(): Boolean = QualityMode.current() == QualityMode.DATA_SAVER
+    fun trafficSaverOn(): Boolean = QualityMode.current() == QualityMode.SPEED_FIRST
 
     /** 实际生效的档位。**决策点读这个**,而不是 [QualityMode.stored]。 */
     @JvmStatic
