@@ -418,6 +418,7 @@
     <string name="detail_source_switch_action">换源</string>
     <string name="detail_source_switch_hint">点击搜索其他片源</string>
     <string name="detail_source_switching">搜索进度(%1$d/%2$d)</string>
+    <string name="detail_source_current">当前源</string>
     <string name="detail_source_prev_page">上一页</string>
     <string name="detail_source_next_page">下一页</string>
     <string name="detail_finding_source">寻找片源中…</string>

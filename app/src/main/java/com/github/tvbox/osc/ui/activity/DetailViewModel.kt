@@ -104,8 +104,10 @@ class DetailViewModel : ViewModel() {
      * @param score 源级评分([SourceQualityScore.score],0..100);**null = 无历史数据**。
      *              仅用于**展示**(界面显"源N · 75分"或"源N · 暂无评分"),**不**参与排序键之外的决策。
      *              见 source-line-scoring-design-2026-10-14.md 出路 A。
+     * @param isCurrent 是否是**当前正在播放**的源(2026-10-14 用户反馈 #3)。为 true 时置顶显示、
+     *                  标签直接写「当前源 · xx分」(不带"源N"序号)、且不可点击(切到自己无意义)。
      */
-    data class SourceChip(val key: String, val score: Double? = null)
+    data class SourceChip(val key: String, val score: Double? = null, val isCurrent: Boolean = false)
 
     /**
      * 详情加载期间就能展示的已知信息(片名 / 海报)。
@@ -1601,6 +1603,12 @@ class DetailViewModel : ViewModel() {
         // 用户要看到的是"共 322 个源、已搜 xx 个"的真实进度,而首轮只投 1/3(108)。
         // 若分母写首轮宽度,进度条一到 108/108 就"满"了,后面扩池的 214 个源无从体现。
         searchProgress.value = if (sources.isEmpty()) null else SearchProgress(0, orderedPool.size, 0)
+        // [临时诊断 2026-10-14 #1] 搜索启动时刻的 UI 状态快照(searchProgress 分母应为全量源数)。
+        LOG.i(
+            "echo-search-ui-diag on-start searching=${sourcesSearching.value}" +
+                " progressTotal=${searchProgress.value?.total} sources=${sources.size}" +
+                " title=$searchTitle token=$searchToken"
+        )
         // 历史命中先灌一批候选(2026-10-13)。
         // ⚠️ 必须在调用方(startFallbackIfNeeded → loadNextFallbackCandidate)之前:
         //    它随后取候选时就能直接命中,不必等聚合搜索的首批收口(实测 9.8~10.8s)。
@@ -1767,6 +1775,14 @@ class DetailViewModel : ViewModel() {
         val searched = searchedSourceKeys.size
         val candidates = synchronized(fallbackCandidates) { fallbackCandidates.size }
         searchProgress.value = SearchProgress(searched.coerceAtMost(total), total, candidates)
+        // [临时诊断 2026-10-14 #1] 节流:每 25 个源打一次 + 首尾必打,避免刷屏又能看到进度在走。
+        if (searched == 1 || searched == total || searched % 25 == 0) {
+            LOG.i(
+                "echo-searchprogress-diag searched=$searched total=$total" +
+                    " searching=${sourcesSearching.value} frozen=$searchFrozen" +
+                    " title=$searchTitle token=$searchToken"
+            )
+        }
     }
 
     /**
@@ -2034,9 +2050,12 @@ class DetailViewModel : ViewModel() {
         // 2026-10-14(详情页「换源」分页设计):候选池**不再永久排除"切过的源"**。
         // 旧实现 `.filter { !usedSourceKeys.contains(...) }` 会让用户切过的源从列表消失 ⇒
         // 切几轮之后列表越来越空、"想切回之前那个好源"都找不到(用户真机反馈)。
-        // 现在:只排除**当前源**(它没有"换到自己"的意义),切过的源**保留**(可切回),只是不特殊标注。
+        // 切过的源**保留**(可切回),只是不特殊标注。
+        //
+        // 2026-10-14(用户反馈 #3):**当前源保留并置顶**。旧实现 `.filter { it.sourceKey != sourceKey }`
+        // 把当前播放源完全滤掉 ⇒ 用户在候选列表里看不到"自己现在放的是哪个源",不知道是不是第一个。
+        // 现在:若候选里出现当前源,置顶 + 标 [SourceChip.isCurrent](标签写「当前源」、不可点)。
         val all = synchronized(fallbackCandidates) { fallbackCandidates.toList() }
-            .filter { it.sourceKey != sourceKey }
             .distinctBy { it.sourceKey }
         // 源评分(2026-10-14 出路 A):有历史数据的源显示评分,无数据的显式标"暂无评分"。
         // ⚠️ score() 对无数据也返回中性 60,所以这里必须**另行判断"是否真无数据"**并置 null ——
@@ -2072,11 +2091,13 @@ class DetailViewModel : ViewModel() {
             } else {
                 null
             }
-            SourceChip(key, score)
+            SourceChip(key, score, isCurrent = key == sourceKey)
         }
+        // 当前源置顶(用户反馈 #3):稳定排序,只把"当前源"提到最前,其余保持自然顺序。
+        val ordered = full.sortedByDescending { it.isCurrent }
         // 页号钳制:列表可能因换片/翻页后变短,越界会显示空白(用户以为"没有源")
-        chipPage.value = CandidatePager.clampPage(chipPage.value, full.size)
-        sourceChips.value = CandidatePager.pageSlice(full, chipPage.value)
+        chipPage.value = CandidatePager.clampPage(chipPage.value, ordered.size)
+        sourceChips.value = CandidatePager.pageSlice(ordered, chipPage.value)
     }
 
     /**
@@ -2094,6 +2115,12 @@ class DetailViewModel : ViewModel() {
      * 用户明确说过"用户切了源不代表找到满意的,应把剩下的搜完"。
      */
     fun onSwitchSourceClick() {
+        // 防重入(2026-10-14 用户反馈 #2):搜索在途时按钮已在 UI 侧置灰,
+        // 这里是**第二道防线** —— 万一有别的入口(遥控/无障碍/快速连点)绕过 disabled,也拦下。
+        if (sourcesSearching.value) {
+            LOG.i("echo-source-switch skip-duplicate searching=true")
+            return
+        }
         manualSwitchActive = true
         chipPage.value = 0
         // 解冻:否则 startSourceSearch 内 searchActive 恒 false,搜索跑不动
@@ -2111,8 +2138,10 @@ class DetailViewModel : ViewModel() {
 
     /** 下一页(仅在有下一页时生效;钳制由 [CandidatePager.hasNext] 保证)。 */
     fun nextChipPage() {
+        // 计数口径必须与 [publishSourceChips] 的 full.size 一致(去重、且**含**当前源) ——
+        // 否则翻页判断会与实际列表长度错位(用户反馈 #3 改动后,当前源不再被排除)。
         val total = synchronized(fallbackCandidates) {
-            fallbackCandidates.count { it.sourceKey != sourceKey }
+            fallbackCandidates.distinctBy { it.sourceKey }.size
         }
         if (!CandidatePager.hasNext(total, chipPage.value)) return
         chipPage.value += 1
@@ -2128,9 +2157,9 @@ class DetailViewModel : ViewModel() {
         LOG.i("echo-source-switch prev page=${chipPage.value}")
     }
 
-    /** 候选源总数(全量,非当前页):供界面判断"是否有下一页"。 */
+    /** 候选源总数(全量,非当前页):供界面判断"是否有下一页"。口径同 [publishSourceChips](去重、含当前源)。 */
     fun totalCandidateCount(): Int = synchronized(fallbackCandidates) {
-        fallbackCandidates.count { it.sourceKey != sourceKey }
+        fallbackCandidates.distinctBy { it.sourceKey }.size
     }
 
     /**

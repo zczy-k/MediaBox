@@ -79,6 +79,16 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int) {
     val searchProgress by vm.searchProgress.collectAsStateWithLifecycle()
     val crossHint by vm.crossSourceHint.collectAsStateWithLifecycle()
     val chipPage by vm.chipPage.collectAsStateWithLifecycle()
+    // [临时诊断 2026-10-14 #1] 观察 UI 实际收到的 sourcesSearching / searchProgress ——
+    // 仅在值变化时打点(Compose 会重组很多次,LaunchedEffect 的 key 变了才重跑),
+    // 用来判定"搜索在途时 UI 到底拿到的是 true 还是 false"。定位后移除。
+    LaunchedEffect(sourcesSearching, searchProgress) {
+        com.github.tvbox.osc.util.LOG.i(
+            "echo-ui-diag SourceSection searching=$sourcesSearching" +
+                " progress=${searchProgress?.done}/${searchProgress?.total}" +
+                " chips=${sourceChips.size}"
+        )
+    }
     // 2026-10-14(详情页「换源」分页设计):**不再"空列表就整块不渲染"** ——
     // 那样用户在"没有候选/搜索没跑"时**没有任何入口发起换源**(真机反馈的核心问题)。
     // 现在无条件渲染:「换源」按钮始终可见,候选列表有内容时才在下方展开。
@@ -101,7 +111,12 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SectionTitleIcon(painterResource(R.drawable.ic_detail_switch_source))
-            TextButton(onClick = { vm.onSwitchSourceClick() }) {
+            // 搜索进行中置灰禁用(2026-10-14 用户反馈 #2):防止用户误点两次换源。
+            // 右侧进度文字**保留**(用户明确要求),让用户仍能看到"搜索进度(xx/322)"。
+            TextButton(
+                onClick = { vm.onSwitchSourceClick() },
+                enabled = !sourcesSearching,
+            ) {
                 Text(stringResource(R.string.detail_source_switch_action))
             }
             Text(
@@ -177,14 +192,25 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int) {
                 // 全局下标 = 页号*每页数 + 页内下标,让用户翻页时序号连续(源6、源7…)。
                 itemsIndexed(sourceChips, key = { _, c -> c.key }) { index, chip ->
                     val globalIndex = chipPage * CandidatePager.PAGE_SIZE + index
-                    val label = vm.sourceLabelFor(globalIndex)
+                    // 当前源(2026-10-14 用户反馈 #3):不显示"源N"序号,直接标「当前源」;
+                    // 其余源仍按全局下标生成匿名标签(源1/源2…)。
+                    val label = if (chip.isCurrent) {
+                        stringResource(R.string.detail_source_current)
+                    } else {
+                        vm.sourceLabelFor(globalIndex)
+                    }
                     if (label.isEmpty()) return@itemsIndexed
                     val scoreText = chip.score?.let {
                         stringResource(R.string.detail_source_score, Math.round(it).toInt())
                     } ?: stringResource(R.string.detail_source_no_score)
                     FilterChip(
-                        selected = false,
-                        onClick = { vm.candidateForKey(chip.key)?.let { vm.switchSource(it) } },
+                        selected = chip.isCurrent,
+                        // 当前源不可点:换到自己没有意义(用户反馈 #3)
+                        onClick = {
+                            if (!chip.isCurrent) {
+                                vm.candidateForKey(chip.key)?.let { vm.switchSource(it) }
+                            }
+                        },
                         label = { Text("$label · $scoreText") },
                         shape = RoundedCornerShape(20.dp),
                         colors = MaterialTheme.colorScheme.filterChipColors(
