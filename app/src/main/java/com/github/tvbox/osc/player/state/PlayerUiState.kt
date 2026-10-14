@@ -276,7 +276,7 @@ class SubtitleSheetState(
     val onSelectInternal: () -> Unit,
     val onSelectLocal: () -> Unit,
     val onSelectRemote: () -> Unit,
-    /** 外挂字幕文字样式:0=白色描边,1=粉色描边(#FFB6C1),2=白色无描边 */
+    /** 外挂字幕文字样式:0=白色描边,2=白色无描边(1=粉色描边已废弃,读到时按 0 处理) */
     val onSelectStyle: (Int) -> Unit = {},
     /** 设置字幕绝对延时(毫秒):正数推迟,负数提前;同时更新当前外挂/内置字幕 */
     val onDelayChange: (Int) -> Unit = {},
@@ -287,6 +287,8 @@ class SubtitleSheetState(
     val enabled: Boolean = false,
     /** 面板内切换总开关:打开即按记忆/默认链重新加载,关闭立即隐藏 */
     val onToggleEnabled: (Boolean) -> Unit = {},
+    /** 当前文字样式(面板据此决定「描边」开关的选中态);1=已废弃的粉色描边,按 0 读 */
+    val textStyle: Int = 0,
 )
 
 /**
@@ -297,6 +299,11 @@ class SubtitleSheetState(
 class SubtitleSearchSheetState(
     val searchWord: String,
     val onLoadSubtitle: (Subtitle, String) -> Unit,
+    /**
+     * 本片/本集**当前生效**的在线字幕文件名(来自 [com.github.tvbox.osc.util.TrackMemory])。
+     * 面板靠它给列表画选中态 —— 没有它,重开面板看不出上次选的是哪一条。
+     */
+    val activeName: String? = null,
 )
 
 /** 投屏设备面板状态（替代 View 版 CastDeviceDialog） */

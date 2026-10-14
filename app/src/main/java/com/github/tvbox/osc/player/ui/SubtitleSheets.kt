@@ -98,19 +98,20 @@ fun SubtitleSheet(sheet: SubtitleSheetState, onDismiss: () -> Unit) {
         sheet.onDelayChange(milliseconds)
     }
 
-    // 面板高度必须封顶:不封顶时内容比屏幕高,verticalScroll 不生效,底部控件会被窗口裁掉
-    val maxPanelHeight = LocalConfiguration.current.screenHeightDp.dp * 0.92f
+    // 面板高度必须封顶:不封顶时内容比屏幕高,verticalScroll 不生效,底部控件会被窗口裁掉。
+    // 0.92 → 0.82:原来几乎顶满屏幕,看着不像"一个面板"而像另一页(真机反馈"弹窗太大")
+    val maxPanelHeight = LocalConfiguration.current.screenHeightDp.dp * 0.82f
     PlayerDialog(onDismiss = onDismiss) {
         val dismiss = LocalPlayerSheetDismiss.current
         val dismissThen = LocalPlayerSheetDismissThen.current
         SheetPanel(
-            width = playerDim(R.dimen.vs_640),
+            width = playerDim(R.dimen.vs_520),
             modifier = Modifier.heightIn(max = maxPanelHeight),
         ) {
                 Column(
                     Modifier
                         .align(Alignment.CenterHorizontally)
-                        .width(playerDim(R.dimen.vs_480))
+                        .width(playerDim(R.dimen.vs_410))
                         .verticalScroll(rememberScrollState())
                         .padding(vertical = playerDim(R.dimen.vs_30)),
                 ) {
@@ -188,36 +189,21 @@ fun SubtitleSheet(sheet: SubtitleSheetState, onDismiss: () -> Unit) {
                         }, modifier = Modifier.width(playerDim(R.dimen.vs_140)))
                     }
                     Spacer(Modifier.height(playerDim(R.dimen.vs_10)))
-                    Row(
-                        Modifier.fillMaxWidth().height(playerDim(R.dimen.vs_60)),
-                        horizontalArrangement = Arrangement.spacedBy(playerDim(R.dimen.vs_8)),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        SheetButton(
-                            stringResource(R.string.subtitle_style_white_outline),
-                            onClick = {
-                                sheet.onSelectStyle(0)
-                                dismiss()
-                            },
-                            modifier = Modifier.weight(1f),
-                        )
-                        SheetButton(
-                            stringResource(R.string.subtitle_style_pink_outline),
-                            onClick = {
-                                sheet.onSelectStyle(1)
-                                dismiss()
-                            },
-                            modifier = Modifier.weight(1f),
-                        )
-                        SheetButton(
-                            stringResource(R.string.subtitle_style_no_outline),
-                            onClick = {
-                                sheet.onSelectStyle(2)
-                                dismiss()
-                            },
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
+                    // 样式只剩"描边 / 无描边"两档,合成一颗开关:粉色描边(旧值 1)已移除,按描边档读
+                    val outlineOn = sheet.textStyle != 2
+                    SheetButton(
+                        text = stringResource(
+                            if (outlineOn) R.string.subtitle_style_outline_on else R.string.subtitle_style_no_outline,
+                        ),
+                        selected = outlineOn,
+                        onClick = {
+                            sheet.onSelectStyle(if (outlineOn) 2 else 0)
+                            dismiss()
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(playerDim(R.dimen.vs_50)),
+                    )
                     if (exo) {
                         Spacer(Modifier.height(playerDim(R.dimen.vs_8)))
                         Row(
@@ -274,16 +260,8 @@ fun SubtitleSheet(sheet: SubtitleSheetState, onDismiss: () -> Unit) {
                         )
                     }
                     Spacer(Modifier.height(playerDim(R.dimen.vs_10)))
-                    Text(
-                        text = stringResource(if (exo) R.string.subtitle_delay_exo_hint else R.string.subtitle_delay_hint),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = playerTextSize(R.dimen.ts_20),
-                        fontWeight = FontWeight.Medium,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(Modifier.height(playerDim(R.dimen.vs_10)))
                     // 快捷微调仍保留 ±0.5 秒;中间输入框可直接填写正/负秒数(最多 ±10 分钟)。
+                    // 原来这里还有一行"延时对外挂/内置有效…"的说明文字:±按钮与输入框的文案已经说明了一切,删。
                     Row(
                         Modifier
                             .fillMaxWidth()
@@ -437,8 +415,9 @@ fun SubtitleSearchSheet(sheet: SubtitleSearchSheetState, onDismiss: () -> Unit) 
     PlayerDialog(onDismiss = onDismiss) {
         val dismiss = LocalPlayerSheetDismiss.current
         SheetPanel(
-                width = playerDim(R.dimen.vs_960),
-                modifier = Modifier.height(playerDim(R.dimen.vs_480)),
+                // 960/480 是全应用最宽的一档,列表项本来就只有一行文字,横向全是空白
+                width = playerDim(R.dimen.vs_640),
+                modifier = Modifier.height(playerDim(R.dimen.vs_410)),
             ) {
                 Spacer(Modifier.height(playerDim(R.dimen.vs_30)))
                 Row(
@@ -472,7 +451,11 @@ fun SubtitleSearchSheet(sheet: SubtitleSearchSheetState, onDismiss: () -> Unit) 
                         ) {
                             itemsIndexed(items) { _, item ->
                                 SheetButton(
-                                    text = "${item.name}(${if (item.isZip) "压缩包" else "文件"})",
+                                    text = item.name + " (" + stringResource(
+                                        if (item.isZip) R.string.subtitle_kind_zip else R.string.subtitle_kind_file,
+                                    ) + ")",
+                                    // 选中态:重开面板要能看出"现在挂着的是哪一条"(以前全是一样的按钮,看不出来)
+                                    selected = !sheet.activeName.isNullOrEmpty() && item.name == sheet.activeName,
                                     onClick = {
                                         if (item.isZip) {
                                             mode = "zipfiles"

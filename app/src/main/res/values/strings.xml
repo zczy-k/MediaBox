@@ -51,20 +51,17 @@
     <string name="player_play_pause">播放/暂停</string>
 
     <!-- 字幕面板 -->
-    <string name="subtitle_builtin">选择内置字幕</string>
-    <string name="subtitle_local">选择本地字幕</string>
-    <string name="subtitle_online">在线搜索字幕</string>
+    <string name="subtitle_builtin">内置字幕</string>
+    <string name="subtitle_local">本地字幕</string>
+    <string name="subtitle_online">在线搜索</string>
     <string name="subtitle_size_minus">字号减小</string>
     <string name="subtitle_size_plus">字号增大</string>
     <string name="subtitle_move_up">字幕上移</string>
     <string name="subtitle_move_down">字幕下移</string>
-    <string name="subtitle_style_one">白字描边</string>
-    <string name="subtitle_style_two">粉字描边</string>
-    <string name="subtitle_style_white_outline">白字描边</string>
-    <string name="subtitle_style_pink_outline">粉字描边</string>
+    <string name="subtitle_style_outline_on">描边</string>
     <string name="subtitle_style_no_outline">无描边</string>
-    <string name="subtitle_delay_exo_hint">字幕延时对内置字幕有效；正数推迟，负数提前</string>
-    <string name="subtitle_delay_hint">字幕延时对外挂字幕有效；正数推迟，负数提前，单位为秒</string>
+    <string name="subtitle_kind_zip">压缩包</string>
+    <string name="subtitle_kind_file">文件</string>
     <string name="subtitle_delay_apply">应用延时</string>
     <string name="subtitle_delay_input_hint">秒数，例如 -1.25</string>
     <string name="subtitle_delay_invalid">请输入有效秒数（-600 到 600）</string>
@@ -72,8 +69,8 @@
     <string name="subtitle_advance">提前 0.5 秒</string>
     <string name="subtitle_delay">推迟 0.5 秒</string>
     <string name="subtitle_search_hint">请输入字幕名称</string>
-    <string name="subtitle_switch_on">字幕显示：开（点击关闭）</string>
-    <string name="subtitle_switch_off">字幕显示：关（点击开启）</string>
+    <string name="subtitle_switch_on">字幕：开</string>
+    <string name="subtitle_switch_off">字幕：关</string>
     <string name="settings_group_subtitle">字幕</string>
     <string name="settings_check_update">检查更新</string>
     <string name="settings_check_update_subtitle">检测是否有新版本可用</string>
@@ -452,10 +449,10 @@
     <string name="theme_mode_dark">深色</string>
 
     <!-- 设置:播放设置 -->
-    <string name="settings_play_kernel">播放内核</string>
+    <string name="settings_play_kernel">默认播放内核</string>
     <string name="settings_play_render">画面渲染</string>
-    <string name="settings_play_scale">画面缩放</string>
-    <string name="settings_play_decode">解码方式</string>
+    <string name="settings_play_scale">默认画面缩放</string>
+    <string name="settings_play_decode">默认解码方式</string>
     <string name="settings_play_anime4k">Anime4K 画质增强</string>
     <string name="settings_play_anime4k_subtitle">仅点播生效，直播 / HDR 源自动跳过</string>
     <string name="settings_play_tunnel">隧道模式</string>

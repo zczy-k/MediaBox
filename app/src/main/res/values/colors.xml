@@ -9,5 +9,4 @@
 
     <!-- 字幕文本色(PlayContainer) -->
     <color name="color_FFFFFF">#ffffffff</color>
-    <color name="color_FFB6C1">#FFB6C1</color>
 </resources>

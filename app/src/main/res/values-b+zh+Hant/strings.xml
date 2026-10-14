@@ -51,20 +51,17 @@
     <string name="player_play_pause">播放/暫停</string>
 
     <!-- 字幕面板 -->
-    <string name="subtitle_builtin">選擇內建字幕</string>
-    <string name="subtitle_local">選擇本機字幕</string>
-    <string name="subtitle_online">線上搜尋字幕</string>
+    <string name="subtitle_builtin">內建字幕</string>
+    <string name="subtitle_local">本機字幕</string>
+    <string name="subtitle_online">線上搜尋</string>
     <string name="subtitle_size_minus">字型縮小</string>
     <string name="subtitle_size_plus">字型放大</string>
     <string name="subtitle_move_up">字幕上移</string>
     <string name="subtitle_move_down">字幕下移</string>
-    <string name="subtitle_style_one">白字描邊</string>
-    <string name="subtitle_style_two">粉字描邊</string>
-    <string name="subtitle_style_white_outline">白字描邊</string>
-    <string name="subtitle_style_pink_outline">粉字描邊</string>
+    <string name="subtitle_style_outline_on">描邊</string>
     <string name="subtitle_style_no_outline">無描邊</string>
-    <string name="subtitle_delay_exo_hint">字幕延遲對內建字幕有效；正數延後，負數提前</string>
-    <string name="subtitle_delay_hint">字幕延遲對外掛字幕有效；正數延後，負數提前，單位為秒</string>
+    <string name="subtitle_kind_zip">壓縮包</string>
+    <string name="subtitle_kind_file">檔案</string>
     <string name="subtitle_delay_apply">套用延遲</string>
     <string name="subtitle_delay_input_hint">秒數，例如 -1.25</string>
     <string name="subtitle_delay_invalid">請輸入 -600 到 600 之間的秒數</string>
@@ -72,8 +69,8 @@
     <string name="subtitle_advance">提前 0.5 秒</string>
     <string name="subtitle_delay">延後 0.5 秒</string>
     <string name="subtitle_search_hint">請輸入字幕名稱</string>
-    <string name="subtitle_switch_on">字幕顯示：開（點擊關閉）</string>
-    <string name="subtitle_switch_off">字幕顯示：關（點擊開啟）</string>
+    <string name="subtitle_switch_on">字幕：開</string>
+    <string name="subtitle_switch_off">字幕：關</string>
     <string name="settings_group_subtitle">字幕</string>
     <string name="settings_check_update">檢查更新</string>
     <string name="settings_check_update_subtitle">檢查是否有新版本可用</string>

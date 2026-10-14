@@ -501,7 +501,8 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
                     enabled -> {
                         setSubtitleEnabled(enabled);
                         return kotlin.Unit.INSTANCE;
-                    }));
+                    },
+                    KV.get(HawkConfig.SUBTITLE_TEXT_STYLE, 0)));
         } catch (Exception e) {
             LOG.e("PlayContainer", e);
         }
@@ -576,6 +577,13 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
         String word = (scheduler.vod().playFlag.contains("Ali") || scheduler.vod().playFlag.contains("parse"))
                 ? scheduler.vod().playNote : scheduler.vod().name;
         PlayerUiState uiState = mController.getUiState();
+        // 面板要标出"上次选的是哪一条":字幕记忆里那个在线文件名就是当前生效的字幕
+        String activeName = "";
+        String subtitleRecord = TrackMemory.loadSubtitle(trackMemoryKey());
+        if (TrackMemory.isSubtitleOnline(subtitleRecord)) {
+            activeName = TrackMemory.onlineFileName(subtitleRecord);
+        }
+        final String activeFileName = activeName;
         uiState.setSubtitleSearchSheet(new SubtitleSearchSheetState(word == null ? "" : word, (subtitle, releaseUrl) -> {
             if (!isAttached()) return kotlin.Unit.INSTANCE;
             mActivity.runOnUiThread(() -> {
@@ -587,18 +595,14 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
                 setSubtitle(zimuUrl);
             });
             return kotlin.Unit.INSTANCE;
-        }));
+        }, activeFileName));
     }
 
     @SuppressLint("UseCompatLoadingForColorStateLists")
     void setSubtitleViewTextStyle(int style) {
         if (mController == null || mController.getSubtitleView() == null) return;
-        if (style == 1) {
-            mController.getSubtitleView().setTextColor(getContext().getResources().getColorStateList(R.color.color_FFB6C1));
-        } else {
-            // Style 2 is white without the black outline; the foreground itself stays white.
-            mController.getSubtitleView().setTextColor(getContext().getResources().getColorStateList(R.color.color_FFFFFF));
-        }
+        // 只剩两档:描边(白字+黑边)与无描边。旧的粉色描边(1)按描边档读
+        mController.getSubtitleView().setTextColor(getContext().getResources().getColorStateList(R.color.color_FFFFFF));
         mController.getSubtitleView().setOutlineEnabled(style != 2);
         applyExoSubtitleStyle();
     }
@@ -735,8 +739,8 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
     private void applyExoSubtitleStyle() {
         if (mController == null || mController.getExoSubtitleView() == null) return;
         int style = KV.get(HawkConfig.SUBTITLE_TEXT_STYLE, 0);
-        int textColor = getContext().getResources().getColorStateList(
-                style == 1 ? R.color.color_FFB6C1 : R.color.color_FFFFFF).getDefaultColor();
+        // 粉色描边(旧值 1)已从面板移除:老 KV 里残留的 1 按"白字描边"读,不额外迁移
+        int textColor = getContext().getResources().getColorStateList(R.color.color_FFFFFF).getDefaultColor();
         int edgeType = style == 2 ? CaptionStyleCompat.EDGE_TYPE_NONE : CaptionStyleCompat.EDGE_TYPE_OUTLINE;
         mController.getExoSubtitleView().setStyle(new CaptionStyleCompat(
                 textColor,

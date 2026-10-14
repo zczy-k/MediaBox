@@ -51,20 +51,17 @@
     <string name="player_play_pause">Play/Pause</string>
 
     <!-- Subtitle sheet -->
-    <string name="subtitle_builtin">Select built-in subtitle</string>
-    <string name="subtitle_local">Select local subtitle</string>
-    <string name="subtitle_online">Search subtitles online</string>
+    <string name="subtitle_builtin">Built-in subtitles</string>
+    <string name="subtitle_local">Local subtitles</string>
+    <string name="subtitle_online">Search online</string>
     <string name="subtitle_size_minus">Decrease font size</string>
     <string name="subtitle_size_plus">Increase font size</string>
     <string name="subtitle_move_up">Move subtitle up</string>
     <string name="subtitle_move_down">Move subtitle down</string>
-    <string name="subtitle_style_one">White outline</string>
-    <string name="subtitle_style_two">Pink outline</string>
-    <string name="subtitle_style_white_outline">White outline</string>
-    <string name="subtitle_style_pink_outline">Pink outline</string>
+    <string name="subtitle_style_outline_on">Outline</string>
     <string name="subtitle_style_no_outline">No outline</string>
-    <string name="subtitle_delay_exo_hint">For embedded subtitles; positive delays, negative advances</string>
-    <string name="subtitle_delay_hint">For external subtitles; positive delays, negative advances (seconds)</string>
+    <string name="subtitle_kind_zip">Archive</string>
+    <string name="subtitle_kind_file">File</string>
     <string name="subtitle_delay_apply">Apply delay</string>
     <string name="subtitle_delay_input_hint">Seconds, e.g. -1.25</string>
     <string name="subtitle_delay_invalid">Enter seconds from -600 to 600</string>
@@ -72,8 +69,8 @@
     <string name="subtitle_advance">Advance 0.5 s</string>
     <string name="subtitle_delay">Delay 0.5 s</string>
     <string name="subtitle_search_hint">Enter subtitle name</string>
-    <string name="subtitle_switch_on">Subtitles: on (tap to turn off)</string>
-    <string name="subtitle_switch_off">Subtitles: off (tap to turn on)</string>
+    <string name="subtitle_switch_on">Subtitles: on</string>
+    <string name="subtitle_switch_off">Subtitles: off</string>
     <string name="settings_group_subtitle">Subtitles</string>
     <string name="settings_check_update">Check for updates</string>
     <string name="settings_check_update_subtitle">Check whether a new version is available</string>
