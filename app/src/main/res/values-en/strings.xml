@@ -520,8 +520,6 @@
     <string name="settings_incognito">Incognito Mode</string>
     <string name="settings_gesture_disable">Disable Gesture Control</string>
     <string name="settings_gesture_disable_subtitle">Disables brightness and volume gestures</string>
-    <string name="settings_nav_animation_disable">Disable Navigation Animation</string>
-    <string name="settings_nav_animation_disable_subtitle">Disables the bottom navigation slide animation</string>
     <string name="settings_nav_live_hidden">Hide Live in Navigation Bar</string>
     <string name="settings_nav_live_hidden_subtitle">Hides the Live entry in the navigation bar</string>
     <string name="settings_auto_switch_line">Auto Switch Line</string>

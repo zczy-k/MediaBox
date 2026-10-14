@@ -544,8 +544,6 @@
     <string name="settings_incognito">无痕模式</string>
     <string name="settings_gesture_disable">禁用手势控制</string>
     <string name="settings_gesture_disable_subtitle">开启后将禁用手势控制亮度和音量</string>
-    <string name="settings_nav_animation_disable">禁用导航动画</string>
-    <string name="settings_nav_animation_disable_subtitle">开启后将禁用底部导航的侧滑动画</string>
     <string name="settings_nav_live_hidden">导航栏隐藏直播</string>
     <string name="settings_nav_live_hidden_subtitle">开启后导航栏不再显示直播入口</string>
     <string name="settings_auto_switch_line">自动换线</string>

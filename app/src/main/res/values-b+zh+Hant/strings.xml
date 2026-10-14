@@ -520,8 +520,6 @@
     <string name="settings_incognito">無痕模式</string>
     <string name="settings_gesture_disable">停用手勢控制</string>
     <string name="settings_gesture_disable_subtitle">開啟後將停用手勢控制亮度和音量</string>
-    <string name="settings_nav_animation_disable">停用導覽動畫</string>
-    <string name="settings_nav_animation_disable_subtitle">開啟後將停用底部導覽的側滑動畫</string>
     <string name="settings_nav_live_hidden">導覽列隱藏直播</string>
     <string name="settings_nav_live_hidden_subtitle">開啟後導覽列不再顯示直播入口</string>
     <string name="settings_auto_switch_line">自動換線</string>

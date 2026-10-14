@@ -146,15 +146,6 @@ fun PreferenceSettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel =
                         onCheckedChange = { vm.put(HawkConfig.GESTURE_CONTROL_DISABLED, it) },
                     )
                 }
-                SettingsCard(SettingsCardPosition.MIDDLE) {
-                    SettingsSwitchRow(
-                        title = stringResource(R.string.settings_nav_animation_disable),
-                        leadingIconRes = R.drawable.ic_pref_nav_animation,
-                        subtitle = stringResource(R.string.settings_nav_animation_disable_subtitle),
-                        checked = state.navAnimationDisabled,
-                        onCheckedChange = { vm.put(HawkConfig.NAV_ANIMATION_DISABLED, it) },
-                    )
-                }
                 SettingsCard(SettingsCardPosition.LAST) {
                     SettingsSwitchRow(
                         title = stringResource(R.string.settings_nav_live_hidden),

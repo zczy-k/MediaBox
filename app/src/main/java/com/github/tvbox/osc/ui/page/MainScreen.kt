@@ -185,25 +185,17 @@ private fun MainContent() {
     }
 
     val sheetHost = remember { SheetHostState() }
-    var navAnimationEnabled by remember {
-        mutableStateOf(!KV.get(HawkConfig.NAV_ANIMATION_DISABLED, false))
-    }
+    // 「禁用导航动画」开关已移除(2026-10-14):它名字叫动画,实际还把 HorizontalPager 的
+    // 左右滑动手势一起关掉 —— 一个开关管两件事。底部导航固定为"有切换动画 + 可左右滑动"。
     var navLiveHidden by remember {
         mutableStateOf(KV.get(HawkConfig.NAV_LIVE_HIDDEN, false))
     }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        navAnimationEnabled = !KV.get(HawkConfig.NAV_ANIMATION_DISABLED, false)
         navLiveHidden = KV.get(HawkConfig.NAV_LIVE_HIDDEN, false)
     }
 
     val selectTab: (Int) -> Unit = { index ->
-        scope.launch {
-            if (navAnimationEnabled) {
-                pagerState.animateScrollToPage(index)
-            } else {
-                pagerState.scrollToPage(index)
-            }
-        }
+        scope.launch { pagerState.animateScrollToPage(index) }
     }
     val liquidGlassConfig = LiquidGlassState.config
     // Redesigned navigation uses a solid dock instead of the legacy glass treatment.
@@ -356,7 +348,6 @@ private fun MainContent() {
                 ) {
                     HorizontalPager(
                         state = pagerState,
-                        userScrollEnabled = navAnimationEnabled,
                         beyondViewportPageCount = 3,
                         modifier = Modifier
                             .fillMaxSize()

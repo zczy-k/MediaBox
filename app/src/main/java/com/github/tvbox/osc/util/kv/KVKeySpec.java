@@ -135,7 +135,6 @@ public final class KVKeySpec implements KVDecoder.TypeRegistry {
         register(HawkConfig.DEFAULT_LOAD_LIVE, false);
         register(HawkConfig.INCOGNITO, false);
         register(HawkConfig.GESTURE_CONTROL_DISABLED, false);
-        register(HawkConfig.NAV_ANIMATION_DISABLED, false);
         register(HawkConfig.NAV_LIVE_HIDDEN, false);
         register(HawkConfig.PLAY_TUNNEL, false);
         register(HawkConfig.PLAY_PREFER_AAC, false);
