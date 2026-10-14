@@ -370,34 +370,13 @@ class DetailViewModel : ViewModel() {
     private val evidenceRecordedKeys = HashSet<String>()
 
     /**
-     * 是否启用**自动扩池**(默认开,可在播放设置关闭)。
+     * 本轮应搜的源数(按 [ExpandPoolPolicy] 逐轮扩大:1/3 → 1/2 → 2/3 → 全量)。
      *
-     * <p>关闭时退化为旧的"固定上界"行为([fallbackPoolCap]),即只搜前 N 个源 —— 给"我就想快、
-     * 不想等全量搜"的用户一个出口。开启时按 [ExpandPoolPolicy] 逐轮扩大。
+     * <p>2026-10-14 移除「自动扩池」开关与"固定上界"退路:那条退路存在的唯一理由是"我怕全量搜太慢",
+     * 而现在①手动换源本来就一次投满搜索范围、②并发会按超时占比自适应退让,
+     * 固定截断只会让冷门片**永远搜不到源**(源集合 300+ 时前 120 个之外的源从不参与换源)。
      */
-    private val autoExpandPool: Boolean
-        get() = try {
-            KV.get(HawkConfig.AUTO_EXPAND_POOL, true)
-        } catch (th: Throwable) {
-            true
-        }
-
-    /**
-     * 固定池上界:仅当 [autoExpandPool] **关闭**时生效(向后兼容旧行为)。
-     * 从 [HawkConfig.FALLBACK_POOL_CAP] 读取,默认 120,非法(<20)回默认。
-     */
-    private val fallbackPoolCap: Int
-        get() = try {
-            val configured = KV.get(HawkConfig.FALLBACK_POOL_CAP, DEFAULT_FALLBACK_POOL_CAP)
-            if (configured < MIN_FALLBACK_POOL_CAP) DEFAULT_FALLBACK_POOL_CAP else configured
-        } catch (th: Throwable) {
-            DEFAULT_FALLBACK_POOL_CAP
-        }
-
-    /** 本轮应搜的源数:开自动扩池按比例;关闭则用固定上界。 */
-    private fun roundPoolSize(total: Int): Int =
-        if (autoExpandPool) ExpandPoolPolicy.poolSizeForRound(total, poolRound)
-        else fallbackPoolCap.coerceAtMost(total)
+    private fun roundPoolSize(total: Int): Int = ExpandPoolPolicy.poolSizeForRound(total, poolRound)
     /**
      * 详情换源链的**当前并发度**(2026-10-14 起自适应,不再写死 12)。
      *
@@ -1625,8 +1604,9 @@ class DetailViewModel : ViewModel() {
         //
         // 降权(2026-10-13):口径为**连续权重**(SourceWeightMemory,与搜索页同一台账)。
         //
-        // ⚠️ 2026-10-13(动态扩池):候选池大小从"固定截断 fallbackPoolCap"改为
-        // **按轮次比例动态扩池**([ExpandPoolPolicy],用户指定 1/3→1/2→2/3→全量)。
+        // ⚠️ 2026-10-13(动态扩池):候选池大小从"固定截断"改为
+        // **按轮次比例动态扩池**([ExpandPoolPolicy],用户指定 1/3→1/2→2/3→全量);
+        // 那个固定上界与「自动扩池」开关已于 2026-10-14 一并移除。
         // 顺序调整为 **先排序、后按本轮大小截断** —— 这是动态扩池的**正确语义**:
         // 取"权重最高的前 N 个"(热门/健康源优先),冷门/低权重源由后续轮次补齐。
         // 若反过来(先 take 后排序),则低权重源会被 N 直接砍掉、永不被搜(降权退化成屏蔽)。
@@ -1640,19 +1620,14 @@ class DetailViewModel : ViewModel() {
         )
         // 2026-10-14 用户定案:**「换源」点击后就要并行找到所有符合本片名的源**。
         // 旧口径下手动换源仍走 1/3→1/2→2/3 三道**波间屏障**(每波要 awaitAll 全部收口才投下一波),
-        // 慢源各占 4~8s 额度 ⇒ 全量结果要 3~3.5 分钟才凑齐,用户以为"换源没反应"。
-        // 手动 ⇒ 一次把"用户设定的搜索范围"全部投出(并发仍由信号量 12 限流,取消的只是批次屏障);
+        // 慢源各占额度 ⇒ 全量结果要 3~3.5 分钟才凑齐,用户以为"换源没反应"。
+        // 手动 ⇒ 一次把搜索范围内的源全部投出(并发由自适应信号量限流,取消的只是批次屏障);
         // 自动兜底路径不变(它要的是"快出第一个候选",扩池阶梯继续保留)。
         //
-        // ⚠️ 必须尊重「自动扩池」关闭态:那个开关的语义是"我就搜前 N 个源,不要搜全站"
-        // (设置页副标题写死了这个承诺)。旧写法直接取 orderedPool.size 会把它绕过 ——
-        // 用户关了开关却仍被搜 322 个源。
-        //
-        // 本轮的**有效搜索范围**:开自动扩池 = 全部源;关闭 = 用户设定的池上限(默认 120)。
-        // 进度分母、"还有没有源可搜"、扩池上界都按它取 —— 否则关闭扩池时会出现
-        // "分母 322 却永远走不满"和"空转防护永不触发(范围外的源永不被投)"两种错觉。
-        val effectiveTotal = if (autoExpandPool) orderedPool.size
-        else fallbackPoolCap.coerceAtMost(orderedPool.size)
+        // 搜索范围就是**过滤后的全部可用源**:原先那个"固定截断到 120 个"的退路已随「自动扩池」开关
+        // 一起移除 —— 源集合 300+ 时截断会让范围外的源**永远不参与换源**,而它想省的时间
+        // 现在已经由"并发按超时占比自适应退让"去省了。
+        val effectiveTotal = orderedPool.size
         val roundSize = if (manualSwitchActive) effectiveTotal else roundPoolSize(orderedPool.size)
         val sources = orderedPool.take(roundSize)
         // 诊断包靠这行判断"预热到底有没有触发、候选池多大" —— 真机日志被 ROM 屏蔽时,
@@ -1662,7 +1637,7 @@ class DetailViewModel : ViewModel() {
             "echo-source-search start title=" + title + " pool=" + sources.size +
                 " total=" + effectiveTotal + " round=" + poolRound +
                 " weight-known=" + weightScores.size + " token=$myToken" +
-                " manual=$manualSwitchActive autoExpand=$autoExpandPool"
+                " manual=$manualSwitchActive"
         )
         // 「换源」空转防护(2026-10-14):同一部片已把搜索范围内的源投过一遍 ⇒ 不再"假启动"一轮。
         // 旧实现会置 sourcesSearching=true + 进度 (0,total),波次循环发现没有新源可投立刻 break 收口,
@@ -1868,8 +1843,8 @@ class DetailViewModel : ViewModel() {
                         " wave=" + settledThisWave +
                         " searched=" + searchedSourceKeys.size + " round=" + poolRound +
                         " frozen=$searchFrozen token=$myToken" +
-                        " waveSize=$waveSize autoExpand=$autoExpandPool" +
-                        " cap=$fallbackPoolCap hit=$hitCount newHit=$newHitsThisWave" +
+                        " waveSize=$waveSize total=$total" +
+                        " hit=$hitCount newHit=$newHitsThisWave" +
                         " conc=$concurrencyBefore->$detailConcurrency" +
                         " timeouts=" + timeoutsThisWave.get() + " concCap=$concurrencyCap"
                 )
@@ -1887,7 +1862,7 @@ class DetailViewModel : ViewModel() {
                 val hasMoreSources = searchedSourceKeys.size < total
                 val canExpand = hasMoreSources &&
                     (manualSwitchActive || ExpandPoolPolicy.shouldExpand(newHitsThisWave, true, searchedSourceKeys.size, total))
-                if (autoExpandPool && canExpand) {
+                if (canExpand) {
                     poolRound += 1
                     waveSize = ExpandPoolPolicy.poolSizeForRound(total, poolRound)
                     LOG.i(
@@ -2339,7 +2314,7 @@ class DetailViewModel : ViewModel() {
             "echo-source-switch click title=$searchTitle searching=${sourcesSearching.value}" +
                 " searched=${searchedSourceKeys.size} round=$poolRound" +
                 " candidates=${synchronized(fallbackCandidates) { fallbackCandidates.size }}" +
-                " autoExpand=$autoExpandPool cap=$fallbackPoolCap"
+                " conc=$detailConcurrency"
         )
         startSourceSearch(userInitiated = true)
     }
@@ -3824,12 +3799,6 @@ class DetailViewModel : ViewModel() {
 
     companion object {
         private val SEARCH_SEQ = java.util.concurrent.atomic.AtomicInteger(0)
-
-        /** 换源候选池默认上界(2026-10-13,问题 18):与旧硬编码值一致,保持换源链启动速度 */
-        private const val DEFAULT_FALLBACK_POOL_CAP = 120
-
-        /** 候选池下界:低于此值视为非法配置,回默认(避免用户误配 0/个位数导致换源链无候选) */
-        private const val MIN_FALLBACK_POOL_CAP = 20
 
         /** 候选站详情取超时:候选站本身慢就赶紧轮到下一个,别让用户盯着等 */
         private const val DETAIL_FALLBACK_DETAIL_TIMEOUT_MS = 3000L

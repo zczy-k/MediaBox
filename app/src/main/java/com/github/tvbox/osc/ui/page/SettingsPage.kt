@@ -84,7 +84,6 @@ data class SettingsState(
     val preferAac: Boolean,
     val musicPlayerPage: Boolean,
     /** 自动扩池(默认开):候选源搜不到时按比例逐轮扩大搜索范围,直到全量 */
-    val autoExpandPool: Boolean,
     val autoSwitchLine: Boolean,
     /** 防滥用封禁开关(默认开):反复失败的源自动停用一段时间 */
     val autoBlockBadSources: Boolean,
@@ -188,7 +187,6 @@ class SettingsViewModel : ViewModel() {
         playTunnel = KV.get(HawkConfig.PLAY_TUNNEL, false),
         preferAac = KV.get(HawkConfig.PLAY_PREFER_AAC, false),
         musicPlayerPage = MusicSettings.autoOpenPage(),
-        autoExpandPool = KV.get(HawkConfig.AUTO_EXPAND_POOL, true),
         autoSwitchLine = KV.get(HawkConfig.AUTO_SWITCH_LINE, true),
         autoBlockBadSources = KV.get(HawkConfig.AUTO_BLOCK_BAD_SOURCES, true),
         // 台账查询会顺带做到点自动解封(见 SourceHealthMemory.blockedKeys),所以这里读到的

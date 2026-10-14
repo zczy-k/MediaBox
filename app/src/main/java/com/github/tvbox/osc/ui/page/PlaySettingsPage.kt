@@ -326,18 +326,6 @@ fun PlaySettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewM
                         onCheckedChange = { vm.put(HawkConfig.PLAY_PREFER_AAC, it) },
                     )
                 }
-                SettingsCard(SettingsCardPosition.MIDDLE) {
-                    SettingsSwitchRow(
-                        title = stringResource(R.string.settings_auto_expand_pool),
-                        subtitle = stringResource(R.string.settings_auto_expand_pool_subtitle),
-                        leadingIconRes = R.drawable.ic_play_aac,
-                        checked = state.autoExpandPool,
-                        onCheckedChange = {
-                            vm.put(HawkConfig.AUTO_EXPAND_POOL, it)
-                            vm.refresh()
-                        },
-                    )
-                }
                 SettingsCard(SettingsCardPosition.LAST) {
                     SettingsSwitchRow(
                         title = stringResource(R.string.settings_music_page),

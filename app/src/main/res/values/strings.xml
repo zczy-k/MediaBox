@@ -462,8 +462,6 @@
     <string name="settings_play_prefer_aac">AAC 优先</string>
     <string name="settings_music_page">音乐播放页</string>
     <string name="settings_music_page_subtitle">识别为纯音频时自动打开</string>
-    <string name="settings_auto_expand_pool">自动扩池</string>
-    <string name="settings_auto_expand_pool_subtitle">搜索范围：开启＝全站所有源（自动兜底时逐轮扩大，直到找到或搜完）；关闭＝只搜权重最高的前 120 个源。点「换源」会把该范围内未搜过的源一次并行投出</string>
     <string name="settings_video_quality_mode">画质策略</string>
     <string name="settings_video_quality_mode_subtitle">为画质愿意付多少代价：起播前等不等、起播后会不会自动升档</string>
     <string name="video_quality_quality_first">画质优先</string>
