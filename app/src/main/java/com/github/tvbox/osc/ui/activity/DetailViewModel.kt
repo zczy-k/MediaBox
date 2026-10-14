@@ -1634,26 +1634,37 @@ class DetailViewModel : ViewModel() {
         // 2026-10-14 用户定案:**「换源」点击后就要并行找到所有符合本片名的源**。
         // 旧口径下手动换源仍走 1/3→1/2→2/3 三道**波间屏障**(每波要 awaitAll 全部收口才投下一波),
         // 慢源各占 4~8s 额度 ⇒ 全量结果要 3~3.5 分钟才凑齐,用户以为"换源没反应"。
-        // 手动 ⇒ 首轮宽度直接取全量(并发仍由信号量 12 限流,取消的只是批次屏障);
+        // 手动 ⇒ 一次把"用户设定的搜索范围"全部投出(并发仍由信号量 12 限流,取消的只是批次屏障);
         // 自动兜底路径不变(它要的是"快出第一个候选",扩池阶梯继续保留)。
-        val roundSize = if (manualSwitchActive) orderedPool.size else roundPoolSize(orderedPool.size)
+        //
+        // ⚠️ 必须尊重「自动扩池」关闭态:那个开关的语义是"我就搜前 N 个源,不要搜全站"
+        // (设置页副标题写死了这个承诺)。旧写法直接取 orderedPool.size 会把它绕过 ——
+        // 用户关了开关却仍被搜 322 个源。
+        //
+        // 本轮的**有效搜索范围**:开自动扩池 = 全部源;关闭 = 用户设定的池上限(默认 120)。
+        // 进度分母、"还有没有源可搜"、扩池上界都按它取 —— 否则关闭扩池时会出现
+        // "分母 322 却永远走不满"和"空转防护永不触发(范围外的源永不被投)"两种错觉。
+        val effectiveTotal = if (autoExpandPool) orderedPool.size
+        else fallbackPoolCap.coerceAtMost(orderedPool.size)
+        val roundSize = if (manualSwitchActive) effectiveTotal else roundPoolSize(orderedPool.size)
         val sources = orderedPool.take(roundSize)
         // 诊断包靠这行判断"预热到底有没有触发、候选池多大" —— 真机日志被 ROM 屏蔽时,
         // 文件日志(仅 diag 包落盘)是唯一可观测点。前缀 echo-source- 已在 LOG 白名单里。
         // round/pool/total 三者同看,才能确认"动态扩池"真的在逐轮扩大。
         LOG.i(
             "echo-source-search start title=" + title + " pool=" + sources.size +
-                " total=" + orderedPool.size + " round=" + poolRound +
-                " weight-known=" + weightScores.size + " token=$myToken"
+                " total=" + effectiveTotal + " round=" + poolRound +
+                " weight-known=" + weightScores.size + " token=$myToken" +
+                " manual=$manualSwitchActive autoExpand=$autoExpandPool"
         )
-        // 「换源」空转防护(2026-10-14):同一部片已把所有源投过一遍 ⇒ 不再"假启动"一轮。
+        // 「换源」空转防护(2026-10-14):同一部片已把搜索范围内的源投过一遍 ⇒ 不再"假启动"一轮。
         // 旧实现会置 sourcesSearching=true + 进度 (0,total),波次循环发现没有新源可投立刻 break 收口,
         // 于是用户看到"进度条一闪就没了、列表一条没多" —— 分不清"已经搜完"还是"点坏了"。
         // 现在:直接给出终态提示(仅用户主动点换源时提示),并解除"不冻结"闩锁,让冻结保护回归。
-        val unsearchedCount = orderedPool.count { it.key !in searchedSourceKeys }
+        val unsearchedCount = orderedPool.take(effectiveTotal).count { it.key !in searchedSourceKeys }
         if (unsearchedCount == 0) {
             LOG.i(
-                "echo-source-search no-new-source total=" + orderedPool.size +
+                "echo-source-search no-new-source total=" + effectiveTotal +
                     " searched=" + searchedSourceKeys.size + " manual=$userInitiated token=$myToken"
             )
             sourcesSearching.value = false
@@ -1662,7 +1673,7 @@ class DetailViewModel : ViewModel() {
             searchProgress.value = null
             publishSourceChips()
             if (userInitiated) {
-                toastEvent.value = str(R.string.search_all_sources_done, orderedPool.size)
+                toastEvent.value = str(R.string.search_all_sources_done, effectiveTotal)
             }
             settleDeferredEmpty()
             return
@@ -1681,8 +1692,8 @@ class DetailViewModel : ViewModel() {
         // ⚠️ 分子用**已投源数**而不是 0(2026-10-14):searchedSourceKeys 是同片跨轮累计的,
         // 写 0 会让第二轮起搜时进度从 108/322 掉回 0、下一次上报又跳到 109,看着像倒退。
         searchProgress.value = SearchProgress(
-            searchedSourceKeys.size.coerceAtMost(orderedPool.size),
-            orderedPool.size,
+            searchedSourceKeys.size.coerceAtMost(effectiveTotal),
+            effectiveTotal,
             synchronized(fallbackCandidates) { fallbackCandidates.size },
         )
         // [临时诊断 2026-10-14 #1] 搜索启动时刻的 UI 状态快照(searchProgress 分母应为全量源数)。
@@ -1713,7 +1724,7 @@ class DetailViewModel : ViewModel() {
             //
             // ## 并发仍由信号量(12)控
             // 每波内 `async` 排队,慢源等满超时才释放额度;波间串行(上一波 awaitAll 完才判扩池)。
-            val poolView = orderedPool  // 全量(按权重降序);每波只 take 前 N 个并滤掉已投
+            val poolView = orderedPool.take(effectiveTotal)  // 本轮有效范围(按权重降序);每波只 take 前 N 个并滤掉已投
             var waveSize = roundSize    // 当前波宽度(首轮 = 外层算好的 roundSize)
             val total = poolView.size
             while (true) {
