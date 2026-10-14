@@ -33,6 +33,7 @@ internal fun lineLabel(
     flagName: String?,
     heights: Map<String, Int>,
     missing: List<Int> = emptyList(),
+    health: String = "",
 ): String {
     val base = stringResource(R.string.detail_line_index, index + 1)
     val suffix = LineLabelPolicy.qualitySuffix(flagName?.let { heights[it] } ?: 0)
@@ -42,6 +43,9 @@ internal fun lineLabel(
     return buildList {
         add(base)
         if (suffix.isNotEmpty()) add(suffix)
+        // 健康标签(2026-10-14 追加式):"稳定"/"起播慢"/"不稳定"。画质保留在前,这里只补充;
+        // 没数据时 health 为空,不追加(宁缺勿假)。
+        if (health.isNotEmpty()) add(health)
         if (missingText.isNotEmpty()) add(missingText)
     }.joinToString(" · ")
 }
@@ -86,7 +90,7 @@ internal fun DetailLineSection(
             FilterChip(
                 selected = flag.name == currentFlag,
                 onClick = { vm.onFlagClick(flag.name ?: "") },
-                label = { Text(lineLabel(index, flag.name, lineHeights, vm.lineMissingEpisodes(flag.name))) },
+                label = { Text(lineLabel(index, flag.name, lineHeights, vm.lineMissingEpisodes(flag.name), vm.lineHealthSuffix(flag.name))) },
                 shape = RoundedCornerShape(20.dp),
                 colors = MaterialTheme.colorScheme.filterChipColors(),
             )

@@ -151,14 +151,19 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int) {
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // 标签只由下标生成(源 1 / 源 2 …),**不含真实站名** —— 见本函数 KDoc
+            // 标签只由下标生成(源 1 / 源 2 …),**不含真实站名** —— 见本函数 KDoc。
+            // 2026-10-14(出路 A):追加源评分 —— 有数据显示"· 75分",无历史数据显示"· 暂无评分"。
+            // 让用户在候选源里"有依据地挑",而不是在匿名序号里盲选。
             itemsIndexed(sourceChips, key = { _, c -> c.key }) { index, chip ->
                 val label = vm.sourceLabelFor(index)
                 if (label.isEmpty()) return@itemsIndexed
+                val scoreText = chip.score?.let {
+                    stringResource(R.string.detail_source_score, Math.round(it).toInt())
+                } ?: stringResource(R.string.detail_source_no_score)
                 FilterChip(
                     selected = false,
                     onClick = { vm.candidateForKey(chip.key)?.let { vm.switchSource(it) } },
-                    label = { Text(label) },
+                    label = { Text("$label · $scoreText") },
                     shape = RoundedCornerShape(20.dp),
                     colors = MaterialTheme.colorScheme.filterChipColors(
                         containerColor = MaterialTheme.colorScheme.surfaceContainer,

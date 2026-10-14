@@ -41,4 +41,52 @@ class LineLabelPolicyTest {
         assertEquals("240P", LineLabelPolicy.qualitySuffix(240))
         assertEquals("180P", LineLabelPolicy.qualitySuffix(180))
     }
+
+    // ==================== healthSuffix(2026-10-14 追加式) ====================
+
+    @Test
+    fun healthSuffix_emptyWhenNoData() {
+        // 没数据(未失败、未测速、未成功) ⇒ 空串,不编
+        assertEquals("", LineLabelPolicy.healthSuffix(failStreak = 0, resolveMs = 0L, playedAt = 0L))
+    }
+
+    @Test
+    fun healthSuffix_unstableWinsOverOthers() {
+        // 连续失败达可疑门槛(2) ⇒ "不稳定",优先级高于速度
+        assertEquals(
+            LineLabelPolicy.UNSTABLE,
+            LineLabelPolicy.healthSuffix(failStreak = 2, resolveMs = 9000L, playedAt = 123L),
+        )
+    }
+
+    @Test
+    fun healthSuffix_slowWhenNoFailures() {
+        // 无失败但取流 ≥5s ⇒ "起播慢"
+        assertEquals(
+            LineLabelPolicy.SLOW,
+            LineLabelPolicy.healthSuffix(failStreak = 0, resolveMs = 5000L, playedAt = 123L),
+        )
+        // 4999ms 未达门槛 ⇒ 落到"稳定"(已成功过)
+        assertEquals(
+            LineLabelPolicy.STABLE,
+            LineLabelPolicy.healthSuffix(failStreak = 0, resolveMs = 4999L, playedAt = 123L),
+        )
+    }
+
+    @Test
+    fun healthSuffix_stableWhenPlayedAndHealthy() {
+        assertEquals(
+            LineLabelPolicy.STABLE,
+            LineLabelPolicy.healthSuffix(failStreak = 0, resolveMs = 800L, playedAt = 123L),
+        )
+    }
+
+    @Test
+    fun healthSuffix_failOnceStillStableIfPlayed() {
+        // 单次失败(failStreak=1 < 门槛 2)不算"不稳定"
+        assertEquals(
+            LineLabelPolicy.STABLE,
+            LineLabelPolicy.healthSuffix(failStreak = 1, resolveMs = 500L, playedAt = 123L),
+        )
+    }
 }

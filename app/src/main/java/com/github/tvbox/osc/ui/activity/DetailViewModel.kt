@@ -100,8 +100,12 @@ class DetailViewModel : ViewModel() {
      * 以前这里是 `SourceChip(key, ApiConfig.get().getSource(key)?.name ?: key)`,
      * 把真实站名直接塞进 StateFlow,详情页空态下方的候选行就是它渲染的。
      * 现在只保留 [key] 作为点击回调的凭据,标签文本一律匿名(见 [sourceLabelFor]).
+     *
+     * @param score 源级评分([SourceQualityScore.score],0..100);**null = 无历史数据**。
+     *              仅用于**展示**(界面显"源N · 75分"或"源N · 暂无评分"),**不**参与排序键之外的决策。
+     *              见 source-line-scoring-design-2026-10-14.md 出路 A。
      */
-    data class SourceChip(val key: String)
+    data class SourceChip(val key: String, val score: Double? = null)
 
     /**
      * 详情加载期间就能展示的已知信息(片名 / 海报)。
@@ -1950,10 +1954,43 @@ class DetailViewModel : ViewModel() {
 
     private fun publishSourceChips() {
         val candidates = synchronized(fallbackCandidates) { fallbackCandidates.toList() }
-        sourceChips.value = candidates
             .filter { !usedSourceKeys.contains(it.sourceKey) && it.sourceKey != sourceKey }
-            .map { video -> SourceChip(video.sourceKey.orEmpty()) }
-            .distinctBy { it.key }
+            .distinctBy { it.sourceKey }
+        // 源评分(2026-10-14 出路 A):有历史数据的源显示评分,无数据的显式标"暂无评分"。
+        // ⚠️ score() 对无数据也返回中性 60,所以这里必须**另行判断"是否真无数据"**并置 null ——
+        // 直接把 60 显示成"60分"是误导(用户会以为"这源就 60 分",实际是"没有证据")。
+        val snap = CompletenessMemory.snapshot(completenessTitleKey)
+        val confirmed = EpisodeSetMath.confirmed(snap.values)
+        val keys = candidates.mapNotNull { it.sourceKey?.takeIf { k -> k.isNotBlank() } }.toSet()
+        val weightScores = SourceWeightMemory.scoresOf(keys)
+        val penalized = SourceHealthFilter.penalizedKeys()
+        val blocked = SourceHealthFilter.blockedKeys()
+        sourceChips.value = candidates.map { video ->
+            val key = video.sourceKey.orEmpty()
+            val weightScore = weightScores[key] ?: -1
+            val set = snap[key]
+            val prior = SourceCompletenessPolicy.priorCountFromNote(video.note)
+            val completenessRank = if (set != null && confirmed.isNotEmpty()) {
+                SourceCompletenessPolicy.rankScore(SourceCompletenessPolicy.tier(set, confirmed), set.size)
+            } else {
+                SourceCompletenessPolicy.rankScore(SourceCompletenessPolicy.tier(prior, confirmed.size), prior)
+            }
+            // "真无数据" = 权重无记录 且 完整度无记录(完整度 prior 也拿不到) ⇒ 显式暂无评分
+            val hasAnyData = weightScore >= 0 || set != null || prior > 0
+            val score = if (hasAnyData) {
+                SourceQualityScore.score(
+                    SourceQualityScore.Signals(
+                        weightScore = weightScore,
+                        completenessRank = completenessRank,
+                        penalized = penalized.contains(key),
+                        blocked = blocked.contains(key),
+                    ),
+                )
+            } else {
+                null
+            }
+            SourceChip(key, score)
+        }
     }
 
     /**
@@ -2083,6 +2120,19 @@ class DetailViewModel : ViewModel() {
             if (n.type == EpisodeType.REGULAR && n.episode != null) own.add(n.episode)
         }
         return EpisodeSetMath.missing(own, CompletenessMemory.confirmedSet(completenessTitleKey))
+    }
+
+    /**
+     * 该线路的**健康后缀标签**(2026-10-14 追加式):"稳定"/"起播慢"/"不稳定"之一,或空串。
+     *
+     * <p>数据来自既有线路健康台账([LineHealthMemory],按"源+片+线路"绑定,跨会话落盘) ——
+     * **只读、不改任何探测逻辑**。追加在实测画质之后([lineLabel] 里 `·` 拼接),
+     * 与既有"缺集"后缀同一模式。没数据返回空(宁缺勿假)。
+     */
+    fun lineHealthSuffix(flagName: String?): String {
+        val info = vodInfo ?: return ""
+        val state = LineHealthMemory.lookup(info.sourceKey, info.id, flagName)
+        return LineLabelPolicy.healthSuffix(state.failStreak, state.resolveMs, state.playedAt)
     }
 
     /** 该线路在该集上是否有可直接探测的直链(与 PlayLoader.shouldDirectPlay 同口径) */
