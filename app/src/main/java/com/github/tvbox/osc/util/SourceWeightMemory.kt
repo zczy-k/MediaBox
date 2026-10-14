@@ -35,6 +35,15 @@ object SourceWeightMemory {
     /** 台账最多保留多少个源(超出按"最近落账时间最旧"淘汰) */
     private const val MAX_SOURCES = 400
 
+    /**
+     * 落盘体积哨兵(字符数)。正常用量在几十 KB,这道闸只拦"异常膨胀":
+     * 权重键里塞进超长地址、源集合异常变大时,单键无限增长会实打实吃掉存储。
+     */
+    private const val MAX_JSON_CHARS = 1_000_000
+
+    /** 哨兵淘汰的下限:再超也不把台账清空,免得一次异常就抹掉全部长期意见 */
+    private const val MIN_KEEP_SOURCES = 50
+
     /** 与源健康台账同款:按点播源地址分桶,换仓后旧记忆自动作废 */
     private const val KEY_PREFIX = "source_weight_"
 
@@ -87,7 +96,9 @@ object SourceWeightMemory {
             LOG.i(
                 "echo-weight record key=" + key + " kind=" + kind +
                     " delta=" + SourceWeightPolicy.deltaFor(kind) +
-                    " eff=" + SourceWeightPolicy.scoreOf(after, t) + " -> " + after.score
+                    " eff=" + SourceWeightPolicy.scoreOf(after, t) + " -> " + after.score +
+                    " n=" + (after.ok + after.bad).toInt() +
+                    " long=" + (SourceWeightPolicy.longTermScore(after.ok, after.bad) ?: -1.0)
             )
         }
         scheduleFlush()
@@ -249,6 +260,10 @@ object SourceWeightMemory {
                     weights[key] = SourceWeightPolicy.Weight(
                         score = obj.optInt("s", SourceWeightPolicy.NEUTRAL),
                         at = obj.optLong("at"),
+                        // 老版本盘上没有这两个字段:optDouble 拿不到就是 0 ⇒ 无长期意见,
+                        // 行为与加长期分之前完全一致(向后兼容,不迁移)。
+                        ok = obj.optDouble("ok", 0.0),
+                        bad = obj.optDouble("bad", 0.0),
                     )
                 }
             }
@@ -271,7 +286,11 @@ object SourceWeightMemory {
         val root = JSONObject()
         val wJson = JSONObject()
         for ((key, w) in weights) {
-            wJson.put(key, JSONObject().put("s", w.score).put("at", w.at))
+            val obj = JSONObject().put("s", w.score).put("at", w.at)
+            // 计数为零就不写:冷源保持老格式的尺寸,别为"还没攒出的长期分"白占字节
+            if (w.ok >= 0.01) obj.put("ok", round2(w.ok))
+            if (w.bad >= 0.01) obj.put("bad", round2(w.bad))
+            wJson.put(key, obj)
         }
         val sJson = JSONObject()
         for ((key, at) in lastSearched ?: emptyMap<String, Long>()) {
@@ -282,10 +301,46 @@ object SourceWeightMemory {
         return root.toString()
     }
 
+    /** 长期计数落盘只留 2 位小数:衰减后的尾巴对排序没有意义,却会拉长载荷。 */
+    private fun round2(v: Double): Double = ((v * 100.0) + 0.5).toLong() / 100.0
+
+    /**
+     * 体积哨兵:载荷超预算就按"最近落账最旧"每轮砍掉 1/4,直到达标或只剩 [MIN_KEEP_SOURCES]。
+     *
+     * <p>"上次被搜"表跟着一起删,否则会留下没有权重却占着轮换名额的孤儿键。
+     *
+     * @return 淘汰条数(0 = 没动刀)
+     */
+    private fun enforceSizeLocked(): Int {
+        val weights = cache ?: return 0
+        var dropped = 0
+        var guard = 0
+        while (guard++ < 8 && weights.size > MIN_KEEP_SOURCES && encode().length > MAX_JSON_CHARS) {
+            val keepCount = (weights.size * 3 / 4).coerceAtLeast(MIN_KEEP_SOURCES)
+            val survivors = HashMap<String, SourceWeightPolicy.Weight>()
+            val ordered = weights.entries.sortedByDescending { it.value.at }.take(keepCount)
+            for (e in ordered) survivors[e.key] = e.value
+            val doomed = weights.keys.filterNot { survivors.containsKey(it) }
+            for (k in doomed) {
+                weights.remove(k)
+                lastSearched?.remove(k)
+            }
+            dropped += doomed.size
+        }
+        return dropped
+    }
+
     /** 必须有 [lock] */
     private fun flushLocked() {
         val bucket = cacheBucket ?: return
         if (!dirty) return
+        val dropped = enforceSizeLocked()
+        if (dropped > 0) {
+            LOG.i(
+                "echo-weight size-trim dropped=" + dropped + " keep=" + (cache?.size ?: 0) +
+                    " limit=" + MAX_JSON_CHARS
+            )
+        }
         try {
             KV.put(bucket, encode())
         } catch (th: Throwable) {
