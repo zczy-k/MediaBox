@@ -32,6 +32,7 @@ import com.github.tvbox.osc.player.MiniProbeGate
 import com.github.tvbox.osc.player.PlaybackFailureMemory
 import com.github.tvbox.osc.player.PlaybackSession
 import com.github.tvbox.osc.player.QualityGovernor
+import com.github.tvbox.osc.player.SourceQualityScore
 import com.github.tvbox.osc.player.VideoQualityMemory
 import com.github.tvbox.osc.player.VideoQualityPolicy
 import com.github.tvbox.osc.player.VideoQualityProbe
@@ -2401,38 +2402,75 @@ class DetailViewModel : ViewModel() {
      * 使"换源链"与"搜索首轮"对同一个源的判断口径一致 —— 否则会出现
      * "搜索时已把这源降到队尾,换源却仍优先切过去"的自相矛盾。
      *
-     * <p>⚠️ 权重**只作最末次键**:完整度(能不能看全)与标称画质(清不清晰)都比"这源历史快不快"
-     * 更贴近用户当下诉求;权重只在两者都并列时起 tie-break 作用。且**只重排不剔除** ——
-     * 低权重源仍会被试到(与《源与线路的权重模型》"降权≠屏蔽"一致)。
+     * <p>⚠️ 源评分**只作最末次键**:完整度(能不能看全)与标称画质(清不清晰)都比"这源历史靠不靠谱"
+     * 更贴近用户当下诉求;源评分只在两者都并列时起 tie-break 作用。且**只重排不剔除** ——
+     * 低分源仍会被试到(与"降权≠屏蔽"一致)。
+     *
+     * <p>2026-10-14(评分系统):末键由"裸源权重 [SourceWeightMemory.scoreOf]"升级为
+     * **[SourceQualityScore.score]** —— 它融合 表现分(权重台账) + 完整度分 + 健康惩罚(降权/封禁)。
+     * 这是换源场景下"源质量排序"的落地(见 source-line-scoring-design-2026-10-14.md)。
+     * 无记录的源按中性参与,并列时回退原序(与"拿不准不降权"一致)。
      */
     private fun sortFallbackCandidatesByCompleteness() = synchronized(fallbackCandidates) {
         val snap = CompletenessMemory.snapshot(completenessTitleKey)
         val confirmed = EpisodeSetMath.confirmed(snap.values)
-        fallbackCandidates.sortWith(
-            compareByDescending<Movie.Video> { video ->
-                // 优先用已记录的正片集合(覆盖/连续性口径),无集合退回 note 先验(数量口径)
-                val set = snap[video.sourceKey]
-                val prior = SourceCompletenessPolicy.priorCountFromNote(video.note)
-                if (set != null && confirmed.isNotEmpty()) {
-                    SourceCompletenessPolicy.rankScore(
-                        SourceCompletenessPolicy.tier(set, confirmed),
-                        set.size,
-                    )
-                } else {
-                    SourceCompletenessPolicy.rankScore(
-                        SourceCompletenessPolicy.tier(prior, confirmed.size),
-                        prior,
-                    )
-                }
-                // P-质量维度 tie-break:同完整度分内,标称高清/4K 的源优先,TC 沉底;
-                // 电影(权威未知,全员同分)由此获得画质排序——多集剧集数仍主导
-            }.thenByDescending { video ->
-                QualityLabelPolicy.priorityFromLabel(video.note)
-                // 最末次键:实测源权重(与搜索首轮同一台账),同分并列时让"历史更靠谱的源"优先
-            }.thenByDescending { video ->
-                SourceWeightMemory.scoreOf(video.sourceKey)
+        // 完整度分(复用既有口径):已记录正片集合优先,否则退回 note 先验
+        val completenessRankOf: (Movie.Video) -> Int = { video ->
+            val set = snap[video.sourceKey]
+            val prior = SourceCompletenessPolicy.priorCountFromNote(video.note)
+            if (set != null && confirmed.isNotEmpty()) {
+                SourceCompletenessPolicy.rankScore(
+                    SourceCompletenessPolicy.tier(set, confirmed),
+                    set.size,
+                )
+            } else {
+                SourceCompletenessPolicy.rankScore(
+                    SourceCompletenessPolicy.tier(prior, confirmed.size),
+                    prior,
+                )
             }
+        }
+        // 源评分的输入信号一次性取齐(权重台账 + 健康罚则),避免逐元素查表
+        val keys = fallbackCandidates.mapNotNull { it.sourceKey?.takeIf { k -> k.isNotBlank() } }.toSet()
+        val weightScores = SourceWeightMemory.scoresOf(keys)
+        val penalized = SourceHealthFilter.penalizedKeys()
+        val blocked = SourceHealthFilter.blockedKeys()
+        fallbackCandidates.sortWith(
+            compareByDescending<Movie.Video> { completenessRankOf(it) }
+                // P-质量维度 tie-break:同完整度分内,标称高清/4K 的源优先,TC 沉底
+                .thenByDescending { QualityLabelPolicy.priorityFromLabel(it.note) }
+                // 最末次键:源级评分(表现+完整度+健康),同分并列时让"历史更靠谱的源"优先
+                .thenByDescending { video ->
+                    val key = video.sourceKey.orEmpty()
+                    SourceQualityScore.score(
+                        SourceQualityScore.Signals(
+                            weightScore = weightScores[key] ?: -1,
+                            completenessRank = completenessRankOf(video),
+                            penalized = penalized.contains(key),
+                            blocked = blocked.contains(key),
+                        ),
+                    )
+                },
         )
+        // 可观测(echo-source 前缀已在 LOG 白名单):打 top3 的源评分**数值**,便于真机验证
+        // "排序依据是否合理"。⚠️ 不打源标识(匿名铁律:此处无 index 上下文,打 key 会泄露身份端口)。
+        // 只在有多个候选时打一条,避免刷屏。
+        if (fallbackCandidates.size > 1) {
+            val top = fallbackCandidates.take(3).joinToString(",") { v ->
+                String.format(
+                    "%.0f",
+                    SourceQualityScore.score(
+                        SourceQualityScore.Signals(
+                            weightScore = weightScores[v.sourceKey.orEmpty()] ?: -1,
+                            completenessRank = completenessRankOf(v),
+                            penalized = penalized.contains(v.sourceKey.orEmpty()),
+                            blocked = blocked.contains(v.sourceKey.orEmpty()),
+                        ),
+                    ),
+                )
+            }
+            LOG.i("echo-source-score reorder n=" + fallbackCandidates.size + " top3=" + top)
+        }
     }
 
     /**

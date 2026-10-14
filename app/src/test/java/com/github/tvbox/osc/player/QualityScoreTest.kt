@@ -130,4 +130,31 @@ class QualityScoreTest {
         assertTrue(dead >= 0.0)
         assertTrue(dead < 0.2)
     }
+
+    // ==================== 可用性门槛(2026-10-14 扩展) ====================
+
+    @Test
+    fun `明确不可用直接0分`() {
+        assertEquals(
+            0.0,
+            QualityScore.compute(fhd, 500, 0, QualityScore.Scene.STEADY, available = false),
+            0.0001,
+        )
+    }
+
+    @Test
+    fun `可用性未知不惩罚_向后兼容`() {
+        // available 默认 null:与不传该参数的老行为逐字一致
+        val withNull = QualityScore.compute(fhd, 500, 0, QualityScore.Scene.STEADY, available = null)
+        val legacy = QualityScore.compute(fhd, 500, 0, QualityScore.Scene.STEADY)
+        assertEquals(legacy, withNull, 0.0001)
+        assertTrue(withNull > 0.0)
+    }
+
+    @Test
+    fun `可用优先于不可用`() {
+        val ok = QualityScore.compute(hd, 3000, 0, QualityScore.Scene.STEADY, available = true)
+        val bad = QualityScore.compute(fhd, 500, 0, QualityScore.Scene.STEADY, available = false)
+        assertTrue("不可用即便更清晰也应排在可用之后", ok > bad)
+    }
 }

@@ -84,18 +84,23 @@ object QualityScore {
     }
 
     /**
-     * 综合评分(越大越优先)。三个维度都归一到 0..1:
+     * 综合评分(越大越优先)。维度归一到 0..1:
      * <ul>
      *   <li>**清晰度** = √(W×H) / [REF_SHARPNESS](基准 1080P 级,超过则截顶为 1);</li>
-     *   <li>**速度** = 由取流耗时 [resolveMs] 与实测码率共同决定(越快越高);</li>
-     *   <li>**稳定性** = 由历史成功率推导([failStreak] 越大越低)。</li>
+     *   <li>**速度** = 由取流耗时 [resolveMs] 决定(越快越高);</li>
+     *   <li>**稳定性** = 由历史连续失败 [failStreak] 推导(越大越低),作**乘法折扣**;</li>
+     *   <li>**可用性**(2026-10-14 扩展) = [available] 的门槛:明确不可用 ⇒ 直接 0 分。</li>
      * </ul>
      *
      * @param variant   候选线路的实测画质(尺寸未知时清晰度维度按 0,与"没数据不优先"一致)
-     * @param resolveMs 取流耗时(ms);&lt;=0 = 未知,按中性 [NEUTRAL_SAMPLE] 参与
+     * @param resolveMs 取流耗时(ms);&lt;0 = 未知,按中性 [NEUTRAL_SAMPLE] 参与
      * @param failStreak 该线路当前连续失败次数(0 = 健康)
      * @param scene     播放场景(权重来源)
      * @param deviceCapHeight 设备上限(像素高);&gt;0 且候选超出时返回 [REJECTED]
+     * @param available **可用性门槛**:`false` = 明确不可用(如从未成功且已失败过)⇒ 0 分;
+     *                  `true` = 可用;`null` = **未知**(默认,不惩罚,保持向后兼容)。
+     *                  ⚠️ 用 `null` 而非 `false` 作默认,是为了"拿不准不惩罚" ——
+     *                  调用方没提供可用性信息时,不能把它当"不可用"判死。
      */
     fun compute(
         variant: VideoQualityPolicy.Variant?,
@@ -103,12 +108,15 @@ object QualityScore {
         failStreak: Int,
         scene: Scene,
         deviceCapHeight: Int = 0,
+        available: Boolean? = null,
     ): Double {
         val w = weightsOf(scene)
         // 设备上限:与 VideoQualityPolicy.pickBest 同口径 —— 超限直接判死(不是排后面)
         if (deviceCapHeight > 0 && variant != null && variant.known && variant.height > deviceCapHeight) {
             return REJECTED
         }
+        // 可用性门槛:明确不可用 ⇒ 0(排在所有可用项之后,但不等于 REJECTED 的"判死")
+        if (available == false) return 0.0
         val quality = qualityRatio(variant)
         val speed = speedRatio(variant, resolveMs)
         val stability = stabilityRatio(failStreak)
