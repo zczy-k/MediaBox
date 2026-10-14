@@ -1661,16 +1661,18 @@ class DetailViewModel : ViewModel() {
                         }.awaitAll()
                     }
                 }
+                val hitCount = synchronized(fallbackCandidates) { fallbackCandidates.size }
                 LOG.i(
                     "echo-source-search wave-done done=${doneCount.get()}" +
                         " wave=" + (doneCount.get() - waveSizeBefore) +
                         " searched=" + searchedSourceKeys.size + " round=" + poolRound +
-                        " frozen=$searchFrozen token=$myToken"
+                        " frozen=$searchFrozen token=$myToken" +
+                        " waveSize=$waveSize autoExpand=$autoExpandPool" +
+                        " cap=$fallbackPoolCap hit=$hitCount"
                 )
                 // 让路:换片/冻结后立即停(别再投下一波、也别走收口)
                 if (!searchActive(tokenStr)) return@launch
                 // 扩池判定:本波收口且 0 命中且还有更多源 ⇒ 加大宽度进下一波(**不重启、不重投**)
-                val hitCount = synchronized(fallbackCandidates) { fallbackCandidates.size }
                 if (autoExpandPool && ExpandPoolPolicy.shouldExpand(hitCount, true, searchedSourceKeys.size, total)) {
                     poolRound += 1
                     waveSize = ExpandPoolPolicy.poolSizeForRound(total, poolRound)
@@ -2045,8 +2047,13 @@ class DetailViewModel : ViewModel() {
         searchFrozen = false
         // 先按当前已有候选刷一次(可能有 cache-seed 的历史命中),再启动/续搜
         publishSourceChips()
+        LOG.i(
+            "echo-source-switch click title=$searchTitle searching=${sourcesSearching.value}" +
+                " searched=${searchedSourceKeys.size} round=$poolRound" +
+                " candidates=${synchronized(fallbackCandidates) { fallbackCandidates.size }}" +
+                " autoExpand=$autoExpandPool cap=$fallbackPoolCap"
+        )
         startSourceSearch()
-        LOG.i("echo-source-switch click title=$searchTitle searching=${sourcesSearching.value}")
     }
 
     /** 下一页(仅在有下一页时生效;钳制由 [CandidatePager.hasNext] 保证)。 */
