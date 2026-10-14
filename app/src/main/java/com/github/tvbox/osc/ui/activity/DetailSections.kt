@@ -111,26 +111,26 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SectionTitleIcon(painterResource(R.drawable.ic_detail_switch_source))
-            // 搜索进行中置灰禁用(2026-10-14 用户反馈 #2):防止用户误点两次换源。
-            // 右侧进度文字**保留**(用户明确要求),让用户仍能看到"搜索进度(xx/322)"。
+            // 2026-10-14 用户反馈 #2 修正:按钮**不再因"自动搜索在跑"而置灰** ——
+            // 那会让用户一进详情页(自动搜索即启动)就点不了换源,逻辑不通。
+            // 现在只在"用户主动点了换源、该轮搜索还在跑"这一小段防连点(manualSwitching)。
             TextButton(
                 onClick = { vm.onSwitchSourceClick() },
-                enabled = !sourcesSearching,
+                enabled = !vm.manualSwitching.collectAsStateWithLifecycle().value,
             ) {
                 Text(stringResource(R.string.detail_source_switch_action))
             }
             Text(
-                text = if (sourcesSearching) {
-                    // 进度用 "搜索进度(xx/总数)" —— 用户明确要看"还剩多少个源没搜完"。
-                    // xx = 已收口源数(done),总数 = 全量源数(total,如 322);扩池后分母不变、分子递增。
+                // 2026-10-14 #1 修正:进度显示**以 searchProgress 为准**(与 sourcesSearching 解耦)。
+                // 原来用 `if (sourcesSearching)` 判断,一旦 resetEngineState 把 progress 清 null
+                // 而 searching 仍为 true,就永远落到提示分支(真机 bug)。现在只要有进度有值就显示进度。
+                text = run {
                     val p = searchProgress
                     if (p != null && p.total > 0) {
                         stringResource(R.string.detail_source_switching, p.done, p.total)
                     } else {
                         stringResource(R.string.detail_source_switch_hint)
                     }
-                } else {
-                    stringResource(R.string.detail_source_switch_hint)
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -192,25 +192,14 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int) {
                 // 全局下标 = 页号*每页数 + 页内下标,让用户翻页时序号连续(源6、源7…)。
                 itemsIndexed(sourceChips, key = { _, c -> c.key }) { index, chip ->
                     val globalIndex = chipPage * CandidatePager.PAGE_SIZE + index
-                    // 当前源(2026-10-14 用户反馈 #3):不显示"源N"序号,直接标「当前源」;
-                    // 其余源仍按全局下标生成匿名标签(源1/源2…)。
-                    val label = if (chip.isCurrent) {
-                        stringResource(R.string.detail_source_current)
-                    } else {
-                        vm.sourceLabelFor(globalIndex)
-                    }
+                    val label = vm.sourceLabelFor(globalIndex)
                     if (label.isEmpty()) return@itemsIndexed
                     val scoreText = chip.score?.let {
                         stringResource(R.string.detail_source_score, Math.round(it).toInt())
                     } ?: stringResource(R.string.detail_source_no_score)
                     FilterChip(
-                        selected = chip.isCurrent,
-                        // 当前源不可点:换到自己没有意义(用户反馈 #3)
-                        onClick = {
-                            if (!chip.isCurrent) {
-                                vm.candidateForKey(chip.key)?.let { vm.switchSource(it) }
-                            }
-                        },
+                        selected = false,
+                        onClick = { vm.candidateForKey(chip.key)?.let { vm.switchSource(it) } },
                         label = { Text("$label · $scoreText") },
                         shape = RoundedCornerShape(20.dp),
                         colors = MaterialTheme.colorScheme.filterChipColors(

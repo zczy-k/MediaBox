@@ -104,10 +104,8 @@ class DetailViewModel : ViewModel() {
      * @param score 源级评分([SourceQualityScore.score],0..100);**null = 无历史数据**。
      *              仅用于**展示**(界面显"源N · 75分"或"源N · 暂无评分"),**不**参与排序键之外的决策。
      *              见 source-line-scoring-design-2026-10-14.md 出路 A。
-     * @param isCurrent 是否是**当前正在播放**的源(2026-10-14 用户反馈 #3)。为 true 时置顶显示、
-     *                  标签直接写「当前源 · xx分」(不带"源N"序号)、且不可点击(切到自己无意义)。
      */
-    data class SourceChip(val key: String, val score: Double? = null, val isCurrent: Boolean = false)
+    data class SourceChip(val key: String, val score: Double? = null)
 
     /**
      * 详情加载期间就能展示的已知信息(片名 / 海报)。
@@ -137,6 +135,15 @@ class DetailViewModel : ViewModel() {
     val qualitySelected = MutableStateFlow(0)
     val sourceChips = MutableStateFlow<List<SourceChip>>(emptyList())
     val sourcesSearching = MutableStateFlow(false)
+
+    /**
+     * **用户主动换源**后、该轮搜索仍在跑的时间窗(2026-10-14 用户反馈 #2 修正)。
+     *
+     * <p>用于「换源」按钮的置灰判据 —— **只**防"用户自己连点两次换源",
+     * **不**因"进详情页的自动搜索在跑"而禁用(那会让按钮一进页面就灰,逻辑不通,用户反馈)。
+     * 在 [onSwitchSourceClick] 置 true,在该轮搜索结束([sourcesSearching] 回落 false)时清 false。
+     */
+    val manualSwitching = MutableStateFlow(false)
 
     /**
      * 候选源列表的**当前页**(2026-10-14 详情页「换源」分页设计,0 起)。
@@ -597,6 +604,7 @@ class DetailViewModel : ViewModel() {
         relatedVideos.value = emptyList()
         // 旧协程被取消后不会回写,不清会永远停在"搜索中"
         sourcesSearching.value = false
+        manualSwitching.value = false
         qualityOptions.value = emptyList()
         qualitySelected.value = 0
         episodeSheet.value = false
@@ -1179,10 +1187,14 @@ class DetailViewModel : ViewModel() {
      * 预热这种良性任务没这个必要,顺带把它捎上只是增加耦合。
      */
     private fun prewarmSourceSearch() {
+        // 2026-10-14 用户定案:**能起播就不自动搜全站** ⇒ 取消"1.5s 后自动预热搜索"。
+        // 原设计是"详情慢过 1.5s 就先搜全站兜底",但实测这让每次进详情页都狂搜 322 源
+        // (3~3.5 分钟),而绝大多数情况当前源其实能起播 —— 纯浪费。
+        // 现在完全不预热;当前源放不出来/起播失败时,由以下兜底路径按需启动:
+        //   - 详情空/不可用:handleEmptyDetail→ensureSourceSearchRunning(约 1528)
+        //   - 起播失败:ensureSourceSearchRunning 的其余调用点
+        //   - 用户主动换源:onSwitchSourceClick→startSourceSearch
         mainHandler.removeCallbacks(sourceSearchPrewarm)
-        val title = (if (vodInfo?.name.isNullOrEmpty()) vodName else vodInfo?.name).orEmpty().trim()
-        if (title.isEmpty()) return
-        mainHandler.postDelayed(sourceSearchPrewarm, SOURCE_SEARCH_PREWARM_DELAY_MS)
     }
 
     private val sourceSearchPrewarm = Runnable {
@@ -1450,9 +1462,14 @@ class DetailViewModel : ViewModel() {
                 publishLineQualityHeights()
                 // 详情就绪即探一次未测线路:第一次观看也有画质标签(这里不做"有记忆才探"的 gating)
                 probeMissingLineQualities()
+                // 2026-10-14 用户定案:**能起播就不自动搜全站**。
+                // 原实现"详情就绪即 startSourceSearch()"会让每次进详情页都狂搜全站 322 源
+                // (实测 3~3.5 分钟),换源按钮被拖灰、进度又显示不出,用户体验极差。
+                // 现在:当前源取到内容 ⇒ 直接起播,**不**主动搜全站;只有当前源放不出来
+                // (playingList 为空,见下方 startFallbackIfNeeded)或起播失败时,才按需启动搜索。
+                // searchTitle 仍先定格,便于后续 [onSwitchSourceClick]/[ensureSourceSearchRunning] 复用。
                 if (searchTitle.isEmpty() && !info.name.isNullOrEmpty()) {
                     searchTitle = info.name.trim()
-                    startSourceSearch()
                 }
                 vodName = mVideo.name ?: vodName
                 publishHeader()
@@ -1741,6 +1758,7 @@ class DetailViewModel : ViewModel() {
             // 那两件事是"给还没起播的页面找内容"用的,而冻结的前提正是"画面已经出来了"。
             if (tokenStr == currentTokenStr() && !searchFrozen) {
                 sourcesSearching.value = false
+                manualSwitching.value = false
                 searchProgress.value = null
                 if (shouldAutoTakeOver()) loadNextFallbackCandidate()
                 // 聚合搜索全部结束 = 兜底链的结论已定论。
@@ -1922,6 +1940,7 @@ class DetailViewModel : ViewModel() {
         LOG.i("echo-source-search freeze token=$searchToken title=$searchTitle")
         // 状态即时收口:进度条随之下线(在途源的回写已被 [searchActive] 挡住,不会再让它冒出来)
         sourcesSearching.value = false
+        manualSwitching.value = false
         searchProgress.value = null
         // 冻结即落盘:用户随时可能换片/退出,没落盘的命中等于没搜过
         flushFallbackHitsSave()
@@ -2050,12 +2069,13 @@ class DetailViewModel : ViewModel() {
         // 2026-10-14(详情页「换源」分页设计):候选池**不再永久排除"切过的源"**。
         // 旧实现 `.filter { !usedSourceKeys.contains(...) }` 会让用户切过的源从列表消失 ⇒
         // 切几轮之后列表越来越空、"想切回之前那个好源"都找不到(用户真机反馈)。
-        // 切过的源**保留**(可切回),只是不特殊标注。
+        // 现在:只排除**当前源**(它没有"换到自己"的意义),切过的源**保留**(可切回),只是不特殊标注。
         //
-        // 2026-10-14(用户反馈 #3):**当前源保留并置顶**。旧实现 `.filter { it.sourceKey != sourceKey }`
-        // 把当前播放源完全滤掉 ⇒ 用户在候选列表里看不到"自己现在放的是哪个源",不知道是不是第一个。
-        // 现在:若候选里出现当前源,置顶 + 标 [SourceChip.isCurrent](标签写「当前源」、不可点)。
+        // 2026-10-14 反馈 #3 回退:曾尝试"当前源置顶+标当前源",但**前提是错的** ——
+        // 候选列表里的源全是**其他源**(全站聚合搜出来的),与起播的当前源无关;
+        // 把"源1"标成"当前源"会让用户误以为源1=正在播放的源。故回退为纯匿名序号。
         val all = synchronized(fallbackCandidates) { fallbackCandidates.toList() }
+            .filter { it.sourceKey != sourceKey }
             .distinctBy { it.sourceKey }
         // 源评分(2026-10-14 出路 A):有历史数据的源显示评分,无数据的显式标"暂无评分"。
         // ⚠️ score() 对无数据也返回中性 60,所以这里必须**另行判断"是否真无数据"**并置 null ——
@@ -2091,13 +2111,11 @@ class DetailViewModel : ViewModel() {
             } else {
                 null
             }
-            SourceChip(key, score, isCurrent = key == sourceKey)
+            SourceChip(key, score)
         }
-        // 当前源置顶(用户反馈 #3):稳定排序,只把"当前源"提到最前,其余保持自然顺序。
-        val ordered = full.sortedByDescending { it.isCurrent }
         // 页号钳制:列表可能因换片/翻页后变短,越界会显示空白(用户以为"没有源")
-        chipPage.value = CandidatePager.clampPage(chipPage.value, ordered.size)
-        sourceChips.value = CandidatePager.pageSlice(ordered, chipPage.value)
+        chipPage.value = CandidatePager.clampPage(chipPage.value, full.size)
+        sourceChips.value = CandidatePager.pageSlice(full, chipPage.value)
     }
 
     /**
@@ -2115,12 +2133,13 @@ class DetailViewModel : ViewModel() {
      * 用户明确说过"用户切了源不代表找到满意的,应把剩下的搜完"。
      */
     fun onSwitchSourceClick() {
-        // 防重入(2026-10-14 用户反馈 #2):搜索在途时按钮已在 UI 侧置灰,
-        // 这里是**第二道防线** —— 万一有别的入口(遥控/无障碍/快速连点)绕过 disabled,也拦下。
-        if (sourcesSearching.value) {
-            LOG.i("echo-source-switch skip-duplicate searching=true")
+        // 防重入(2026-10-14 用户反馈 #2):用户主动换源后该轮搜索仍在跑时,按钮置灰,
+        // 这里是**第二道防线** —— 万一有别的入口绕过 disabled,也拦下。
+        if (manualSwitching.value) {
+            LOG.i("echo-source-switch skip-duplicate manualSwitching=true")
             return
         }
+        manualSwitching.value = true
         manualSwitchActive = true
         chipPage.value = 0
         // 解冻:否则 startSourceSearch 内 searchActive 恒 false,搜索跑不动
@@ -2138,10 +2157,8 @@ class DetailViewModel : ViewModel() {
 
     /** 下一页(仅在有下一页时生效;钳制由 [CandidatePager.hasNext] 保证)。 */
     fun nextChipPage() {
-        // 计数口径必须与 [publishSourceChips] 的 full.size 一致(去重、且**含**当前源) ——
-        // 否则翻页判断会与实际列表长度错位(用户反馈 #3 改动后,当前源不再被排除)。
         val total = synchronized(fallbackCandidates) {
-            fallbackCandidates.distinctBy { it.sourceKey }.size
+            fallbackCandidates.count { it.sourceKey != sourceKey }
         }
         if (!CandidatePager.hasNext(total, chipPage.value)) return
         chipPage.value += 1
@@ -2157,9 +2174,9 @@ class DetailViewModel : ViewModel() {
         LOG.i("echo-source-switch prev page=${chipPage.value}")
     }
 
-    /** 候选源总数(全量,非当前页):供界面判断"是否有下一页"。口径同 [publishSourceChips](去重、含当前源)。 */
+    /** 候选源总数(全量,非当前页):供界面判断"是否有下一页"。 */
     fun totalCandidateCount(): Int = synchronized(fallbackCandidates) {
-        fallbackCandidates.distinctBy { it.sourceKey }.size
+        fallbackCandidates.count { it.sourceKey != sourceKey }
     }
 
     /**
@@ -2930,7 +2947,24 @@ class DetailViewModel : ViewModel() {
         fallbackKeepCurrentDetail = false
         fallbackLoadingCandidate = false
         detailTimeoutScheduled = false
+        // 2026-10-14 修复用户反馈 #1:「搜索在途却显示'点击搜索其他片源'」。
+        //
+        // 真机证据(v1.1.3-diag,盒子里的羊/与王生活的男人):
+        //   `18:41:01.909 ui searching=true  progress=null/null chips=1`
+        //   `18:41:08.809 ui searching=false progress=null/null chips=1`
+        // → UI 侧 `sourcesSearching=true` 但 `searchProgress=null`,于是 [DetailSections]
+        //   落到 else 分支显示提示文字,进度条永不出现。
+        //
+        // 根因:本函数原先**只清 searchProgress 不清 sourcesSearching**,造成二者撕裂。
+        // 更糟的是 [publishSearchProgress] 开头 `if (total <= 0) return`,一旦 total 被清 null,
+        // 之后所有进度上报全部 return —— 进度再也回不来(直到下一轮 startSourceSearch)。
+        // 每次 `switchSource`/`loadDetail`/换源都会走到这里,所以"每次换源后进度就消失"。
+        //
+        // 修法:**二者成对清**(与 [startSourceSearch] 成对置位、[freezeFallbackSearch] 成对清一致),
+        // 绝不允许出现 searching=true && progress=null 的非法组合。
         searchProgress.value = null
+        sourcesSearching.value = false
+        manualSwitching.value = false
         // 2026-10-14(换源分页):换源(keepChips=true)时**保留** manualSwitchActive —— 用户还在
         // "换源浏览"状态,搜索应继续跑全量;换片(keepChips=false)才复位(新片重新开始)。
         if (!keepChips) {
