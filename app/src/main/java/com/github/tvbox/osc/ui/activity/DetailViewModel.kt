@@ -360,6 +360,15 @@ class DetailViewModel : ViewModel() {
     private val searchedSourceKeys = HashSet<String>()
 
     /**
+     * 本轮已经写过**降权证据**的源(2026-10-14):同一轮内每源只记一次。
+     *
+     * <p>为什么必须去重:同一源可能因重试轮/慢速回包被判定多次,不去重就会把"一次没答话"
+     * 扣成好几次权重。口径与搜索页 SearchViewModel.failRecordedForToken 一致。
+     * 每开新一轮搜索时清空([startSourceSearch])—— 新一轮里的再次沉默是新的一次证据。
+     */
+    private val evidenceRecordedKeys = HashSet<String>()
+
+    /**
      * 是否启用**自动扩池**(默认开,可在播放设置关闭)。
      *
      * <p>关闭时退化为旧的"固定上界"行为([fallbackPoolCap]),即只搜前 N 个源 —— 给"我就想快、
@@ -721,13 +730,11 @@ class DetailViewModel : ViewModel() {
         val info = vodInfo ?: return
         val siteOrder = info.seriesMap?.keys?.toList().orEmpty()
         if (siteOrder.size <= 1) return
-        // 流量节省开启 ⇒ 不发起批量补探测(口径见《选线机制设计》附录 F.6):
-        // 升档已被门控关死(见 QualityGovernor.canSwitchUp 的 trafficSaver 参数),
-        // 而这条批量探测(N × ≤256KB)的服务对象正是"填升档候选",此时纯属白花流量。
-        if (DeviceCapability.trafficSaverOn()) {
-            LOG.i("echo-line-probe skip: traffic saver on")
-            return
-        }
+        // 流量节省**不再跳过补探测**(2026-10-14 语义修正):
+        // 旧理由是"升档已被门控关死 ⇒ 探测白花钱",但现在省流量只拒"切到更高码率"这一刻,
+        // 探测本身单条 ≤256KB、且产出的是跨会话的实测记忆(用户哪天关掉开关即刻受益)。
+        // 成本仍要收:省流量时只补一条最可能收益的直连线路。
+        val saver = DeviceCapability.trafficSaverOn()
         val mode = DeviceCapability.effectiveMode()
         if (!mode.shouldProbeOnFirstWatch) return
         val remembered = VideoQualityMemory.lookupAll(sourceKey, vodId, siteOrder)
@@ -752,7 +759,8 @@ class DetailViewModel : ViewModel() {
         // 解析才拿得到地址,每条 1~3 秒且同类 Spider 不能并发,代价与"更快开始播放"冲突。
         // 拿不到 URL 的线路由 probeVariantsParallel 静默跳过,不阻塞其余线路。
         val index = probeIndexOf(info)
-        val targets = missing.filter { directUrlOf(info.seriesMap?.get(it), index) != null }.take(3)
+        val targets = missing.filter { directUrlOf(info.seriesMap?.get(it), index) != null }
+            .take(if (saver) 1 else 3)
         // ⚠️ 这条日志是排查「线路N 后面一直不显示分辨率」的唯一可观测点,别删。
         // 静默 return 的分支太多(单线路/档位关闭/全测过/全是爬虫型),没有日志时
         // 只能靠猜 —— v1.0.25 真机实测就卡在这:5 条线路全是"线路1..5"无画质,
@@ -887,11 +895,11 @@ class DetailViewModel : ViewModel() {
         // 速度优先:用户明确不要这类额外请求(与起播前探测同一口径)
         val mode = DeviceCapability.effectiveMode()
         if (!mode.shouldProbeOnFirstWatch) return
-        // 流量节省:本函数的动作**全是向上**的(扫出更高画质就切),整段跳过
-        if (DeviceCapability.trafficSaverOn()) {
-            LOG.i("echo-quality sweep skip: traffic saver on")
-            return
-        }
+        // 流量节省**不再整段跳过**:该管的是"要不要切到更费流量的档"(那才是持续大开销),
+        // 不是"要不要知道每条线路是多少分辨率"(单条 ≤256KB、一次性)。
+        // 探测照常、切换由 QualityGovernor 的 trafficSaver 判据拒 —— 与"实测记忆回写不受档位
+        // 影响"这条既有口径一致:省流量开着也仍在积累,用户哪天关掉立即受益。代价仍要收:省流量时只探标称最高的两条。
+        val trafficSaver = DeviceCapability.trafficSaverOn()
         val seriesMap = info.seriesMap ?: return
         val siteOrder = seriesMap.keys.toList()
         if (siteOrder.size <= 1) return
@@ -903,14 +911,13 @@ class DetailViewModel : ViewModel() {
         // 手机锚曾用 1280,导致 1280×534 这类"宽而扁"的低清片被判"已达锚",
         // 自动画质档于是按"达锚即停"不补救,用户必须手动切画质优先才动(2026-10-10 真机教训)
         val anchor = VideoQualityPolicy.ANCHOR_WIDTH
-        // 达标且非画质优先 ⇒ 不折腾(与"够好即停"同一口径);当前未知则继续扫(要填记忆)
+        // 2026-10-14 定案:「流畅前提下尽量更高」⇒ 达锚**不再等于停止扫描**(旧此处直接 return,
+        // 于是 1080P 之上永远看不见 4K)。达锚只改变**探测范围**:只探标称档高于当前线的线路,
+        // 同档或更低的不花这份预算。真切与否仍由 θ/ΔS + 4K 天花板 + 设备上限 + 线路健康决定。
         val currentBefore = remembered.firstOrNull { it.flag == currentFlag }
-        if (VideoQualityPolicy.meetsAnchor(currentBefore, anchor) &&
+        val meetsAnchorNow = VideoQualityPolicy.meetsAnchor(currentBefore, anchor) &&
             mode != DeviceCapability.QualityMode.QUALITY_FIRST
-        ) {
-            LOG.i("echo-quality sweep skip: already meets anchor")
-            return
-        }
+        val currentLabelPriority = QualityLabelPolicy.priorityFromLabel(currentFlag)
         val nowMs = System.currentTimeMillis()
         // 候选 = 无实测记忆 且 不在负冷却中。
         //
@@ -920,11 +927,22 @@ class DetailViewModel : ViewModel() {
         // 顺序改为**按标签先验降序**（4K/蓝光 这类先探）：预算有限时先花在最可能有收益的线路上，
         // 而不是按站点原序从头取 —— 那样很可能先把预算烧在一堆标清上。
         // ⚠️ 标签先验在这里**只决定"先探谁"**，绝不参与"是否切换"的判定（判定只用实测 S）。
-        val missing = siteOrder
+        val probed = siteOrder
             .filter { flag ->
                 remembered.none { it.flag == flag } && !probeNegativeCooldownActive(flag, nowMs)
             }
             .sortedByDescending { QualityLabelPolicy.priorityFromLabel(it) }
+        // 两道"只收窄探测范围、不收窄结论"的收口:
+        // ① 当前已达 1080P 锚(非画质优先)**且标签有语义** ⇒ 只探标称更高的那些 —— 同档探出来也不会切
+        //    (θ/ΔS 挡着),白花预算。⚠️ 标签无语义时(站点常写"线路1..5",priority 全为 0)
+        //    一律**不收窄**:一收窄就永远拿不到更高档,旧的"达锚即停"只是换个形式回来(2026-10-14 自查)。
+        // ② 流量节省 ⇒ 最多探两条最可能收益的(切档仍由 QualityGovernor 拒绝,这里只图把画质记忆填上)。
+        val narrowed = if (meetsAnchorNow && currentLabelPriority > 0) {
+            probed.filter { QualityLabelPolicy.priorityFromLabel(it) > currentLabelPriority }
+        } else {
+            probed
+        }
+        val missing = if (trafficSaver) narrowed.take(2) else narrowed
         if (missing.isEmpty()) {
             LOG.i("echo-quality sweep skip: nothing missing")
             return
@@ -937,7 +955,8 @@ class DetailViewModel : ViewModel() {
         val token = detailBuildToken
         LOG.i(
             "echo-quality sweep start missing=" + missing.size + " lines=" + siteOrder.size +
-                " cap=" + cap + " mode=" + mode.name
+                " cap=" + cap + " mode=" + mode.name +
+                " anchorSkipLower=" + meetsAnchorNow + " saver=" + trafficSaver
         )
         qualityProbeJob?.cancel()
         qualityProbeJob = viewModelScope.launch {
@@ -1032,7 +1051,17 @@ class DetailViewModel : ViewModel() {
             val pool = freshRemembered.filter { it.known } + allProbed
             val best = VideoQualityPolicy.pickBest(pool, cap)
             val currentNow = freshRemembered.firstOrNull { it.flag == currentFlag }
-            val reject = QualityGovernor.rejectReasonForRemedy(mode, currentNow, best, cap, false)
+            var reject = QualityGovernor.rejectReasonForRemedy(mode, currentNow, best, cap, trafficSaver)
+            // 与起播前 [applyFirstWatchProbe] 同一道闸:实测最优 ≠ 能用。一条刚连续失败两次的线路,
+            // 探测出的分辨率再高,切过去大概率还是失败,而这里的代价是一次黑屏重起播。
+            // 只在"目标可疑且当前不可疑"时拦 —— 当前也可疑时,换一条仍可能更好。
+            // 旧实现漏了这一条 ⇒ 重试阶梯刚逃离的坏线,几秒后被画质扫描切回去(2026-10-14 审查发现)。
+            if (reject == null && best != null &&
+                LineHealthMemory.isSuspect(siteKey, vod, best.flag) &&
+                !LineHealthMemory.isSuspect(siteKey, vod, currentFlag)
+            ) {
+                reject = "target-suspect"
+            }
             LOG.i(
                 "echo-quality sweep lines=" + missing.size +
                     " via=spider" + viaSpider + "/direct" + viaDirect +
@@ -1554,7 +1583,7 @@ class DetailViewModel : ViewModel() {
         return true
     }
 
-    private fun startSourceSearch() {
+    private fun startSourceSearch(userInitiated: Boolean = false) {
         val title = searchTitle.ifEmpty { vodName.trim() }
         if (title.isEmpty()) return
         if (sourcesSearching.value && searchTitle == title) return
@@ -1572,6 +1601,9 @@ class DetailViewModel : ViewModel() {
         // 新一轮搜索 ⇒ 解冻(上一轮可能因为起播成功被冻结过;那条源后来放不出来时还得靠它)
         searchFrozen = false
         searchToken = SEARCH_SEQ.incrementAndGet()
+        // 新一轮 ⇒ 失败证据去重表清空:同一源在新一轮里再次没答话是**新的一次证据**,该再扣一次
+        // (与搜索页 failRecordedForToken 的"每轮一次"口径一致 —— 那边是按 token,这里按轮次天然等价)
+        evidenceRecordedKeys.clear()
         val myToken = searchToken
         val tokenStr = "detail_$myToken"
         val checked = SearchHelper.getSourcesForSearch()
@@ -1598,7 +1630,12 @@ class DetailViewModel : ViewModel() {
             weightOf = { weightScores[it] ?: SourceWeightPolicy.NEUTRAL },
             hasWeightOf = { weightScores.containsKey(it) },
         )
-        val roundSize = roundPoolSize(orderedPool.size)
+        // 2026-10-14 用户定案:**「换源」点击后就要并行找到所有符合本片名的源**。
+        // 旧口径下手动换源仍走 1/3→1/2→2/3 三道**波间屏障**(每波要 awaitAll 全部收口才投下一波),
+        // 慢源各占 4~8s 额度 ⇒ 全量结果要 3~3.5 分钟才凑齐,用户以为"换源没反应"。
+        // 手动 ⇒ 首轮宽度直接取全量(并发仍由信号量 12 限流,取消的只是批次屏障);
+        // 自动兜底路径不变(它要的是"快出第一个候选",扩池阶梯继续保留)。
+        val roundSize = if (manualSwitchActive) orderedPool.size else roundPoolSize(orderedPool.size)
         val sources = orderedPool.take(roundSize)
         // 诊断包靠这行判断"预热到底有没有触发、候选池多大" —— 真机日志被 ROM 屏蔽时,
         // 文件日志(仅 diag 包落盘)是唯一可观测点。前缀 echo-source- 已在 LOG 白名单里。
@@ -1608,6 +1645,27 @@ class DetailViewModel : ViewModel() {
                 " total=" + orderedPool.size + " round=" + poolRound +
                 " weight-known=" + weightScores.size + " token=$myToken"
         )
+        // 「换源」空转防护(2026-10-14):同一部片已把所有源投过一遍 ⇒ 不再"假启动"一轮。
+        // 旧实现会置 sourcesSearching=true + 进度 (0,total),波次循环发现没有新源可投立刻 break 收口,
+        // 于是用户看到"进度条一闪就没了、列表一条没多" —— 分不清"已经搜完"还是"点坏了"。
+        // 现在:直接给出终态提示(仅用户主动点换源时提示),并解除"不冻结"闩锁,让冻结保护回归。
+        val unsearchedCount = orderedPool.count { it.key !in searchedSourceKeys }
+        if (unsearchedCount == 0) {
+            LOG.i(
+                "echo-source-search no-new-source total=" + orderedPool.size +
+                    " searched=" + searchedSourceKeys.size + " manual=$userInitiated token=$myToken"
+            )
+            sourcesSearching.value = false
+            manualSwitching.value = false
+            manualSwitchActive = false
+            searchProgress.value = null
+            publishSourceChips()
+            if (userInitiated) {
+                toastEvent.value = str(R.string.search_all_sources_done, orderedPool.size)
+            }
+            settleDeferredEmpty()
+            return
+        }
         // ⚠️ 必须先取消旧搜索 job(2026-10-09 真机数据修正):分批后旧 job 要跑完全部批才自然结束,
         // 快速换片时 30 个会话里 27 个在 semaphore(12) 队列里陪跑 —— 它们的回包本就被
         // currentTokenStr() 守卫丢弃,留在队列里纯粹白占并发、拖慢新搜索。cancel 后排队中的
@@ -1619,7 +1677,13 @@ class DetailViewModel : ViewModel() {
         // 进度分母用**全量源数**(orderedPool.size),不是首轮宽度 sources.size ——
         // 用户要看到的是"共 322 个源、已搜 xx 个"的真实进度,而首轮只投 1/3(108)。
         // 若分母写首轮宽度,进度条一到 108/108 就"满"了,后面扩池的 214 个源无从体现。
-        searchProgress.value = if (sources.isEmpty()) null else SearchProgress(0, orderedPool.size, 0)
+        // ⚠️ 分子用**已投源数**而不是 0(2026-10-14):searchedSourceKeys 是同片跨轮累计的,
+        // 写 0 会让第二轮起搜时进度从 108/322 掉回 0、下一次上报又跳到 109,看着像倒退。
+        searchProgress.value = SearchProgress(
+            searchedSourceKeys.size.coerceAtMost(orderedPool.size),
+            orderedPool.size,
+            synchronized(fallbackCandidates) { fallbackCandidates.size },
+        )
         // [临时诊断 2026-10-14 #1] 搜索启动时刻的 UI 状态快照(searchProgress 分母应为全量源数)。
         LOG.i(
             "echo-source-diag on-start searching=${sourcesSearching.value}" +
@@ -1685,19 +1749,46 @@ class DetailViewModel : ViewModel() {
                                     )
                                     val done = CompletableDeferred<Unit>()
                                     pendingSearchDone.put(bean.key, done)?.complete(Unit)
-                                    try {
+                                    val answered = try {
                                         withTimeoutOrNull(sourceTimeoutMs) {
                                             withContext(Dispatchers.IO) {
                                                 searchCaller.getSearch(bean.key, title, tokenStr)
                                             }
                                             done.await()
-                                        }
+                                        } != null
+                                    } catch (th: Throwable) {
+                                        // 单源抛异常绝不能掀掉整波:async 里未捕获的异常会取消整个
+                                        // coroutineScope,一个坏 Spider 就能让剩下的几百个源一起收摊
+                                        // (2026-10-14 审查发现)。这里就地吞掉并记一次"源侧失败"。
+                                        LOG.i(
+                                            "echo-source-search threw key-len=" + bean.key.length +
+                                                " err=" + th.javaClass.simpleName
+                                        )
+                                        recordDetailSearchTimeout(
+                                            bean.key,
+                                            SourceWeightPolicy.EvidenceKind.SEARCH_FAILED,
+                                        )
+                                        false
                                     } finally {
                                         pendingSearchDone.remove(bean.key)
                                         // 收口只记 doneCount(诊断用),**不再改进度分子** ——
                                         // 分子已在投出时逐条入账;若这里再上报会掩盖"逐条"语义,
                                         // 且旧口径下正是靠它在慢源收口时补报,现由投出点上报告承担。
                                         if (searchActive(tokenStr)) doneCount.incrementAndGet()
+                                    }
+                                    // **源没答话也要留证据**(2026-10-14 审查修正):
+                                    // 此前详情页这条路径只在"收到回包"时记 recordAnswered,超时/异常**一行证据都不写**,
+                                    // 而扣分只发生在搜索页 —— 于是从不手动搜索的用户,权重台账对换源链永远是空的,
+                                    // "有权重按权重降序"退化成"全部按源列表自然序",慢源每轮都占着前 108 个名额。
+                                    //
+                                    // ⚠️ 只写**权重台账**,绝不写 SourceHealthMemory.recordFail:
+                                    // 后者是封禁证据,而本文件既有不变量"换源链不生产封禁证据"必须守住 ——
+                                    // 换源链每开一张卡片就可能跑一整轮(几百个源),若它开始报失败,
+                                    // 同一个源在几部片之间会迅速凑满规则 1(≥3 次且≥2 部影片)被判 6 小时封禁,
+                                    // 而雪崩保险丝只回滚规则 2、管不到规则 1。降权只影响"多容易被选中",
+                                    // 且 30 分钟半衰期会自己涨回中性(见 SourceWeightPolicy),不存在误封死锁。
+                                    if (!answered) {
+                                        recordDetailSearchTimeout(bean.key, SourceWeightPolicy.EvidenceKind.SEARCH_TIMEOUT)
                                     }
                                 }
                             }
@@ -1750,6 +1841,14 @@ class DetailViewModel : ViewModel() {
                 "echo-source-search all-done done=${doneCount.get()}" +
                     " total=${total} searched=${searchedSourceKeys.size} frozen=$searchFrozen token=$myToken"
             )
+            // 「不冻结」闩锁到此解除(2026-10-14 审查修正):manualSwitchActive 旧实现只在**换片**时复位,
+            // 于是用户点过一次「换源」之后,这部片**每一次**起播成功都不再冻结搜索 ——
+            // v1.1.4 想消灭的"边播边狂搜几百个源"会换个形式回来。
+            // 只在"确实把源投尽了"时解除;中途被冻结/换片打断的半轮仍保留意图,下次续搜接着跑全量。
+            if (searchedSourceKeys.size >= total && manualSwitchActive) {
+                manualSwitchActive = false
+                LOG.i("echo-source-switch manual pass complete, re-arm freeze token=$myToken")
+            }
             // 全池/在途波次收口再回存一次(过程中已按合并窗口增量回存,这里兜底)
             if (tokenStr == currentTokenStr() && fallbackSearchHits.isNotEmpty()) {
                 saveFallbackHitsToCache()
@@ -1899,9 +1998,36 @@ class DetailViewModel : ViewModel() {
             SourceHealthMemory.recordCarriers(key, hitTitles)
         }
         SourceHealthMemory.recordAnswered(key, elapsedMs = -1L)
+        // "这个源本轮被搜过"是**调度事实**(供权重台账的保底配额轮换用),与质量证据分开记;
+        // 旧实现只有搜索页登记,换源链搜过的源在那张轮换表里始终缺席 ⇒ 两边轮换口径不一致。
+        SourceWeightMemory.markSearched(key)
     }
 
     private fun currentTokenStr(): String = "detail_$searchToken"
+
+    /**
+     * 换源链的**降权证据**(2026-10-14):源没答话(超时/异常)时扣它的连续权重。
+     *
+     * <p>## 为什么必须补
+     * 权重台账 [SourceWeightMemory] 过去只有搜索页会写(见 SearchViewModel.recordSourceOutcome)。
+     * 换源链是**第二套聚合搜索**,它一条扣分证据都不产生 ⇒ 从不打开搜索页的用户,
+     * 「有权重按权重降序」这条排序对换源永远不生效,超时率 75~83% 的慢源每轮都排在前面白占并发额度。
+     *
+     * <p>## 为什么只写权重、不写封禁台账(不变量)
+     * 见 [recordFallbackSourceAnswered] 的"换源链不生产封禁证据"。这里刻意不调
+     * `SourceHealthMemory.recordFail`:那条会累计连续超时并可能触发规则 1(6 小时封禁),
+     * 而换源链每开一张卡片就跑一整轮,凑门槛太快。权重是**只影响排序**的连续值,
+     * 30 分钟半衰期自动回归中性(见 SourceWeightPolicy),答话一次即由 recordAnswered 路径补正。
+     *
+     * <p>同 token 内每源只记一次(见 [evidenceRecordedKeys]):重试轮/迟到回包不该把
+     * "一次没答话"扣成好几次。
+     */
+    private fun recordDetailSearchTimeout(sourceKey: String?, kind: SourceWeightPolicy.EvidenceKind) {
+        val key = sourceKey?.takeIf { it.isNotBlank() } ?: return
+        if (!evidenceRecordedKeys.add(key)) return
+        SourceWeightMemory.record(key, kind)
+        SourceWeightMemory.markSearched(key)
+    }
 
     /**
      * 这一轮聚合搜索现在是否仍该**投源/回写进度**。
@@ -2152,7 +2278,7 @@ class DetailViewModel : ViewModel() {
                 " candidates=${synchronized(fallbackCandidates) { fallbackCandidates.size }}" +
                 " autoExpand=$autoExpandPool cap=$fallbackPoolCap"
         )
-        startSourceSearch()
+        startSourceSearch(userInitiated = true)
     }
 
     /** 下一页(仅在有下一页时生效;钳制由 [CandidatePager.hasNext] 保证)。 */
@@ -2229,13 +2355,16 @@ class DetailViewModel : ViewModel() {
     ) {
         // 单源/单线路由调用方直接起播,不读配置、不查记忆、不做网络请求。
         if (!allowQualitySelection) return
-        // 「画质选项」三档分流(口径见 DeviceCapability.QualityMode):速度优先跳过全部起播前探测。
-        // 实测记忆回写在 MusicSessionDelegate,不受档位影响 —— 速度优先下照常积累,
-        // 用户切回自动/画质档后立即受益。
-        // ⚠️ 读 effectiveMode() 而非 current():流量节省开启时按**自动档**口径探测
-        // (预算 1s / 3 条),而不是画质优先的 2s / 4 条 —— 见《选线机制设计》附录 F.5。
+        // 「画质选项」三档分流(口径见 DeviceCapability.QualityMode)。
+        // 2026-10-14 定案:**只有画质优先愿意为画质等首帧**。自动档不再在这里花 1s 探测 ——
+        // 调用方已经用实测记忆零成本选过线([LineQualitySelector.pickFromMemory]),
+        // 无记忆时的探测收益(选到更高档)完全可以由起播后的 [sweepSourceLinesForQuality] 补,
+        // 而它不占用用户正在等的那一秒。实测记忆回写照常积累,不受档位影响。
         val mode = DeviceCapability.effectiveMode()
-        if (!mode.shouldProbeOnFirstWatch) return
+        if (!mode.probeBlocksStart) {
+            LOG.i("echo-quality pre-start skip mode=" + mode.name + " (起播不等网络,画质后置补救)")
+            return
+        }
         val seriesMap = info.seriesMap ?: return
         val siteOrder = seriesMap.keys.toList()
         val app = App.getInstance() ?: return
@@ -2627,85 +2756,77 @@ class DetailViewModel : ViewModel() {
         return loadNextFallbackCandidate()
     }
 
+    /** 用户**此刻手上这一集**的集号(不可数/无数据 ⇒ 0,判据据此退化为中性)。
+     *
+     * <p>取数优先级:换源链已捕获的目标集([fallbackEpisode])> 当前详情页正在播的集。
+     * 前者优先是因为排序发生在"候选站还没加载详情"的时刻,那时 `vodInfo` 可能还是上一个源的内容。
+     */
+    private fun currentEpisodeNumber(): Int {
+        val name = fallbackEpisode?.name ?: run {
+            val info = vodInfo ?: return 0
+            if (info.playFlag.isNullOrEmpty()) return 0
+            info.seriesMap?.get(info.playFlag)?.getOrNull(info.playIndex.coerceAtLeast(0))?.name
+        } ?: return 0
+        val parsed = EpisodeNormalizer.normalize(name)
+        return if (parsed.type == EpisodeType.REGULAR) parsed.episode ?: 0 else 0
+    }
+
     /**
-     * 按完整度排序候选(P-完整性方案,2026-10-09):
-     * 排序分 = [SourceCompletenessPolicy.rankScore](权威已知时按档位+先验集数,未知时中性)。
-     * 稳定排序:同分保留到达序。取候选前重排一次 —— 换源链推进中权威随详情加载单调上涨,
-     * 后面的候选会随着信息变多获得更准的排序。
+     * 换源候选排序(2026-10-14 定稿:**此刻能不能看 → 源权重 → 实测到达序**)。
      *
-     * <p>2026-10-13(优化方案 C):在"完整度 → 标称画质"之后追加**实测源权重**作最末次键。
-     * 与 [SearchBatchPolicy.splitFastRoundSourcesByWeight] 同一份权重台账([SourceWeightMemory]),
-     * 使"换源链"与"搜索首轮"对同一个源的判断口径一致 —— 否则会出现
-     * "搜索时已把这源降到队尾,换源却仍优先切过去"的自相矛盾。
+     * <p>旧口径是「总覆盖率档位 → 标称画质标签 → 融合评分」,两处与产品目的相反:
+     * <ul>
+     *   <li>总覆盖率回答"整部剧全不全",而用户点换源那一刻要的是"手上这一集及往后能不能连着看"。
+     *       一个只更到 20 集的源在他看第 5 集时完全可用,一个缺第 5 集的源哪怕 98% 完整也等于没资源 ——
+     *       判据换到 [CandidateRankPolicy.watchabilityRank],并且**只有硬证据才判不可用**。</li>
+     *   <li>标称画质标签来自站方自述,而同文件的其它注释早就承认"站点把 4K 写在 540P 地址上是常事"
+     *       —— 拿它当排序键等于信广告。用户定稿"没有评分的按测试出来的顺序自然排列",故删除该键,
+     *       同层内由稳定排序保持到达序。</li>
+     * </ul>
      *
-     * <p>⚠️ 源评分**只作最末次键**:完整度(能不能看全)与标称画质(清不清晰)都比"这源历史靠不靠谱"
-     * 更贴近用户当下诉求;源评分只在两者都并列时起 tie-break 作用。且**只重排不剔除** ——
-     * 低分源仍会被试到(与"降权≠屏蔽"一致)。
+     * <p>第二键用**裸权重**([SourceWeightMemory],与搜索投源同一份台账)而非融合评分:
+     * 融合分把完整度又算了一遍(与第一键重复),而健康惩罚本就体现在权重衰减上;
+     * 三层语义(有权重者按权重降序在前、无权重者按到达序垫后)与 [SearchBatchPolicy.orderByWeight] 一致,
+     * 不会出现"搜索时已把这源排到队尾、换源却仍优先切过去"的自相矛盾。
      *
-     * <p>2026-10-14(评分系统):末键由"裸源权重 [SourceWeightMemory.scoreOf]"升级为
-     * **[SourceQualityScore.score]** —— 它融合 表现分(权重台账) + 完整度分 + 健康惩罚(降权/封禁)。
-     * 这是换源场景下"源质量排序"的落地(见 source-line-scoring-design-2026-10-14.md)。
-     * 无记录的源按中性参与,并列时回退原序(与"拿不准不降权"一致)。
+     * <p>⚠️ **只重排不剔除**:不可用的源沉到队尾,前面的候选全放不出来时仍会被试到;
+     * 用户换到别的集号后它会自己浮回来(每次取候选前都重算)。
      */
     private fun sortFallbackCandidatesByCompleteness() = synchronized(fallbackCandidates) {
         val snap = CompletenessMemory.snapshot(completenessTitleKey)
         val confirmed = EpisodeSetMath.confirmed(snap.values)
-        // 完整度分(复用既有口径):已记录正片集合优先,否则退回 note 先验
-        val completenessRankOf: (Movie.Video) -> Int = { video ->
-            val set = snap[video.sourceKey]
-            val prior = SourceCompletenessPolicy.priorCountFromNote(video.note)
-            if (set != null && confirmed.isNotEmpty()) {
-                SourceCompletenessPolicy.rankScore(
-                    SourceCompletenessPolicy.tier(set, confirmed),
-                    set.size,
-                )
-            } else {
-                SourceCompletenessPolicy.rankScore(
-                    SourceCompletenessPolicy.tier(prior, confirmed.size),
-                    prior,
-                )
-            }
-        }
-        // 源评分的输入信号一次性取齐(权重台账 + 健康罚则),避免逐元素查表
+        val currentEpisode = currentEpisodeNumber()
         val keys = fallbackCandidates.mapNotNull { it.sourceKey?.takeIf { k -> k.isNotBlank() } }.toSet()
         val weightScores = SourceWeightMemory.scoresOf(keys)
-        val penalized = SourceHealthFilter.penalizedKeys()
-        val blocked = SourceHealthFilter.blockedKeys()
+        val watchabilityOf: (Movie.Video) -> Int = { video ->
+            CandidateRankPolicy.watchabilityRank(
+                own = video.sourceKey?.let { snap[it] },
+                priorCount = SourceCompletenessPolicy.priorCountFromNote(video.note),
+                confirmed = confirmed,
+                currentEpisode = currentEpisode,
+            )
+        }
+        val weightOf: (Movie.Video) -> Int = { video ->
+            weightScores[video.sourceKey.orEmpty()] ?: SourceWeightPolicy.NEUTRAL
+        }
+        val hasWeight: (Movie.Video) -> Boolean = { video ->
+            weightScores.containsKey(video.sourceKey.orEmpty())
+        }
         fallbackCandidates.sortWith(
-            compareByDescending<Movie.Video> { completenessRankOf(it) }
-                // P-质量维度 tie-break:同完整度分内,标称高清/4K 的源优先,TC 沉底
-                .thenByDescending { QualityLabelPolicy.priorityFromLabel(it.note) }
-                // 最末次键:源级评分(表现+完整度+健康),同分并列时让"历史更靠谱的源"优先
-                .thenByDescending { video ->
-                    val key = video.sourceKey.orEmpty()
-                    SourceQualityScore.score(
-                        SourceQualityScore.Signals(
-                            weightScore = weightScores[key] ?: -1,
-                            completenessRank = completenessRankOf(video),
-                            penalized = penalized.contains(key),
-                            blocked = blocked.contains(key),
-                        ),
-                    )
-                },
+            compareByDescending<Movie.Video> { watchabilityOf(it) }
+                .thenByDescending { hasWeight(it) }
+                .thenByDescending { weightOf(it) },
         )
-        // 可观测(echo-source 前缀已在 LOG 白名单):打 top3 的源评分**数值**,便于真机验证
-        // "排序依据是否合理"。⚠️ 不打源标识(匿名铁律:此处无 index 上下文,打 key 会泄露身份端口)。
-        // 只在有多个候选时打一条,避免刷屏。
+        // 可观测(echo-source 前缀已在 LOG 白名单):打 top3 的「可看性分/权重」两个数,
+        // 便于真机核对排序是否符合预期。⚠️ 不打源标识(匿名铁律:此处无 index 上下文,打 key 会泄露身份)。
         if (fallbackCandidates.size > 1) {
             val top = fallbackCandidates.take(3).joinToString(",") { v ->
-                String.format(
-                    "%.0f",
-                    SourceQualityScore.score(
-                        SourceQualityScore.Signals(
-                            weightScore = weightScores[v.sourceKey.orEmpty()] ?: -1,
-                            completenessRank = completenessRankOf(v),
-                            penalized = penalized.contains(v.sourceKey.orEmpty()),
-                            blocked = blocked.contains(v.sourceKey.orEmpty()),
-                        ),
-                    ),
-                )
+                watchabilityOf(v).toString() + "/" + weightOf(v) + if (hasWeight(v)) "" else "n"
             }
-            LOG.i("echo-source-score reorder n=" + fallbackCandidates.size + " top3=" + top)
+            LOG.i(
+                "echo-source-score reorder n=" + fallbackCandidates.size +
+                    " ep=" + currentEpisode + " authority=" + confirmed.size + " top3=" + top
+            )
         }
     }
 

@@ -56,10 +56,15 @@ public class HawkConfig {
     /** 「画质选项」三档(int:0=画质优先 1=自动画质 2=速度优先;取值口径见 DeviceCapability.QualityMode) */
     public static final String VIDEO_QUALITY_MODE = "video_quality_mode";
     /**
-     * 「流量节省」开关(boolean,默认 true)。
+     * 「流量节省」开关(boolean,默认 **false**,2026-10-14 改)。
      *
-     * <p>开启时禁止一切**向上**的画质动作(升档追踪 / 爬虫深探 / 有界扫描切换)，并把生效档位
+     * <p>开启时禁止一切**向上**的画质动作(升档追踪 / 有界扫描切换)，并把生效档位
      * 归一化为「自动画质」；只保留向下兜底(故障降档)。口径见 DeviceCapability.trafficSaverOn / effectiveMode。
+     * 注意它**不再**拦画质探测:探测单条 ≤256KB、是一次性的信息成本,而切到更高码率才是持续开销,
+     * 所以节省模式仍会扫描并积累实测记忆(仅收窄探测范围),关掉开关即刻受益。
+     *
+     * <p>为什么默认值从 true 改成 false:旧默认让"自动切更高分辨率"在出厂状态下永远不生效,
+     * 用户必须手动关掉这个开关 —— 与"流畅前提下尽量更高画质"这一产品目的相悖。
      *
      * <p>为什么单独一把开关而不是加第四档 QualityMode：QualityMode 是"起播探测策略"语义，
      * 本开关是"是否允许向上"的**横切**语义；混进枚举会让 ordinal 与 KV 历史值错位。

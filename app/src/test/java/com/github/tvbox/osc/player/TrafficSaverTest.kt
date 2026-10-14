@@ -41,7 +41,7 @@ class TrafficSaverTest {
     @Test
     fun `存量画质优先被暂停但选择不丢`() {
         val stored = DeviceCapability.QualityMode.QUALITY_FIRST
-        // 升级后默认开启流量节省:实际按自动档跑(安全侧)
+        // 流量节省开启 ⇒ 画质优先被暂停,按自动档跑(2026-10-14 起该开关默认关闭,语义不变)
         assertEquals(
             DeviceCapability.QualityMode.AUTO,
             DeviceCapability.resolveMode(stored, saverOn = true),

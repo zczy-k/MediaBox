@@ -95,17 +95,21 @@ object DeviceCapability {
      */
     enum class QualityMode(
         val shouldProbeOnFirstWatch: Boolean,
+        /** 是否**愿意为画质阻塞起播**(探测等网络)。2026-10-14 起只有画质优先愿意等:
+         * 自动档改为"记忆命中即选、无记忆按站点原序立刻播",探测全部后置到起播后的有界扫描 ——
+         * 省下的正是用户真正在等的首帧那 1 秒,而画质收益一样会到(只是晚十几秒)。 */
+        val probeBlocksStart: Boolean,
         val probeBudgetMs: Long,
         val probeLines: Int,
     ) {
-        /** 起播前把功夫做足:长预算探测候选线路,选实测最高(预解析管线接入后探测对象升级为真地址) */
-        QUALITY_FIRST(true, 3000L, 4),
+        /** 起播前把功夫做足:长预算探测候选线路,选实测最高(用户显式选择,认这条等待) */
+        QUALITY_FIRST(true, true, 3000L, 4),
 
-        /** 默认:记忆命中 0ms 选最高;无记忆做短预算直链探测,探不到按站点原序起播 */
-        AUTO(true, 1000L, 3),
+        /** 默认:记忆命中 0ms 选最高;无记忆**不等网络**,立即按站点原序起播,画质由起播后扫描补救 */
+        AUTO(true, false, 0L, 0),
 
         /** 跳过全部起播前探测,站点原序即播;实测记忆回写不受档位影响,照常积累 */
-        SPEED_FIRST(false, 0L, 0);
+        SPEED_FIRST(false, false, 0L, 0);
 
         companion object {
             /** KV 脏值兜底:越界/缺省一律落自动档 —— 跨版本升级可能读到任意 int,不可让播放路径抛异常 */
@@ -118,12 +122,18 @@ object DeviceCapability {
     // ── 流量节省(口径见《选线机制设计》附录 F)────────────────────────────────────
 
     /**
-     * 「流量节省」是否开启。默认 **true**。
+     * 「流量节省」是否开启。默认 **false**(2026-10-14 改)。
      *
-     * <p>读失败也返回 true:口径取"安全侧"——漏判成开启只是少花流量,漏判成关闭会多花用户的流量。
+     * <p>旧默认 true 与产品最终目的正面冲突:开启时 QualityGovernor 拒绝**一切向上动作**,
+     * 于是"自动切更高分辨率"这条能力在出厂状态下根本不发生,用户必须手动关掉才生效。
+     * 语义也一并收窄(见 DetailViewModel.sweepSourceLinesForQuality / QualityGovernor.rejectReasonForRemedy):
+     * 省流量 = 不切到更费流量的档 + 探测范围收窄,**不再**禁止画质探测与实测记忆积累。
+     *
+     * <p>读失败按 false:新语义下漏判成关闭最多是"探测预算 + 一次升档",量级是个位数 MB;
+     * 漏判成开启则会把画质能力整体静默关掉 —— 后者更难被发现,危害更大。
      */
     @JvmStatic
-    fun trafficSaverOn(): Boolean = KV.get(HawkConfig.TRAFFIC_SAVER, true)
+    fun trafficSaverOn(): Boolean = KV.get(HawkConfig.TRAFFIC_SAVER, false)
 
     @JvmStatic
     fun setTrafficSaver(on: Boolean) {
