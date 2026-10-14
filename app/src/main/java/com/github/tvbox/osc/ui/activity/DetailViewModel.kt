@@ -1734,6 +1734,11 @@ class DetailViewModel : ViewModel() {
                     SearchBatchPolicy.DETAIL_CONCURRENCY_MIN, concurrencyCap
                 )
             }
+            // 变体补发的**整轮预算**(2026-10-14):冷门片时"每个源都零候选"成立 ⇒ 不设上限就是
+            // 322 源 × 4 变体 ≈ 上千次请求,全量耗时直接翻几倍(真机《奈义日记》那次就是这种局面:
+            // 322 个源全部答话、0 命中)。预算用完后其余源只问原词一次 ⇒ 变体收益集中在前几十个源,
+            // 因为片名写法差异通常在权重最高的那批源里就能补回来。
+            val variantAsks = java.util.concurrent.atomic.AtomicInteger()
             val poolView = orderedPool.take(effectiveTotal)  // 本轮有效范围(按权重降序);每波只 take 前 N 个并滤掉已投
             // 查询变体(原词 + 去分隔符 + 去年份 + 去季/版本后缀 + 简繁互转),用于"该源零候选时补发一次"
             val searchVariants = SearchSettings.queryVariants(title)
@@ -1824,6 +1829,11 @@ class DetailViewModel : ViewModel() {
                                         while (variantIndex < searchVariants.size &&
                                             bean.key !in sourcesWithHit && searchActive(tokenStr)
                                         ) {
+                                            if (variantAsks.incrementAndGet() >
+                                                SearchBatchPolicy.DETAIL_VARIANT_REASK_BUDGET
+                                            ) {
+                                                break
+                                            }
                                             val again = askOnce(searchVariants[variantIndex])
                                             variantIndex++
                                             if (!again) {
@@ -1879,7 +1889,8 @@ class DetailViewModel : ViewModel() {
                         " waveSize=$waveSize total=$total" +
                         " hit=$hitCount newHit=$newHitsThisWave" +
                         " conc=$concurrencyBefore->$detailConcurrency" +
-                        " timeouts=" + timeoutsThisWave.get() + " concCap=$concurrencyCap"
+                        " timeouts=" + timeoutsThisWave.get() + " concCap=$concurrencyCap" +
+                        " variantAsks=" + variantAsks.get()
                 )
                 // 让路:换片/冻结后立即停(别再投下一波、也别走收口)
                 if (!searchActive(tokenStr)) return@launch
