@@ -558,7 +558,7 @@
     <string name="settings_danmu_api">弹幕 API</string>
     <string name="settings_long_press_speed">长按倍速</string>
     <string name="settings_buffer_time">缓冲时间</string>
-    <string name="settings_search_threads">搜索线程（换源并发取其一半）</string>
+    <string name="settings_search_threads">搜索线程</string>
 
     <!-- 设置:二级页分组小标题 -->
     <string name="settings_group_play_picture">内核与画面</string>
