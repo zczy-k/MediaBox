@@ -40,6 +40,7 @@ import com.github.tvbox.osc.util.SubtitleSources
 import android.widget.Toast
 import com.github.tvbox.osc.ui.components.TopBarActionBox
 import com.github.tvbox.osc.util.HawkConfig
+import com.github.tvbox.osc.util.KV
 import com.github.tvbox.osc.util.MusicSettings
 import com.github.tvbox.osc.util.PlayerHelper
 import kotlin.math.roundToInt
@@ -71,13 +72,10 @@ fun PlaySettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewM
     }
     var customSources by remember { mutableStateOf(SubtitleSources.custom()) }
     var customSourceDialog by remember { mutableStateOf(false) }
-    // 画质选项:直接读写 KV,不走 SettingsState(同字幕区块的"不必整页 refresh"约定)。
-    // ⚠️ 这里存的是**用户的选择**,不归一化 —— 流量节省关闭后要能一键恢复原选择;
-    // 实际生效档位由 DeviceCapability.effectiveMode() 决定(口径见《选线机制设计》附录 F)。
-    var qualityMode by remember { mutableStateOf(DeviceCapability.QualityMode.current()) }
-    // 流量节省(默认开启):它是「画质选项」的前置条件 —— 未关闭时「画质优先」不可选
-    var trafficSaver by remember { mutableStateOf(DeviceCapability.trafficSaverOn()) }
-    var showTrafficSaverConfirm by remember { mutableStateOf(false) }
+    // 画质策略四档 + 画质上限:直接读写 KV,不走 SettingsState(同字幕区块的"不必整页 refresh"约定)。
+    // 读 **stored()** 而不是 current() —— 界面要显示用户选的那一档,不是被旧开关迁移后的生效档。
+    var qualityMode by remember { mutableStateOf(DeviceCapability.QualityMode.stored()) }
+    var qualityCeiling by remember { mutableStateOf(KV.get(HawkConfig.VIDEO_QUALITY_CEILING, 0)) }
 
     val listState = rememberScrollState()
     AppTopBarScaffold(
@@ -168,67 +166,53 @@ fun PlaySettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewM
                     )
                 }
                 SettingsCard(SettingsCardPosition.MIDDLE) {
-                    // 流量节省:默认开启。它是「画质选项」的**前置条件**(未关闭则画质优先不可选),
-                    // 所以刻意排在它上一行(《选线机制设计》附录 F)。
-                    SettingsSwitchRow(
-                        title = stringResource(R.string.settings_traffic_saver),
-                        subtitle = stringResource(R.string.settings_traffic_saver_subtitle),
-                        checked = trafficSaver,
-                        onCheckedChange = { checked ->
-                            if (checked) {
-                                // 恢复节省:无需确认,立即生效
-                                trafficSaver = true
-                                DeviceCapability.setTrafficSaver(true)
-                            } else {
-                                // 关闭:必须二次确认(会明显增加流量),确认前不改 KV
-                                showTrafficSaverConfirm = true
-                            }
-                        },
-                    )
-                }
-                SettingsCard(SettingsCardPosition.MIDDLE) {
-                    // 「画质选项」三档:只分化起播前的探测策略(口径见 DeviceCapability.QualityMode);
-                    // 起播后的降档/换线/换源链三档一致,这里只改 KV,无其它副作用
-                    val mode = qualityMode
-                    // 存量用户可能已存「画质优先」:不改写 KV(关掉开关即自动恢复),但必须把
-                    // "当前没在生效"讲清楚,否则用户会以为设置坏了。
+                    // 画质策略:一条轴四档(2026-10-14 把独立的「流量节省」开关并进来)。
+                    // 档位只回答"为画质愿意付多少代价"—— 起播前等不等首帧 + 起播后要不要自动升档;
+                    // 降档/故障换线/换源链四档一致,这里只改 KV,无其它副作用。
+                    //
+                    // 写档位时顺手把旧的 traffic_saver 清成 false:那是上一版独立开关的残留,
+                    // 不清的话 DeviceCapability.resolveMode 的迁移会把它一直按回「省流画质」。
+                    //
                     // ⚠️ 说明文案放 **subtitle**,不能放 valueText —— SettingsRow 是
                     // `Column(weight(1f)) + RowValue`,无行数限制的长 valueText 会吃满宽度,
                     // 把标题列挤成每字一行的竖排(真机 v1.0.43 回归,已修)。
-                    val firstPaused = trafficSaver && mode == DeviceCapability.QualityMode.QUALITY_FIRST
+                    val mode = qualityMode
+                    // ⚠️ 显示顺序与枚举 ordinal **不同**:ordinal 是 KV 里的历史值(0=画质优先 1=自动
+                    // 2=速度优先 3=省流),重排会让存量用户的设置错位。这里按"为画质付的代价从高到低"排。
+                    val ladder = listOf(
+                        DeviceCapability.QualityMode.QUALITY_FIRST,
+                        DeviceCapability.QualityMode.AUTO,
+                        DeviceCapability.QualityMode.DATA_SAVER,
+                        DeviceCapability.QualityMode.SPEED_FIRST,
+                    )
                     SettingsOptionMenuRow(
                         title = stringResource(R.string.settings_video_quality_mode),
-                        subtitle = if (firstPaused) {
-                            stringResource(R.string.settings_video_quality_mode_paused_subtitle)
-                        } else {
-                            stringResource(R.string.settings_video_quality_mode_subtitle)
-                        },
-                        valueText = stringResource(
-                            when (mode) {
-                                DeviceCapability.QualityMode.QUALITY_FIRST -> R.string.video_quality_quality_first
-                                DeviceCapability.QualityMode.SPEED_FIRST -> R.string.video_quality_speed_first
-                                else -> R.string.video_quality_auto
-                            },
-                        ),
-                        options = listOf(
-                            stringResource(R.string.video_quality_quality_first),
-                            stringResource(R.string.video_quality_auto),
-                            stringResource(R.string.video_quality_speed_first),
-                        ),
-                        selectedIndex = mode.ordinal,
-                        // 流量节省开启 ⇒「画质优先」置灰(下标 0 === QUALITY_FIRST.ordinal,口径锁在 VideoQualityModeTest)
-                        disabledIndices = if (trafficSaver) setOf(0) else emptySet(),
-                        onDisabledSelect = {
-                            Toast.makeText(
-                                context,
-                                context.getString(R.string.video_quality_quality_first_locked_hint),
-                                Toast.LENGTH_SHORT,
-                            ).show()
-                        },
+                        subtitle = stringResource(R.string.settings_video_quality_mode_subtitle),
+                        valueText = stringResource(qualityModeLabel(mode)),
+                        options = ladder.map { stringResource(qualityModeLabel(it)) },
+                        selectedIndex = ladder.indexOf(mode).coerceAtLeast(0),
                         onSelect = { idx ->
                             val picked = DeviceCapability.QualityMode.values()[idx]
                             qualityMode = picked
                             vm.put(HawkConfig.VIDEO_QUALITY_MODE, picked.ordinal)
+                            vm.put(HawkConfig.TRAFFIC_SAVER, false)
+                        },
+                    )
+                }
+                SettingsCard(SettingsCardPosition.MIDDLE) {
+                    // 画质上限:高于这个清晰度的线路不参与选择、也不会自动升上去。
+                    // 默认跟随设备(电视 2160 / 手机 1080);手机接电视/投屏想上 4K 就在这里放开。
+                    // 实测播不动时学到的更低上限始终优先(见 DeviceCapability.capHeight)。
+                    val ceilings = listOf(0, 1080, 2160)
+                    SettingsOptionMenuRow(
+                        title = stringResource(R.string.settings_video_quality_ceiling),
+                        subtitle = stringResource(R.string.settings_video_quality_ceiling_subtitle),
+                        valueText = stringResource(ceilingLabel(qualityCeiling)),
+                        options = ceilings.map { stringResource(ceilingLabel(it)) },
+                        selectedIndex = ceilings.indexOf(qualityCeiling).coerceAtLeast(0),
+                        onSelect = { idx ->
+                            qualityCeiling = ceilings[idx]
+                            vm.put(HawkConfig.VIDEO_QUALITY_CEILING, ceilings[idx])
                         },
                     )
                 }
@@ -490,32 +474,22 @@ fun PlaySettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewM
         )
     }
 
-    if (showTrafficSaverConfirm) {
-        MediaBoxAlertDialog(
-            onDismissRequest = { showTrafficSaverConfirm = false },
-            title = { Text(stringResource(R.string.settings_traffic_saver_off_title)) },
-            text = { Text(stringResource(R.string.settings_traffic_saver_off_message)) },
-            dismissButton = {
-                // 取消:走 LocalSheetDismiss ⇒ 会触发 onDismissRequest,状态自然复位
-                val dismiss = LocalSheetDismiss.current
-                TextButton(onClick = { dismiss() }) {
-                    Text(stringResource(R.string.common_cancel))
-                }
-            },
-            confirmButton = {
-                val dismissThen = LocalSheetDismissThen.current
-                TextButton(onClick = {
-                    dismissThen {
-                        // 二次确认通过后才真正关闭:**不改写 VIDEO_QUALITY_MODE**,
-                        // 用户原有的「画质优先」选择保留,重新打开开关即自动恢复
-                        DeviceCapability.setTrafficSaver(false)
-                        trafficSaver = false
-                        showTrafficSaverConfirm = false
-                    }
-                }) {
-                    Text(stringResource(R.string.settings_traffic_saver_off_confirm))
-                }
-            },
-        )
-    }
+}
+
+/**
+ * 画质策略四档的档名。四档是一条单调的"为画质付多少代价"阶梯:
+ * 画质优先(等首帧)→ 自动(不等,后台补救升档)→ 省流(照扫但不升档)→ 速度优先(什么都不做)。
+ */
+private fun qualityModeLabel(mode: DeviceCapability.QualityMode): Int = when (mode) {
+    DeviceCapability.QualityMode.QUALITY_FIRST -> R.string.video_quality_quality_first
+    DeviceCapability.QualityMode.AUTO -> R.string.video_quality_auto
+    DeviceCapability.QualityMode.DATA_SAVER -> R.string.video_quality_data_saver
+    DeviceCapability.QualityMode.SPEED_FIRST -> R.string.video_quality_speed_first
+}
+
+/** 画质上限的选项名:0 = 跟随设备默认(电视 2160 / 手机 1080)。 */
+private fun ceilingLabel(heightPx: Int): Int = when (heightPx) {
+    1080 -> R.string.video_quality_ceiling_1080
+    2160 -> R.string.video_quality_ceiling_4k
+    else -> R.string.video_quality_ceiling_device
 }

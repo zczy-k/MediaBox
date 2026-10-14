@@ -262,7 +262,7 @@ class DetailViewModel : ViewModel() {
             crossSourceHint.value = null
             return
         }
-        val mode = DeviceCapability.QualityMode.current()
+        val mode = DeviceCapability.effectiveMode()
         val qualityFirst = mode == DeviceCapability.QualityMode.QUALITY_FIRST
         val currentFlag = info.playFlag.orEmpty()
         val current = VideoQualityMemory.lookupAll(sourceKey, vodId, listOf(currentFlag)).firstOrNull()
@@ -3215,7 +3215,7 @@ class DetailViewModel : ViewModel() {
      */
     private fun probeLineOnDemand(flagName: String) {
         vodInfo ?: return
-        val mode = DeviceCapability.QualityMode.current()
+        val mode = DeviceCapability.effectiveMode()
         if (!mode.shouldProbeOnFirstWatch) return
         val site = sourceKey
         val vod = vodId

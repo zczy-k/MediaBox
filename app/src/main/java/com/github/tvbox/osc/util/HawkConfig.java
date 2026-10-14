@@ -53,21 +53,26 @@ public class HawkConfig {
     public static final String VIDEO_QUALITY_MEMORY = "video_quality_memory";
     /** 设备最高可播高度(像素,0=不限制;由降档实测学习,见 player/DeviceCapability) */
     public static final String VIDEO_QUALITY_CAP = "video_quality_cap";
-    /** 「画质选项」三档(int:0=画质优先 1=自动画质 2=速度优先;取值口径见 DeviceCapability.QualityMode) */
+    /** 「画质选项」四档(int:0=画质优先 1=自动画质 2=速度优先 3=省流画质;取值口径见 DeviceCapability.QualityMode) */
     public static final String VIDEO_QUALITY_MODE = "video_quality_mode";
     /**
-     * 「流量节省」开关(boolean,默认 **false**,2026-10-14 改)。
+     * 「画质上限」(int,像素高度;0=跟随设备默认)。
      *
-     * <p>开启时禁止一切**向上**的画质动作(升档追踪 / 有界扫描切换)，并把生效档位
-     * 归一化为「自动画质」；只保留向下兜底(故障降档)。口径见 DeviceCapability.trafficSaverOn / effectiveMode。
-     * 注意它**不再**拦画质探测:探测单条 ≤256KB、是一次性的信息成本,而切到更高码率才是持续开销,
-     * 所以节省模式仍会扫描并积累实测记忆(仅收窄探测范围),关掉开关即刻受益。
+     * <p>设备默认是"手机 1080 / 电视盒子 4K"(见 DeviceCapability)。这一键给用户显式覆盖的出口,
+     * 典型场景是**手机接电视/投屏**:手机形态被识别成 mobile ⇒ 默认压到 1080,想要 4K 就在这里放开。
+     * 它只是"要不要去试"的上限,不是保证:实测播不动时 {@link #VIDEO_QUALITY_CAP} 学到的更低上限
+     * 仍以 min 生效,软解码也一律不超过 1080。
+     */
+    public static final String VIDEO_QUALITY_CEILING = "video_quality_ceiling";
+    /**
+     * 「流量节省」开关(boolean) —— **已废弃**(2026-10-14):它的语义被并进
+     * {@link #VIDEO_QUALITY_MODE} 的第四档「省流画质」,本键只作**一次性迁移读取**:
+     * 老用户若存了 true 且没重新选过档位,生效档位仍按省流处理(不丢他的选择)。
      *
-     * <p>为什么默认值从 true 改成 false:旧默认让"自动切更高分辨率"在出厂状态下永远不生效,
-     * 用户必须手动关掉这个开关 —— 与"流畅前提下尽量更高画质"这一产品目的相悖。
+     * <p>合并的理由:它和画质档位是同一条轴上的两件事("要不要为画质花钱"),两个独立开关有四种组合,
+     * 其中"流量节省 + 画质优先"用户点了得不到他期待的结果。
      *
-     * <p>为什么单独一把开关而不是加第四档 QualityMode：QualityMode 是"起播探测策略"语义，
-     * 本开关是"是否允许向上"的**横切**语义；混进枚举会让 ordinal 与 KV 历史值错位。
+     * <p>默认 false —— 旧默认 true 会让"自动切更高分辨率"在出厂状态下永远不生效。
      */
     public static final String TRAFFIC_SAVER = "traffic_saver";
     /**

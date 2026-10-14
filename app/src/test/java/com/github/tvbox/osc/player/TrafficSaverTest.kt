@@ -1,70 +1,66 @@
 package com.github.tvbox.osc.player
 
+import com.github.tvbox.osc.player.DeviceCapability.QualityMode
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 「流量节省」档位归一化的口径锁(见《选线机制设计》附录 F)。
+ * 「省流画质」档的迁移与语义锁(2026-10-14 重写)。
  *
- * <p>只测纯函数 [DeviceCapability.resolveMode]:`trafficSaverOn()` 与 `effectiveMode()` 都要读 KV
- * (真机 MMKV),JVM 单测环境不可用 —— 与 [VideoQualityModeTest] 同一取舍(那里也只锁 enum 常量)。
+ * <p>旧版这里锁的是"流量节省开启 ⇒ 生效档位归一到自动档"。那把独立开关已经被并进
+ * [QualityMode] 的第四档,归一化随之取消 —— 两个独立开关四种组合里,"流量节省 + 画质优先"
+ * 用户点了得不到他期待的结果,所以只剩一条轴。
  *
- * <p>这里锁死两条**不能被后人改错**的语义:
+ * <p>现在必须钉住三件事:
  * <ol>
- *   <li>开启 ⇒ 一律归一到自动档(画质优先被暂停);</li>
- *   <li>归一化**不改写入参** ⇒ 关掉开关即恢复用户原选择(存量迁移靠它做到"不丢选择")。</li>
+ *   <li>老存量的 `traffic_saver=true` 迁移到「省流画质」,不会悄悄变成别的档;
+ *       设置页每次写档位都会把那个旧键清成 false(见 PlaySettingsPage.onSelect),
+ *       所以迁移不会把用户的新选择永久按住;</li>
+ *   <li>省流档 = **允许扫描填实测记忆** + **禁止一切向上切换**:
+ *       `shouldProbeOnFirstWatch=true` 而 `probeBlocksStart=false`,拒绝向上由
+ *       DeviceCapability.trafficSaverOn()(现在是档位的派生视图)传给 QualityGovernor;</li>
+ *   <li>四档在"为画质付多少代价"上严格单调,防止后人把某档调成和另一档重复。</li>
  * </ol>
  */
 class TrafficSaverTest {
 
     @Test
-    fun `开启时一律归一到自动档`() {
-        DeviceCapability.QualityMode.values().forEach { stored ->
+    fun `旧开关存量真值迁移成省流档`() {
+        QualityMode.values().forEach { stored ->
             assertEquals(
-                "流量节省开启时生效档位必须是自动档(stored=$stored)",
-                DeviceCapability.QualityMode.AUTO,
-                DeviceCapability.resolveMode(stored, saverOn = true),
+                "traffic_saver=true 时应生效省流档(stored=$stored)",
+                QualityMode.DATA_SAVER,
+                QualityMode.resolveMode(stored, legacySaverOn = true),
             )
         }
     }
 
     @Test
-    fun `关闭时原样返回用户选择`() {
-        DeviceCapability.QualityMode.values().forEach { stored ->
-            assertEquals(
-                stored,
-                DeviceCapability.resolveMode(stored, saverOn = false),
-            )
+    fun `未存旧开关时原样保留用户档位`() {
+        QualityMode.values().forEach { stored ->
+            assertEquals(stored, QualityMode.resolveMode(stored, legacySaverOn = false))
         }
     }
 
     @Test
-    fun `存量画质优先被暂停但选择不丢`() {
-        val stored = DeviceCapability.QualityMode.QUALITY_FIRST
-        // 流量节省开启 ⇒ 画质优先被暂停,按自动档跑(2026-10-14 起该开关默认关闭,语义不变)
-        assertEquals(
-            DeviceCapability.QualityMode.AUTO,
-            DeviceCapability.resolveMode(stored, saverOn = true),
-        )
-        // 关掉开关即恢复 —— 归一化没有改写用户选择
-        assertEquals(stored, DeviceCapability.resolveMode(stored, saverOn = false))
+    fun `省流档允许扫描但不等首帧`() {
+        val saver = QualityMode.DATA_SAVER
+        assertTrue("省流档仍要扫线路填实测记忆", saver.shouldProbeOnFirstWatch)
+        assertFalse("省流档绝不能拖首帧", saver.probeBlocksStart)
+        assertEquals(0L, saver.probeBudgetMs)
+        assertEquals(0, saver.probeLines)
     }
 
     @Test
-    fun `归一到自动档后探测预算随自动档收窄`() {
-        val effective = DeviceCapability.resolveMode(
-            DeviceCapability.QualityMode.QUALITY_FIRST,
-            saverOn = true,
-        )
-        // 起播前探测按自动档口径,而不是画质优先的 2s / 4 条
-        assertEquals(DeviceCapability.QualityMode.AUTO.probeBudgetMs, effective.probeBudgetMs)
-        assertEquals(DeviceCapability.QualityMode.AUTO.probeLines, effective.probeLines)
-    }
-
-    @Test
-    fun `画质优先的下标就是置灰下标_UI与门控口径一致`() {
-        // PlaySettingsPage 用 setOf(0) 置灰「画质优先」,这里把它钉死在枚举上:
-        // 换序会让 UI 灰错项,必须先改 VideoQualityModeTest 再动 KV
-        assertEquals(0, DeviceCapability.QualityMode.QUALITY_FIRST.ordinal)
+    fun `四档代价严格单调`() {
+        // 画质优先(等首帧) > 自动 / 省流(不等、后台扫) > 速度优先(什么都不做)
+        assertTrue(QualityMode.QUALITY_FIRST.probeBlocksStart)
+        assertFalse(QualityMode.AUTO.probeBlocksStart)
+        assertFalse(QualityMode.DATA_SAVER.probeBlocksStart)
+        assertTrue(QualityMode.AUTO.shouldProbeOnFirstWatch)
+        assertTrue(QualityMode.DATA_SAVER.shouldProbeOnFirstWatch)
+        assertFalse(QualityMode.SPEED_FIRST.shouldProbeOnFirstWatch)
     }
 }
