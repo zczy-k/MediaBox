@@ -720,7 +720,20 @@ final class PlaybackRetryDelegate {
      *   <li>片源与线路都轮完 → 明确报播放失败,不再无休止地换。</li>
      * </ol>
      *
-     * <p>用户手动点过线路({@code userPickedLine})时不覆盖其选择,直接走换源。
+     * <p>⚠️ 2026-10-14 真机修复(线路切换缺陷):`userPickedLine` 的语义**收窄**为
+     * "**不自动降档**(不覆盖用户选的画质档)",而**不再**"跳过换线直接换源"。
+     *
+     * <p>## 此前为什么错
+     * 原实现 `lineFirst = !st.userPickedLine && ...`:用户手动选线后,一旦这条线放不出来,
+     * 就跳过"换线"**直接换到别的源** —— 用户明明**是在这个源里选的线**(说明认可这个源),
+     * 却因为选了条坏线被甩到另一个源,而本源里还有好几条线没试。真机取证:
+     * "切到另一线路无法播放 → 系统自动切到另一个源,不探本源的剩余线路,也不回原可行线路"。
+     *
+     * <p>## 现在为什么对
+     * 用户手动选线是"**优先试这条**"的意图,不是"**这条不行就放弃整个源**"。
+     * 故 `userPickedLine` 现在只抑制 [tryDowngradeLine](改画质档 = 覆盖用户选择),
+     * 换线([tryNextLine],试本源其他线 = 延续用户意图)照常进行;
+     * 本源线路真的轮完才换源([handOverToSourceFallback])。
      *
      * @return true = 已接管(换线或换源);false = 全部轮完,已报失败
      */
@@ -734,12 +747,15 @@ final class PlaybackRetryDelegate {
         // 卡顿时同源换线是代价最小的一跳,故这里**故意不看** allowAutoSwitchLine ——
         // 它由全屏决定,本意是"别拿换集打断正在看的画面";可卡顿意味着画面已经废了,
         // 再看它等于把最便宜的一跳也关掉,只剩"重新搜索 + 重取详情"这种重跳。
-        boolean lineFirst = !st.userPickedLine && KV.get(HawkConfig.AUTO_SWITCH_LINE, true);
-        if (lineFirst) {
-            LOG.i("echo-quality: try downgrade line first");
-            // 先降档:卡顿最常见的真因就是"当前档超过网络/设备能力",降一档比换线更对症
-            if (tryDowngradeLine()) return true;
-            LOG.i("echo-quality: no lower tier in memory, try next line");
+        if (KV.get(HawkConfig.AUTO_SWITCH_LINE, true)) {
+            // 降档只在"非用户手选"时做:降档会改掉用户明确选的画质档,属于覆盖用户选择。
+            if (!st.userPickedLine) {
+                LOG.i("echo-quality: try downgrade line first");
+                if (tryDowngradeLine()) return true;
+            }
+            // 换线**不论是否用户手选**都要试:用户选的线放了卡住,本源其他线仍值得一try。
+            // (2026-10-14 修复:此前因 userPickedLine 直接跳过这一段,导致"越级换源")
+            LOG.i("echo-quality: try next line" + (st.userPickedLine ? " (user-picked failed)" : " (no lower tier in memory)"));
             if (tryNextLine()) return true;
         }
         LOG.i("echo-quality: try next source");
@@ -769,11 +785,13 @@ final class PlaybackRetryDelegate {
         LOG.i("echo-resolvePlayUrl timeout, try next line");
         host.cancelPlayRequest();
         host.stopParse();
+        // 2026-10-14 真机修复(线路切换缺陷):用户手选的线**取流超时**时,不再"只报错停留",
+        // 而是**先在本源内换其他线路**(用户手动选线=认可这个源,该源的其它线仍值得一try)。
+        // 本源线路真的轮完后,tryNextLine 内部才 handOverToSourceFallback 换源 ——
+        // 这不是"越级换源"(那是原缺陷),而是"本源尽力后才换"。
         if (st.userPickedLine) {
-            st.userPickedLine = false;
-            host.stopMusicSessionForFailedPlayback();
-            showErrorTip(PlaybackController.str(R.string.player_get_url_timeout));
-            return;
+            LOG.i("echo-resolvePlayUrl timeout, user-picked line failed, try next line in same source");
+            if (tryNextLine()) return;
         }
         if (!tryNextLineIfEnabled()) reportExhausted();
     }
@@ -784,12 +802,11 @@ final class PlaybackRetryDelegate {
         LOG.i("echo-resolvePlayUrl failed, try next line: " + err);
         host.cancelPlayRequest();
         host.stopParse();
+        // 2026-10-14 同上:用户手选的线**取流失败**时,先在本源内换线(该源其它线仍值得一try),
+        // 不再"只报错停留"。本源轮完才由 tryNextLine → handOverToSourceFallback 换源。
         if (st.userPickedLine) {
-            st.userPickedLine = false;
-            host.cancelPlayTimeout();
-            host.stopMusicSessionForFailedPlayback();
-            showErrorTip(err);
-            return;
+            LOG.i("echo-resolvePlayUrl failed, user-picked line failed, try next line in same source");
+            if (tryNextLine()) return;
         }
         if (tryNextLineIfEnabled()) return;
         host.cancelPlayTimeout();
