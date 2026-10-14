@@ -398,7 +398,14 @@ class DetailViewModel : ViewModel() {
     private fun roundPoolSize(total: Int): Int =
         if (autoExpandPool) ExpandPoolPolicy.poolSizeForRound(total, poolRound)
         else fallbackPoolCap.coerceAtMost(total)
-    private val semaphore = Semaphore(SOURCE_SEARCH_CONCURRENCY)
+    /**
+     * 详情换源链的**当前并发度**(2026-10-14 起自适应,不再写死 12)。
+     *
+     * <p>0 = 本页还没算过。每轮搜索开始时按用户「搜索线程数」折算出上限
+     * (详情页要给正在缓冲的播放流让路 ⇒ 打对折并封顶 16),波与波之间按上一波的超时占比增减。
+     * 跨轮保留:上一波判出的弱网不该因为换了一次源就又被抹平。
+     */
+    private var detailConcurrency = 0
     private val pendingSearchDone = ConcurrentHashMap<String, CompletableDeferred<Unit>>()
     private val searchCaller = SourceViewModel()
     private var fallbackKeepCurrentDetail = false
@@ -1722,8 +1729,20 @@ class DetailViewModel : ViewModel() {
             // 滤掉已投的)。扩池只是"把 N 加大",下一波自然只多出"新增区间"那批源 ——
             // **同 token、不 cancel、不重投**,进度累加。这是"扩池后继续搜"的正解。
             //
-            // ## 并发仍由信号量(12)控
+            // ## 并发:自适应,不再写死
             // 每波内 `async` 排队,慢源等满超时才释放额度;波间串行(上一波 awaitAll 完才判扩池)。
+            // 并发度每波开始时用**当前值新建信号量**(信号量本身不能改容量,与搜索页换线程数时
+            // 重建 Semaphore 同一做法),波结束后按上一波的超时占比上调/下调 —— 见 [detailConcurrency]。
+            val concurrencyCap = SearchBatchPolicy.detailConcurrencyCap(
+                KV.get(HawkConfig.SEARCH_THREADS, HawkConfig.SEARCH_THREADS_DEFAULT)
+            )
+            if (detailConcurrency <= 0) {
+                detailConcurrency = concurrencyCap
+            } else {
+                detailConcurrency = detailConcurrency.coerceIn(
+                    SearchBatchPolicy.DETAIL_CONCURRENCY_MIN, concurrencyCap
+                )
+            }
             val poolView = orderedPool.take(effectiveTotal)  // 本轮有效范围(按权重降序);每波只 take 前 N 个并滤掉已投
             var waveSize = roundSize    // 当前波宽度(首轮 = 外层算好的 roundSize)
             val total = poolView.size
@@ -1738,6 +1757,11 @@ class DetailViewModel : ViewModel() {
                 // 且分母仍是全量 total,最终**走满 322**。这同时满足"逐条真实"与"走满"。
                 val wave = poolView.take(waveSize).filter { it.key !in searchedSourceKeys }
                 val waveSizeBefore = doneCount.get()
+                // 并发度**每波重新生效**:Semaphore 没有"改容量"的接口,所以按当前值新建
+                // (旧波的许可随旧波 awaitAll 结束一起消失,不会有两套额度并存)。
+                // 超时计数必须开在 if 外 —— 波后的自适应判据与日志都要读它。
+                val waveSemaphore = Semaphore(detailConcurrency)
+                val timeoutsThisWave = java.util.concurrent.atomic.AtomicInteger()
                 // 记录本波投出前的候选数 —— 波后与它对减得到"本轮新命中"(扩池判据只用增量,不用累计)。
                 val candidatesBeforeWave = synchronized(fallbackCandidates) { fallbackCandidates.size }
                 if (wave.isNotEmpty()) {
@@ -1745,7 +1769,7 @@ class DetailViewModel : ViewModel() {
                         wave.mapIndexed { index, bean ->
                             async {
                                 if (!searchActive(tokenStr)) return@async
-                                semaphore.withPermit {
+                                waveSemaphore.withPermit {
                                     if (!searchActive(tokenStr)) return@withPermit
                                     // 逐条入账 + 逐条上报:这是"已投源数"分子增长的真实时点。
                                     // 放在 withPermit 内(真正获得并发额度、即将发请求)而非波投前,
@@ -1811,6 +1835,7 @@ class DetailViewModel : ViewModel() {
                                     //
                                     // ⚠️ 判据同样要过 [searchActive]:本轮已被冻结/作废时的超时不算源的错。
                                     if (!answered && searchActive(tokenStr)) {
+                                        timeoutsThisWave.incrementAndGet()
                                         recordDetailSearchTimeout(
                                             bean.key,
                                             SourceWeightPolicy.EvidenceKind.SEARCH_TIMEOUT,
@@ -1828,13 +1853,25 @@ class DetailViewModel : ViewModel() {
                 // 2026-10-14 真机日志:click ... candidates=1 / wave-done ... hit=1 但 wave=0(本轮未投源),
                 // 扩池因 hit=1 被拦 → 换源点了等于没搜。故必须用"波前/波后增量"。
                 val newHitsThisWave = hitCount - candidatesBeforeWave
+                // 并发自适应:判据与弱网缩超时**共用**(样本 ≥8 且超时占比 ≥0.5)。
+                // 上一波结算数不足样本时原样保持,别让一小波噪声改动并发。
+                val settledThisWave = doneCount.get() - waveSizeBefore
+                val concurrencyBefore = detailConcurrency
+                detailConcurrency = SearchBatchPolicy.nextDetailConcurrency(
+                    settledCount = settledThisWave,
+                    timeoutCount = timeoutsThisWave.get(),
+                    current = detailConcurrency,
+                    cap = concurrencyCap,
+                )
                 LOG.i(
                     "echo-source-search wave-done done=${doneCount.get()}" +
-                        " wave=" + (doneCount.get() - waveSizeBefore) +
+                        " wave=" + settledThisWave +
                         " searched=" + searchedSourceKeys.size + " round=" + poolRound +
                         " frozen=$searchFrozen token=$myToken" +
                         " waveSize=$waveSize autoExpand=$autoExpandPool" +
-                        " cap=$fallbackPoolCap hit=$hitCount newHit=$newHitsThisWave"
+                        " cap=$fallbackPoolCap hit=$hitCount newHit=$newHitsThisWave" +
+                        " conc=$concurrencyBefore->$detailConcurrency" +
+                        " timeouts=" + timeoutsThisWave.get() + " concCap=$concurrencyCap"
                 )
                 // 让路:换片/冻结后立即停(别再投下一波、也别走收口)
                 if (!searchActive(tokenStr)) return@launch
@@ -3820,8 +3857,6 @@ class DetailViewModel : ViewModel() {
          * 与"首屏一批 24 源"配套(12 并发 × 8s ⇒ 最坏 16s),见 [onLoadingBudgetExpired]。
          */
         private const val LOADING_BUDGET_MS = 15_000L
-        /** 候选收集并发度。原 6 太保守,聚合订阅下一批批轮很慢;提到 12 让候选更快到齐 */
-        private const val SOURCE_SEARCH_CONCURRENCY = 12
         /**
          * 详情发出后延迟多久预热聚合搜索(毫秒)。
          *

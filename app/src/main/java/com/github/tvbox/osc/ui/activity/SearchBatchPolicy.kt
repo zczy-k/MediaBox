@@ -300,6 +300,53 @@ internal object SearchBatchPolicy {
     /** 判定弱网所需的最小样本:小批次的比例不可信(1/2 也过半) */
     const val MIN_SAMPLE_FOR_DEGRADE = 8
 
+    // ==================== 详情换源链的**并发自适应**(2026-10-14) ====================
+
+    /**
+     * 详情页并发上限(2026-10-14 定案:**不是**照抄搜索页的线程数)。
+     *
+     * <p>搜索页并发的时候没有播放在场;详情页聚合搜索却是在**给正在缓冲的视频流抢带宽**,
+     * 照抄 32/64 会把"点换源就卡播"变成新问题。所以:用户线程数**打对折**再封顶 16。
+     * 下限 4:再少就搜不完(322 源 × 4 并发 × 8s 是十分钟量级)。
+     */
+    const val DETAIL_CONCURRENCY_MAX = 16
+    const val DETAIL_CONCURRENCY_MIN = 4
+
+    /** 由用户设定推导出详情页并发上界:`max(4, min(16, 用户线程数 / 2))`。 */
+    @JvmStatic
+    fun detailConcurrencyCap(userThreads: Int): Int =
+        (userThreads / 2).coerceIn(DETAIL_CONCURRENCY_MIN, DETAIL_CONCURRENCY_MAX)
+
+    /**
+     * 波与波之间调整并发(纯函数):判据与 [batchTimeoutMs] **完全共用**(样本 ≥8 且超时占比 ≥0.5)。
+     *
+     * <p>为什么值得自动调而不是只信用户滑块:真机超时率常年在 75~83%,弱网时高并发只是把
+     * 更多请求堆在超时上排队;而网络好时死守 12 又白慢。同一份信号已经用来缩超时,
+     * 再用来缩并发是一致的做法 —— 用户不需要再多一个旋钮。
+     *
+     * <p>调节是**粗粒度**的:弱网砍一半,健康时 +4 逐步升回上限,上限就是用户额度折算后的 cap。
+     *
+     * @param settledCount 上一波**结算**的源数(等不到样本就原样保持)
+     * @param timeoutCount 其中没答话(超时/异常)的源数
+     * @param current      当前并发
+     * @param cap          [detailConcurrencyCap] 算出的上限
+     */
+    @JvmStatic
+    fun nextDetailConcurrency(
+        settledCount: Int,
+        timeoutCount: Int,
+        current: Int,
+        cap: Int,
+    ): Int {
+        if (settledCount < MIN_SAMPLE_FOR_DEGRADE) return current
+        val ratio = timeoutCount.toDouble() / settledCount
+        return if (ratio >= DEGRADED_TIMEOUT_RATIO) {
+            maxOf(DETAIL_CONCURRENCY_MIN, current / 2)
+        } else {
+            minOf(cap, current + 4)
+        }
+    }
+
     // ==================== 详情换源链的"快探"(2026-10-13) ====================
 
     /**

@@ -319,4 +319,40 @@ class SearchBatchPolicyTest {
             SearchBatchPolicy.batchTimeoutMs(settledCount = 7, timeoutCount = 7),
         )
     }
+
+    // ---------- 详情换源链并发自适应(2026-10-14) ----------
+
+    @Test
+    fun detailConcurrencyCap_halvesUserThreadsAndClamps() {
+        // 默认 32 线程 ⇒ 详情页 16(封顶);64 也还是 16 —— 换源并发要给正在缓冲的播放流让路
+        assertEquals(16, SearchBatchPolicy.detailConcurrencyCap(32))
+        assertEquals(16, SearchBatchPolicy.detailConcurrencyCap(64))
+        assertEquals(8, SearchBatchPolicy.detailConcurrencyCap(16))
+        // 极小值不许低于下限
+        assertEquals(SearchBatchPolicy.DETAIL_CONCURRENCY_MIN, SearchBatchPolicy.detailConcurrencyCap(1))
+    }
+
+    @Test
+    fun nextDetailConcurrency_weakNetworkHalvesHealthyClimbsBack() {
+        val cap = 16
+        // 超时占比过半 ⇒ 砍一半(16 → 8)
+        assertEquals(8, SearchBatchPolicy.nextDetailConcurrency(20, 12, 16, cap))
+        // 占比不到一半 ⇒ +4 逐步升回上限,且绝不超过上限
+        assertEquals(12, SearchBatchPolicy.nextDetailConcurrency(20, 4, 8, cap))
+        assertEquals(cap, SearchBatchPolicy.nextDetailConcurrency(20, 0, 16, cap))
+        // 再砍也不低于下限
+        assertEquals(
+            SearchBatchPolicy.DETAIL_CONCURRENCY_MIN,
+            SearchBatchPolicy.nextDetailConcurrency(20, 20, 4, cap),
+        )
+    }
+
+    @Test
+    fun nextDetailConcurrency_needsSameSampleAsTimeoutDegrade() {
+        // 判据与 batchTimeoutMs 共用同一最小样本:小批次的比例不可信(1/2 也过半)
+        assertEquals(
+            12,
+            SearchBatchPolicy.nextDetailConcurrency(settledCount = 7, timeoutCount = 7, current = 12, cap = 16),
+        )
+    }
 }

@@ -534,7 +534,7 @@
     <string name="settings_danmu_api">Danmaku API</string>
     <string name="settings_long_press_speed">Long-press Speed</string>
     <string name="settings_buffer_time">Buffer Time</string>
-    <string name="settings_search_threads">Search Threads</string>
+    <string name="settings_search_threads">Search Threads (source switch uses half)</string>
 
     <!-- Settings: secondary page group labels -->
     <string name="settings_group_play_picture">Engine &amp; Picture</string>
