@@ -35,12 +35,13 @@ import com.github.tvbox.osc.ui.components.SettingsOptionMenuRow
 import com.github.tvbox.osc.ui.components.SettingsRow
 import com.github.tvbox.osc.ui.components.SettingsSliderRow
 import com.github.tvbox.osc.ui.components.SettingsSwitchRow
+import com.github.tvbox.osc.ui.components.nearestTier
 import com.github.tvbox.osc.ui.components.TopBarActionBox
 import com.github.tvbox.osc.util.AppLanguage
 import com.github.tvbox.osc.util.HawkConfig
-import com.github.tvbox.osc.util.HomeSettings
 import com.github.tvbox.osc.util.HistoryMerge
 import com.github.tvbox.osc.util.LanguageManager
+import com.github.tvbox.osc.util.OkGoHelper
 import com.github.tvbox.osc.util.SourceHealthMemory
 import com.github.tvbox.osc.util.restartApp
 import kotlin.math.roundToInt
@@ -49,10 +50,9 @@ import org.greenrobot.eventbus.EventBus
 @Composable
 fun PreferenceSettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewModel()) {
     val state by vm.state
-    var sliderSpeed by remember(state.longPressSpeed) { mutableStateOf(state.longPressSpeed) }
+    val context = LocalContext.current
     var sliderBuffer by remember(state.bufferTimes) { mutableStateOf(state.bufferTimes) }
     var sliderThreads by remember(state.searchThreads) { mutableStateOf(state.searchThreads) }
-    var danmuApiDialog by remember { mutableStateOf(false) }
 
     val listState = rememberScrollState()
     AppTopBarScaffold(
@@ -77,36 +77,8 @@ fun PreferenceSettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel =
             Spacer(Modifier.height(topPad + 8.dp))
 
             SettingsGroup(title = stringResource(R.string.settings_group_language_layout)) {
-                SettingsCard(SettingsCardPosition.FIRST) {
+                SettingsCard(SettingsCardPosition.SINGLE) {
                     LanguageRow()
-                }
-                SettingsCard(SettingsCardPosition.MIDDLE) {
-                    HomeColumnsRow(
-                        columns = state.homeColumns,
-                        onSelect = { columns ->
-                            // setColumns 同时落 KV 并推 columnsFlow(首页栅格立即重组);refreshState 只重读本页状态
-                            HomeSettings.setColumns(columns)
-                            vm.refreshState()
-                        },
-                    )
-                }
-                SettingsCard(SettingsCardPosition.MIDDLE) {
-                    HomePosterRatioRow(
-                        mode = state.homePosterRatioMode,
-                        onSelect = {
-                            HomeSettings.setPosterRatioMode(it)
-                            vm.refreshState()
-                        },
-                    )
-                }
-                SettingsCard(SettingsCardPosition.LAST) {
-                    CollectColumnsRow(
-                        columns = state.collectColumns,
-                        onSelect = { columns ->
-                            vm.put(HawkConfig.COLLECT_COLUMNS, columns)
-                            EventBus.getDefault().post(RefreshEvent(RefreshEvent.TYPE_COLLECT_LAYOUT_CHANGE))
-                        },
-                    )
                 }
             }
 
@@ -137,22 +109,32 @@ fun PreferenceSettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel =
                         },
                     )
                 }
-                SettingsCard(SettingsCardPosition.MIDDLE) {
-                    SettingsSwitchRow(
-                        title = stringResource(R.string.settings_gesture_disable),
-                        leadingIconRes = R.drawable.ic_pref_gesture,
-                        subtitle = stringResource(R.string.settings_gesture_disable_subtitle),
-                        checked = state.gestureControlDisabled,
-                        onCheckedChange = { vm.put(HawkConfig.GESTURE_CONTROL_DISABLED, it) },
-                    )
-                }
                 SettingsCard(SettingsCardPosition.LAST) {
-                    SettingsSwitchRow(
-                        title = stringResource(R.string.settings_nav_live_hidden),
-                        leadingIconRes = R.drawable.ic_pref_nav_live_hidden,
-                        subtitle = stringResource(R.string.settings_nav_live_hidden_subtitle),
-                        checked = state.navLiveHidden,
-                        onCheckedChange = { vm.put(HawkConfig.NAV_LIVE_HIDDEN, it) },
+                    // 长按倍速本来就是手势的一种:原来分两行,关掉手势后那个滑块还能拖但完全没作用。
+                    // 现在合成一把:选"关"就整体关,选倍速就同时开手势并定倍速。
+                    val speeds = listOf(2, 4, 8)
+                    val gestureOptions = List(1) { stringResource(R.string.common_off) } + speeds.map {
+                        stringResource(R.string.settings_gesture_speed_value, it)
+                    }
+                    val gestureSelected = if (state.gestureControlDisabled) 0
+                    else nearestTier(speeds, state.longPressSpeed) + 1
+                    SettingsOptionMenuRow(
+                        title = stringResource(R.string.settings_gesture_control),
+                        subtitle = stringResource(R.string.settings_gesture_control_subtitle),
+                        leadingIconRes = R.drawable.ic_pref_gesture,
+                        valueText = gestureOptions[gestureSelected.coerceIn(0, gestureOptions.lastIndex)],
+                        options = gestureOptions,
+                        selectedIndex = gestureSelected,
+                        onSelect = { idx ->
+                            if (idx == 0) {
+                                vm.put(HawkConfig.GESTURE_CONTROL_DISABLED, true)
+                            } else {
+                                vm.putAll(
+                                    HawkConfig.GESTURE_CONTROL_DISABLED to false,
+                                    HawkConfig.LONG_PRESS_SPEED to speeds[idx - 1],
+                                )
+                            }
+                        },
                     )
                 }
             }
@@ -207,22 +189,6 @@ fun PreferenceSettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel =
                 }
                 SettingsCard(SettingsCardPosition.MIDDLE) {
                     SettingsSliderRow(
-                        title = stringResource(R.string.settings_long_press_speed),
-                        leadingIconRes = R.drawable.ic_pref_long_press_speed,
-                        value = sliderSpeed.toFloat(),
-                        valueText = "${sliderSpeed}x",
-                        valueRange = 2f..10f,
-                        steps = 7,
-                        onValueChange = { sliderSpeed = (it - 2).roundToInt() + 2 },
-                        onValueChangeFinished = {
-                            if (sliderSpeed != state.longPressSpeed) {
-                                vm.put(HawkConfig.LONG_PRESS_SPEED, sliderSpeed)
-                            }
-                        },
-                    )
-                }
-                SettingsCard(SettingsCardPosition.MIDDLE) {
-                    SettingsSliderRow(
                         title = stringResource(R.string.settings_buffer_time),
                         leadingIconRes = R.drawable.ic_pref_buffer_time,
                         value = sliderBuffer.toFloat(),
@@ -237,9 +203,10 @@ fun PreferenceSettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel =
                         },
                     )
                 }
-                SettingsCard(SettingsCardPosition.LAST) {
+                SettingsCard(SettingsCardPosition.MIDDLE) {
                     SettingsSliderRow(
                         title = stringResource(R.string.settings_search_threads),
+                        subtitle = stringResource(R.string.settings_search_threads_subtitle),
                         leadingIconRes = R.drawable.ic_pref_search_threads,
                         value = sliderThreads.toFloat(),
                         valueText = "$sliderThreads",
@@ -253,79 +220,26 @@ fun PreferenceSettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel =
                         },
                     )
                 }
+                SettingsCard(SettingsCardPosition.LAST) {
+                    SettingsOptionMenuRow(
+                        title = "DOH",
+                        subtitle = stringResource(R.string.settings_doh_subtitle),
+                        leadingIconRes = R.drawable.ic_settings_doh,
+                        valueText = if (state.dohIndex == 0) stringResource(R.string.common_off)
+                        else OkGoHelper.dnsHttpsList.getOrNull(state.dohIndex)
+                            ?: stringResource(R.string.common_off),
+                        options = OkGoHelper.dnsHttpsList.mapIndexed { index, name ->
+                            if (index == 0) context.getString(R.string.common_off) else name
+                        },
+                        selectedIndex = state.dohIndex,
+                        onSelect = { idx -> vm.put(HawkConfig.DOH_URL, idx) },
+                    )
+                }
             }
 
             Spacer(Modifier.height(64.dp))
         }
     }
-
-    if (danmuApiDialog) {
-        TextEditDialog(
-            title = stringResource(R.string.settings_danmu_api),
-            initialText = state.danmuApi,
-            onDismiss = { danmuApiDialog = false },
-            onConfirm = { text ->
-                vm.put(HawkConfig.DANMU_API, text)
-                danmuApiDialog = false
-            },
-        )
-    }
-}
-
-@Composable
-private fun HomePosterRatioRow(
-    mode: HomeSettings.PosterRatioMode,
-    onSelect: (HomeSettings.PosterRatioMode) -> Unit,
-) {
-    val modes = HomeSettings.PosterRatioMode.values()
-    val options = listOf(
-        stringResource(R.string.settings_home_poster_ratio_auto),
-        stringResource(R.string.settings_home_poster_ratio_portrait),
-        stringResource(R.string.settings_home_poster_ratio_landscape),
-    )
-    SettingsOptionMenuRow(
-        title = stringResource(R.string.settings_home_poster_ratio),
-        subtitle = stringResource(R.string.settings_home_poster_ratio_subtitle),
-        leadingIconRes = R.drawable.ic_pref_collect_columns,
-        valueText = options[mode.ordinal],
-        options = options,
-        selectedIndex = mode.ordinal,
-        onSelect = { idx -> onSelect(modes.getOrElse(idx) { HomeSettings.PosterRatioMode.Automatic }) },
-    )
-}
-
-@Composable
-private fun HomeColumnsRow(columns: Int, onSelect: (Int) -> Unit) {
-    val options = listOf(
-        stringResource(R.string.settings_home_columns_three),
-        stringResource(R.string.settings_home_columns_two),
-    )
-    val selectedIndex = if (columns == 3) 0 else 1
-    SettingsOptionMenuRow(
-        title = stringResource(R.string.settings_home_columns),
-        leadingIconRes = R.drawable.ic_pref_collect_columns,
-        valueText = options[selectedIndex],
-        options = options,
-        selectedIndex = selectedIndex,
-        onSelect = { idx -> onSelect(if (idx == 0) 3 else 2) },
-    )
-}
-
-@Composable
-private fun CollectColumnsRow(columns: Int, onSelect: (Int) -> Unit) {
-    val options = listOf(
-        stringResource(R.string.settings_collect_columns_three),
-        stringResource(R.string.settings_collect_columns_two),
-    )
-    val selectedIndex = if (columns == 3) 0 else 1
-    SettingsOptionMenuRow(
-        title = stringResource(R.string.settings_collect_columns),
-        leadingIconRes = R.drawable.ic_pref_collect_columns,
-        valueText = options[selectedIndex],
-        options = options,
-        selectedIndex = selectedIndex,
-        onSelect = { idx -> onSelect(if (idx == 0) 3 else 2) },
-    )
 }
 
 /** 语言入口:选中即写 KV(给落盘留出弹窗交互的时间),确认后立即自重启;取消回滚 */

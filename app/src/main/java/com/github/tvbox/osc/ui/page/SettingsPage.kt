@@ -56,14 +56,12 @@ import com.github.tvbox.osc.ui.activity.PreferenceSettingsActivity
 import com.github.tvbox.osc.ui.activity.ThemeSettingsActivity
 import com.github.tvbox.osc.util.DefaultConfig
 import com.github.tvbox.osc.util.FileUtils
-import com.github.tvbox.osc.util.HistoryHelper
 import com.github.tvbox.osc.util.HistoryMerge
 import com.github.tvbox.osc.util.HomeSettings
 import com.github.tvbox.osc.player.LineHealthMemory
 import com.github.tvbox.osc.player.effect.anime4k.Anime4kTier
 import com.github.tvbox.osc.util.HawkConfig
 import com.github.tvbox.osc.util.MusicSettings
-import com.github.tvbox.osc.util.OkGoHelper
 import com.github.tvbox.osc.util.SourceHealthMemory
 import com.github.tvbox.osc.util.TitleIndexMemory
 import com.github.tvbox.osc.util.KV
@@ -83,7 +81,7 @@ data class SettingsState(
     val playTunnel: Boolean,
     val preferAac: Boolean,
     val musicPlayerPage: Boolean,
-    /** 自动扩池(默认开):候选源搜不到时按比例逐轮扩大搜索范围,直到全量 */
+    /** 播放失败时自动换下一条线路(与"自动屏蔽坏源"是两件事:一个管这次,一个管以后) */
     val autoSwitchLine: Boolean,
     /** 防滥用封禁开关(默认开):反复失败的源自动停用一段时间 */
     val autoBlockBadSources: Boolean,
@@ -93,14 +91,14 @@ data class SettingsState(
     val incognito: Boolean,
     val gestureControlDisabled: Boolean,
     val navLiveHidden: Boolean,
+    val dohIndex: Int,
+    /** 下面三项是"界面布局",在主题设置页改(与配色同属外观,放偏好页只是历史遗留) */
     val collectColumns: Int,
     val homeColumns: Int,
     val homePosterRatioMode: HomeSettings.PosterRatioMode,
-    val danmuOpen: Boolean,
-    val danmuApi: String,
     val defaultLoadLive: Boolean,
-    val historyNumIndex: Int,
     val historyMerge: Boolean,
+    /** 同时投出的搜索请求数上限(首页搜索 + 起播/换源共用,自适应在它以内加减) */
     val searchThreads: Int,
     val longPressSpeed: Int,
     val bufferTimes: Int,
@@ -108,7 +106,6 @@ data class SettingsState(
     val preloadDuration: Int,
     val playCache: Boolean,
     val exoCacheSizeMb: Int,
-    val dohIndex: Int,
     val cacheSizeText: String = "",
 )
 
@@ -200,13 +197,11 @@ class SettingsViewModel : ViewModel() {
         incognito = KV.get(HawkConfig.INCOGNITO, false),
         gestureControlDisabled = KV.get(HawkConfig.GESTURE_CONTROL_DISABLED, false),
         navLiveHidden = KV.get(HawkConfig.NAV_LIVE_HIDDEN, false),
+        dohIndex = KV.get(HawkConfig.DOH_URL, 0),
         collectColumns = KV.get(HawkConfig.COLLECT_COLUMNS, 3),
         homeColumns = HomeSettings.currentColumns(),
         homePosterRatioMode = HomeSettings.posterRatioModeFlow.value,
-        danmuOpen = KV.get(HawkConfig.DANMU_OPEN, true),
-        danmuApi = KV.get(HawkConfig.DANMU_API, ""),
         defaultLoadLive = KV.get(HawkConfig.DEFAULT_LOAD_LIVE, false),
-        historyNumIndex = KV.get(HawkConfig.HISTORY_NUM, 0),
         historyMerge = HistoryMerge.isEnabled(),
         searchThreads = KV.get(HawkConfig.SEARCH_THREADS, HawkConfig.SEARCH_THREADS_DEFAULT),
         longPressSpeed = KV.get(HawkConfig.LONG_PRESS_SPEED, HawkConfig.LONG_PRESS_SPEED_DEFAULT),
@@ -215,12 +210,20 @@ class SettingsViewModel : ViewModel() {
         preloadDuration = KV.get(HawkConfig.PRELOAD_DURATION, HawkConfig.PRELOAD_DURATION_DEFAULT),
         playCache = KV.get(HawkConfig.PLAY_CACHE, false),
         exoCacheSizeMb = KV.get(HawkConfig.EXO_CACHE_SIZE_MB, HawkConfig.EXO_CACHE_SIZE_MB_DEFAULT),
-        dohIndex = KV.get(HawkConfig.DOH_URL, 0),
         cacheSizeText = cacheSizeText,
     )
 
     fun <T> put(key: String, value: T) {
         KV.put(key, value)
+        refresh()
+    }
+
+    /**
+     * 一次写多个 key 再刷新。合并后的档位行(启动页/手势/预载)一把开关要落两个 KV key,
+     * 用两次 [put] 就是刷新两次状态 + 两次整棵缓存目录的递归遍历。
+     */
+    fun putAll(vararg pairs: Pair<String, Any?>) {
+        for ((key, value) in pairs) KV.put(key, value)
         refresh()
     }
 }
@@ -366,36 +369,28 @@ fun SettingsPage(
 
             SettingsGroup(title = null) {
                 SettingsCard(SettingsCardPosition.FIRST) {
+                    // 一个意图只留一把开关:"我不看直播"同时决定默认落在哪一页和导航栏留不留直播,
+                    // 拆成两行就会出现"默认点播 + 导航栏隐藏直播 + 上一版残留的直播状态"这种自相矛盾的组合。
                     SettingsOptionMenuRow(
                         title = stringResource(R.string.settings_default_page),
                         subtitle = stringResource(R.string.settings_default_page_subtitle),
                         iconRes = R.drawable.ic_settings_start,
-                        valueText = stringResource(if (state.defaultLoadLive) R.string.common_live else R.string.common_vod),
+                        valueText = stringResource(startupPageLabel(state.defaultLoadLive, state.navLiveHidden)),
                         options = listOf(
                             stringResource(R.string.common_vod),
+                            stringResource(R.string.settings_default_page_vod_only),
                             stringResource(R.string.common_live),
                         ),
-                        selectedIndex = if (state.defaultLoadLive) 1 else 0,
-                        onSelect = { idx -> vm.put(HawkConfig.DEFAULT_LOAD_LIVE, idx == 1) },
-                    )
-                }
-                SettingsCard(SettingsCardPosition.MIDDLE) {
-                    SettingsOptionMenuRow(
-                        title = stringResource(R.string.settings_history_limit),
-                        subtitle = stringResource(R.string.settings_history_limit_subtitle),
-                        iconRes = R.drawable.ic_settings_history,
-                        valueText = stringResource(
-                            R.string.settings_history_limit_value,
-                            HistoryHelper.getHisNum(state.historyNumIndex),
-                        ),
-                        options = listOf(0, 1, 2).map {
-                            stringResource(R.string.settings_history_limit_value, HistoryHelper.getHisNum(it))
+                        selectedIndex = startupPageIndex(state.defaultLoadLive, state.navLiveHidden),
+                        onSelect = { idx ->
+                            vm.putAll(
+                                HawkConfig.DEFAULT_LOAD_LIVE to (idx == 2),
+                                HawkConfig.NAV_LIVE_HIDDEN to (idx == 1),
+                            )
                         },
-                        selectedIndex = state.historyNumIndex,
-                        onSelect = { idx -> vm.put(HawkConfig.HISTORY_NUM, idx) },
                     )
                 }
-                SettingsCard(SettingsCardPosition.MIDDLE) {
+                SettingsCard(SettingsCardPosition.LAST) {
                     SettingsRow(
                         title = stringResource(R.string.settings_clear_cache),
                         subtitle = stringResource(R.string.settings_clear_cache_subtitle),
@@ -406,21 +401,6 @@ fun SettingsPage(
                                 Toast.makeText(context, context.getString(R.string.toast_cache_cleared), Toast.LENGTH_LONG).show()
                             }
                         },
-                    )
-                }
-                SettingsCard(SettingsCardPosition.LAST) {
-                    SettingsOptionMenuRow(
-                        title = "DOH",
-                        subtitle = stringResource(R.string.settings_doh_subtitle),
-                        iconRes = R.drawable.ic_settings_doh,
-                        valueText = if (state.dohIndex == 0) stringResource(R.string.common_off)
-                        else OkGoHelper.dnsHttpsList.getOrNull(state.dohIndex)
-                            ?: stringResource(R.string.common_off),
-                        options = OkGoHelper.dnsHttpsList.mapIndexed { index, name ->
-                            if (index == 0) context.getString(R.string.common_off) else name
-                        },
-                        selectedIndex = state.dohIndex,
-                        onSelect = { idx -> vm.put(HawkConfig.DOH_URL, idx) },
                     )
                 }
             }
@@ -545,6 +525,24 @@ private fun AboutSheet(versionName: String, onDismiss: () -> Unit) {
         }
     }
 }
+
+/**
+ * 「默认启动页」的三档下标。两把开关(KV 里仍是两个 key)合成一档,组合口径:
+ * 0=点播且保留直播入口, 1=只看点播(隐藏直播入口), 2=直播。
+ * "直播 + 隐藏直播入口"这种自相矛盾的老组合按直播读,等用户下次选择时自然被规范化。
+ */
+private fun startupPageIndex(defaultLoadLive: Boolean, navLiveHidden: Boolean): Int = when {
+    defaultLoadLive -> 2
+    navLiveHidden -> 1
+    else -> 0
+}
+
+private fun startupPageLabel(defaultLoadLive: Boolean, navLiveHidden: Boolean): Int =
+    when (startupPageIndex(defaultLoadLive, navLiveHidden)) {
+        2 -> R.string.common_live
+        1 -> R.string.settings_default_page_vod_only
+        else -> R.string.common_vod
+    }
 
 @Composable
 fun TextEditDialog(

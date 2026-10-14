@@ -97,7 +97,6 @@ public class HawkConfig {
     public static final boolean EXO_VIDEO_DYNAMIC_SCHEDULING_DEFAULT = true;
     public static final String LIVE_PLAY_SCALE = "live_play_scale";
     public static final String DOH_URL = "doh_url";
-    public static final String HISTORY_NUM = "history_num";
     public static final String LIVE_CHANNEL = "last_live_channel_name";
     public static final String LIVE_CHANNEL_REVERSE = "live_channel_reverse";
     public static final String LIVE_CROSS_GROUP = "live_cross_group";

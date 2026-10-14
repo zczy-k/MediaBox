@@ -3,7 +3,8 @@
 
     <!-- 设置:语言 -->
     <string name="settings_language">语言</string>
-    <string name="settings_group_language_layout">语言与布局</string>
+    <string name="settings_group_language_layout">语言</string>
+    <string name="settings_group_layout">界面布局</string>
     <string name="settings_language_subtitle">切换应用的界面语言</string>
     <string name="settings_collect_columns">收藏页布局</string>
     <string name="settings_collect_columns_three">三列布局</string>
@@ -302,7 +303,7 @@
     <!-- 设置:预载设置 -->
     <string name="preload_next_episode">下一集预载</string>
     <string name="preload_next_episode_subtitle">仅Media3播放器和部分源支持</string>
-    <string name="preload_duration">预载时长</string>
+    <string name="preload_next_on_at">开 · 提前 %1$d 秒</string>
     <string name="preload_play_cache">边播边缓存</string>
     <string name="preload_play_cache_subtitle">开启后可能导致Media3播放器无法使用</string>
     <string name="preload_cache_size">缓存容量</string>
@@ -520,15 +521,13 @@
     <string name="settings_config_manage">配置管理</string>
     <string name="settings_config_manage_subtitle">导入或删除订阅源</string>
     <string name="settings_theme">主题设置</string>
-    <string name="settings_theme_subtitle">修改应用的配色和效果</string>
+    <string name="settings_theme_subtitle">配色、效果与界面布局</string>
     <string name="settings_play">播放设置</string>
-    <string name="settings_play_subtitle">播放核心和解码方式</string>
+    <string name="settings_play_subtitle">内核、画质与缓存</string>
     <string name="settings_preference_subtitle">修改应用的使用偏好</string>
     <string name="settings_default_page">默认启动页</string>
     <string name="settings_default_page_subtitle">首次打开应用的所在位置</string>
-    <string name="settings_history_limit">历史记录上限</string>
-    <string name="settings_history_limit_subtitle">最多保留多少条记录</string>
-    <string name="settings_history_limit_value">%1$d条</string>
+    <string name="settings_default_page_vod_only">只看点播</string>
     <string name="settings_clear_cache">清除缓存</string>
     <string name="settings_clear_cache_subtitle">清理播放缓存、爬虫缓存与搜索命中缓存（保留爬虫登录状态）</string>
     <string name="settings_doh_subtitle">安全DNS</string>
@@ -541,21 +540,18 @@
     <string name="settings_preference_title">偏好设置</string>
     <string name="settings_history_merge">历史合并</string>
     <string name="settings_incognito">无痕模式</string>
-    <string name="settings_gesture_disable">禁用手势控制</string>
-    <string name="settings_gesture_disable_subtitle">开启后将禁用手势控制亮度和音量</string>
-    <string name="settings_nav_live_hidden">导航栏隐藏直播</string>
-    <string name="settings_nav_live_hidden_subtitle">开启后导航栏不再显示直播入口</string>
+    <string name="settings_gesture_control">触摸手势</string>
+    <string name="settings_gesture_control_subtitle">关掉后进度、音量、亮度都不再用手势调</string>
+    <string name="settings_gesture_speed_value">开 · 长按 %1$d 倍速</string>
     <string name="settings_auto_switch_line">自动换线</string>
     <string name="settings_auto_block_bad_sources">自动屏蔽反复不可用的源</string>
     <string name="settings_auto_block_bad_sources_subtitle">同一源反复失败后自动停用一段时间;已屏蔽的源不再参与搜索与换源</string>
     <string name="settings_source_blocked_count">已屏蔽 %1$d 个源</string>
     <string name="settings_source_unblock_all">全部解除</string>
     <string name="settings_m3u8_purify">M3U8 净化</string>
-    <string name="settings_danmu_switch">弹幕开关</string>
-    <string name="settings_danmu_api">弹幕 API</string>
-    <string name="settings_long_press_speed">长按倍速</string>
     <string name="settings_buffer_time">缓冲时间</string>
-    <string name="settings_search_threads">搜索线程</string>
+    <string name="settings_search_threads">同时搜索的源数</string>
+    <string name="settings_search_threads_subtitle">找片和换源都用它当上限</string>
 
     <!-- 设置:二级页分组小标题 -->
     <string name="settings_group_play_picture">内核与画面</string>

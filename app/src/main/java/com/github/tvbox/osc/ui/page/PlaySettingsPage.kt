@@ -35,6 +35,7 @@ import com.github.tvbox.osc.ui.components.SettingsOptionMenuRow
 import com.github.tvbox.osc.ui.components.SettingsRow
 import com.github.tvbox.osc.ui.components.SettingsSliderRow
 import com.github.tvbox.osc.ui.components.SettingsSwitchRow
+import com.github.tvbox.osc.ui.components.nearestTier
 import com.github.tvbox.osc.util.SubtitleHelper
 import com.github.tvbox.osc.util.SubtitleSources
 import android.widget.Toast
@@ -63,7 +64,6 @@ fun PlaySettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewM
     val state by vm.state
     val context = LocalContext.current
     var showPrewarmWarning by remember { mutableStateOf(false) }
-    var sliderPreloadDuration by remember(state.preloadDuration) { mutableStateOf(state.preloadDuration) }
     var sliderCacheSize by remember(state.exoCacheSizeMb) { mutableStateOf(state.exoCacheSizeMb) }
     // 字幕:总开关 + 内置源开关 + 自定义源,都直接读写 KV,不走 SettingsState(不必整页 refresh)
     var subtitleEnabled by remember { mutableStateOf(SubtitleHelper.isEnabled()) }
@@ -187,8 +187,12 @@ fun PlaySettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewM
                         onSelect = { idx ->
                             val picked = DeviceCapability.QualityMode.values()[idx]
                             qualityMode = picked
-                            vm.put(HawkConfig.VIDEO_QUALITY_MODE, picked.ordinal)
-                            vm.put(HawkConfig.TRAFFIC_SAVER, false)
+                            // 旧的 traffic_saver 是上一版独立开关的残留:不清成 false,
+                            // resolveMode 的迁移会把它一直按回「省流画质」
+                            vm.putAll(
+                                HawkConfig.VIDEO_QUALITY_MODE to picked.ordinal,
+                                HawkConfig.TRAFFIC_SAVER to false,
+                            )
                         },
                     )
                 }
@@ -344,26 +348,29 @@ fun PlaySettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewM
 
             SettingsGroup(title = stringResource(R.string.settings_group_preload_cache)) {
                 SettingsCard(SettingsCardPosition.FIRST) {
-                    SettingsSwitchRow(
+                    // 「下一集预载」和「预载时长」合成一把:开关配时长 = 两把旋钮讲同一件事,
+                    // 而且关了时长滑块还能拖。档位只有"提前多少秒"这一个看得见的差别。
+                    val preloadSeconds = listOf(20, 60)
+                    val preloadOptions = List(1) { stringResource(R.string.common_off) } + preloadSeconds.map {
+                        stringResource(R.string.preload_next_on_at, it)
+                    }
+                    val preloadSelected = if (!state.preloadNextEpisode) 0
+                    else nearestTier(preloadSeconds, state.preloadDuration) + 1
+                    SettingsOptionMenuRow(
                         title = stringResource(R.string.preload_next_episode),
-                        leadingIconRes = R.drawable.ic_preload_next,
                         subtitle = stringResource(R.string.preload_next_episode_subtitle),
-                        checked = state.preloadNextEpisode,
-                        onCheckedChange = { vm.put(HawkConfig.PRELOAD_NEXT_EPISODE, it) },
-                    )
-                }
-                SettingsCard(SettingsCardPosition.MIDDLE) {
-                    SettingsSliderRow(
-                        title = stringResource(R.string.preload_duration),
-                        leadingIconRes = R.drawable.ic_preload_duration,
-                        value = sliderPreloadDuration.toFloat(),
-                        valueText = "${sliderPreloadDuration}s",
-                        valueRange = 20f..120f,
-                        steps = 9,
-                        onValueChange = { sliderPreloadDuration = ((it - 20) / 10).roundToInt() * 10 + 20 },
-                        onValueChangeFinished = {
-                            if (sliderPreloadDuration != state.preloadDuration) {
-                                vm.put(HawkConfig.PRELOAD_DURATION, sliderPreloadDuration)
+                        leadingIconRes = R.drawable.ic_preload_next,
+                        valueText = preloadOptions[preloadSelected.coerceIn(0, preloadOptions.lastIndex)],
+                        options = preloadOptions,
+                        selectedIndex = preloadSelected,
+                        onSelect = { idx ->
+                            if (idx == 0) {
+                                vm.put(HawkConfig.PRELOAD_NEXT_EPISODE, false)
+                            } else {
+                                vm.putAll(
+                                    HawkConfig.PRELOAD_NEXT_EPISODE to true,
+                                    HawkConfig.PRELOAD_DURATION to preloadSeconds[idx - 1],
+                                )
                             }
                         },
                     )
@@ -378,9 +385,11 @@ fun PlaySettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewM
                     )
                 }
                 SettingsCard(SettingsCardPosition.LAST) {
+                    // 容量是给"边播边缓存"用的:那个开关关着时拖它毫无作用,还说要重启才能生效。
                     SettingsSliderRow(
                         title = stringResource(R.string.preload_cache_size),
                         leadingIconRes = R.drawable.ic_cache_size,
+                        enabled = state.playCache,
                         value = sliderCacheSize.toFloat(),
                         valueText = if (sliderCacheSize >= 1024) "%.1fGB".format(sliderCacheSize / 1024f) else "${sliderCacheSize}MB",
                         valueRange = 128f..4096f,

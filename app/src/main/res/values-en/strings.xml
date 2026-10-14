@@ -3,7 +3,8 @@
 
     <!-- Settings: language (language names stay endonym, same as the platform language picker) -->
     <string name="settings_language">Language</string>
-    <string name="settings_group_language_layout">Language &amp; Layout</string>
+    <string name="settings_group_language_layout">Language</string>
+    <string name="settings_group_layout">Layout</string>
     <string name="settings_language_subtitle">Change the app interface language</string>
     <string name="settings_collect_columns">Collect page layout</string>
     <string name="settings_collect_columns_three">Three columns</string>
@@ -288,7 +289,7 @@
     <!-- Settings: preload -->
     <string name="preload_next_episode">Preload next episode</string>
     <string name="preload_next_episode_subtitle">Only supported by the Media3 player and some sources</string>
-    <string name="preload_duration">Preload duration</string>
+    <string name="preload_next_on_at">On · %1$d s ahead</string>
     <string name="preload_play_cache">Cache while playing</string>
     <string name="preload_play_cache_subtitle">May make the Media3 player unusable when enabled</string>
     <string name="preload_cache_size">Cache size</string>
@@ -429,10 +430,10 @@
     <string name="theme_mode_dark">Dark</string>
 
     <!-- Settings: playback -->
-    <string name="settings_play_kernel">Player Engine</string>
+    <string name="settings_play_kernel">Default Player Engine</string>
     <string name="settings_play_render">Rendering</string>
-    <string name="settings_play_scale">Video Scaling</string>
-    <string name="settings_play_decode">Decoding Mode</string>
+    <string name="settings_play_scale">Default Video Scaling</string>
+    <string name="settings_play_decode">Default Decoding Mode</string>
     <string name="settings_play_anime4k">Anime4K Enhancement</string>
     <string name="settings_play_anime4k_subtitle">VOD only; live and HDR sources are skipped</string>
     <string name="settings_play_tunnel">Tunnel Mode</string>
@@ -498,15 +499,13 @@
     <string name="settings_config_manage">Config Management</string>
     <string name="settings_config_manage_subtitle">Import or delete subscription sources</string>
     <string name="settings_theme">Theme Settings</string>
-    <string name="settings_theme_subtitle">Change the app colors and effects</string>
+    <string name="settings_theme_subtitle">Colours, effects and interface layout</string>
     <string name="settings_play">Playback Settings</string>
-    <string name="settings_play_subtitle">Playback engine and decoding mode</string>
+    <string name="settings_play_subtitle">Engine, quality and cache</string>
     <string name="settings_preference_subtitle">Change the app preferences</string>
     <string name="settings_default_page">Default Start Page</string>
     <string name="settings_default_page_subtitle">Where the app opens on launch</string>
-    <string name="settings_history_limit">History Limit</string>
-    <string name="settings_history_limit_subtitle">Maximum number of records to keep</string>
-    <string name="settings_history_limit_value">%1$d items</string>
+    <string name="settings_default_page_vod_only">VOD only</string>
     <string name="settings_clear_cache">Clear Cache</string>
     <string name="settings_clear_cache_subtitle">Clears playback cache, spider caches and search hits (keeps spider sign-in state)</string>
     <string name="settings_doh_subtitle">Secure DNS</string>
@@ -519,21 +518,18 @@
     <string name="settings_preference_title">Preferences</string>
     <string name="settings_history_merge">Merge History</string>
     <string name="settings_incognito">Incognito Mode</string>
-    <string name="settings_gesture_disable">Disable Gesture Control</string>
-    <string name="settings_gesture_disable_subtitle">Disables brightness and volume gestures</string>
-    <string name="settings_nav_live_hidden">Hide Live in Navigation Bar</string>
-    <string name="settings_nav_live_hidden_subtitle">Hides the Live entry in the navigation bar</string>
+    <string name="settings_gesture_control">Touch Gestures</string>
+    <string name="settings_gesture_control_subtitle">Off disables seek, volume and brightness gestures; pick the long-press speed to turn them on</string>
+    <string name="settings_gesture_speed_value">On · long-press %1$d×</string>
     <string name="settings_auto_switch_line">Auto Switch Line</string>
     <string name="settings_auto_block_bad_sources">Auto-block unreliable sources</string>
     <string name="settings_auto_block_bad_sources_subtitle">Pause a source after repeated failures; blocked sources are skipped in search and source switching</string>
     <string name="settings_source_blocked_count">Blocked sources: %1$d</string>
     <string name="settings_source_unblock_all">Unblock all</string>
     <string name="settings_m3u8_purify">M3U8 Purify</string>
-    <string name="settings_danmu_switch">Danmaku Switch</string>
-    <string name="settings_danmu_api">Danmaku API</string>
-    <string name="settings_long_press_speed">Long-press Speed</string>
     <string name="settings_buffer_time">Buffer Time</string>
-    <string name="settings_search_threads">Search Threads</string>
+    <string name="settings_search_threads">Sources Searched At Once</string>
+    <string name="settings_search_threads_subtitle">Caps both finding titles and switching sources</string>
 
     <!-- Settings: secondary page group labels -->
     <string name="settings_group_play_picture">Engine &amp; Picture</string>

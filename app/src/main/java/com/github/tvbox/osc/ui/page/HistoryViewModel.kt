@@ -64,8 +64,7 @@ class HistoryViewModel : ViewModel() {
         if (items.value.isEmpty()) loading.value = true
         if (scrollToTop) placementAnim.value = false
         viewModelScope.launch(Dispatchers.IO) {
-            val limit = HistoryHelper.getHisNum(KV.get(HawkConfig.HISTORY_NUM, 0))
-            val all = RoomDataManger.getAllVodRecord(limit)
+            val all = RoomDataManger.getAllVodRecord(HistoryHelper.HISTORY_LIMIT)
             if (HistoryMerge.isEnabled()) {
                 // 历史合并:同一部剧只保留最新一条,被合并掉的旧记录直接清库(上游"历史合并"语义,见 HistoryMerge)
                 val (kept, dropped) = HistoryMerge.dedupe(all) { it.name }

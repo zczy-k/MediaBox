@@ -4,18 +4,12 @@ import com.github.tvbox.osc.util.KV;
 import java.util.ArrayList;
 
 public class HistoryHelper {
-    private static final Integer[] hisNumArray = {30,50,100};
+    /**
+     * 历史一次最多读出多少条。原来是设置里的「历史记录上限」(30/50/100 三档),
+     * 但它既不清库、用户又看不出 30 和 50 的差别,就只是一个让人担心"少看了"的旋钮 —— 移除入口,固定 100。
+     */
+    public static final int HISTORY_LIMIT = 100;
     private static final String API_LINE_SPLIT = "\t";
-
-    public static int getHisNum(int index){
-        Integer value = null;
-        if(index>=0 && index < hisNumArray.length){
-            value = hisNumArray[index];
-        }else{
-            value = hisNumArray[0];
-        }
-        return value;
-    }
 
     /**
      * 无痕判定,所有判断统一走这里。写侧 = 搜索历史 / 观看历史 / 续播点 / 百分比 / 集数快照;

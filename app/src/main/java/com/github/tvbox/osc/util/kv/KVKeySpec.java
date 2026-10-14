@@ -99,7 +99,6 @@ public final class KVKeySpec implements KVDecoder.TypeRegistry {
         register(HawkConfig.PLAY_SCALE, 0);
         register(HawkConfig.LIVE_PLAY_SCALE, 0);
         register(HawkConfig.DOH_URL, 0);
-        register(HawkConfig.HISTORY_NUM, 0);
         register(HawkConfig.LIVE_CONNECT_TIMEOUT, 0);
         register(HawkConfig.SUBTITLE_TEXT_SIZE, 0);
         register(HawkConfig.SUBTITLE_TIME_DELAY, 0);

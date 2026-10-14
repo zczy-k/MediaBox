@@ -30,6 +30,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -157,6 +158,25 @@ fun SettingsIconBadge(@DrawableRes iconRes: Int, contentDescription: String? = n
     }
 }
 
+/**
+ * 把存着的连续值对到"看得见的档位"下标(取最近的一档,平手取低档)。
+ *
+ * 滑块换成档位菜单后,老用户在 KV 里存的可能是 3、45 这类不在档位里的值 ——
+ * 不取近就显示不出来,或者显示成比实际更高的一档,用户以为已经改了。
+ */
+fun nearestTier(tiers: List<Int>, value: Int): Int {
+    var best = 0
+    var bestGap = Int.MAX_VALUE
+    tiers.forEachIndexed { i, t ->
+        val gap = kotlin.math.abs(t - value)
+        if (gap < bestGap) {
+            bestGap = gap
+            best = i
+        }
+    }
+    return best
+}
+
 @Composable
 fun SettingsSliderRow(
     title: String,
@@ -168,11 +188,14 @@ fun SettingsSliderRow(
     steps: Int = 0,
     valueText: String? = null,
     leadingIconRes: Int? = null,
+    subtitle: String? = null,
+    enabled: Boolean = true,
 ) {
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp),
+            .padding(vertical = 8.dp)
+            .alpha(if (enabled) 1f else 0.4f),
     ) {
         Row(
             modifier = Modifier
@@ -180,8 +203,8 @@ fun SettingsSliderRow(
                 .padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            leadingIconRes?.let { RowLeadingIcon(it, enabled = true) }
-            RowTitle(title = title, enabled = true, modifier = Modifier.weight(1f))
+            leadingIconRes?.let { RowLeadingIcon(it, enabled = enabled) }
+            RowTitle(title = title, enabled = enabled, modifier = Modifier.weight(1f))
             if (valueText != null) {
                 Spacer(Modifier.width(16.dp))
                 Surface(
@@ -197,8 +220,19 @@ fun SettingsSliderRow(
                 }
             }
         }
+        subtitle?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+            )
+        }
         Slider(
             value = value,
+            enabled = enabled,
             onValueChange = onValueChange,
             onValueChangeFinished = onValueChangeFinished,
             valueRange = valueRange,

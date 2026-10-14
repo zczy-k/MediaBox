@@ -3,7 +3,8 @@
 
     <!-- 設定:語言(語言名稱保留各語言自稱) -->
     <string name="settings_language">語言</string>
-    <string name="settings_group_language_layout">語言與佈局</string>
+    <string name="settings_group_language_layout">語言</string>
+    <string name="settings_group_layout">介面佈局</string>
     <string name="settings_language_subtitle">切換應用程式的介面語言</string>
     <string name="settings_collect_columns">收藏頁佈局</string>
     <string name="settings_collect_columns_three">三列佈局</string>
@@ -288,7 +289,7 @@
     <!-- 設定:預載設定 -->
     <string name="preload_next_episode">下一集預載</string>
     <string name="preload_next_episode_subtitle">僅Media3播放器和部分源支援</string>
-    <string name="preload_duration">預載時長</string>
+    <string name="preload_next_on_at">開 · 提前 %1$d 秒</string>
     <string name="preload_play_cache">邊播邊快取</string>
     <string name="preload_play_cache_subtitle">開啟後可能導致Media3播放器無法使用</string>
     <string name="preload_cache_size">快取容量</string>
@@ -429,10 +430,10 @@
     <string name="theme_mode_dark">深色</string>
 
     <!-- 設定:播放設定 -->
-    <string name="settings_play_kernel">播放核心</string>
+    <string name="settings_play_kernel">預設播放核心</string>
     <string name="settings_play_render">畫面渲染</string>
-    <string name="settings_play_scale">畫面縮放</string>
-    <string name="settings_play_decode">解碼方式</string>
+    <string name="settings_play_scale">預設畫面縮放</string>
+    <string name="settings_play_decode">預設解碼方式</string>
     <string name="settings_play_anime4k">Anime4K 畫質增強</string>
     <string name="settings_play_anime4k_subtitle">僅隨選生效，直播 / HDR 來源自動跳過</string>
     <string name="settings_play_tunnel">隧道模式</string>
@@ -498,15 +499,13 @@
     <string name="settings_config_manage">設定管理</string>
     <string name="settings_config_manage_subtitle">匯入或刪除訂閱源</string>
     <string name="settings_theme">主題設定</string>
-    <string name="settings_theme_subtitle">修改應用程式的配色和效果</string>
+    <string name="settings_theme_subtitle">配色、效果與介面佈局</string>
     <string name="settings_play">播放設定</string>
-    <string name="settings_play_subtitle">播放核心和解碼方式</string>
+    <string name="settings_play_subtitle">核心、畫質與快取</string>
     <string name="settings_preference_subtitle">修改應用程式的使用偏好</string>
     <string name="settings_default_page">預設啟動頁</string>
     <string name="settings_default_page_subtitle">首次開啟應用程式時所在的位置</string>
-    <string name="settings_history_limit">歷史紀錄上限</string>
-    <string name="settings_history_limit_subtitle">最多保留多少筆紀錄</string>
-    <string name="settings_history_limit_value">%1$d 筆</string>
+    <string name="settings_default_page_vod_only">只看點播</string>
     <string name="settings_clear_cache">清除快取</string>
     <string name="settings_clear_cache_subtitle">清理播放快取、爬蟲快取與搜尋命中快取（保留爬蟲登入狀態）</string>
     <string name="settings_doh_subtitle">安全DNS</string>
@@ -519,21 +518,18 @@
     <string name="settings_preference_title">偏好設定</string>
     <string name="settings_history_merge">歷史合併</string>
     <string name="settings_incognito">無痕模式</string>
-    <string name="settings_gesture_disable">停用手勢控制</string>
-    <string name="settings_gesture_disable_subtitle">開啟後將停用手勢控制亮度和音量</string>
-    <string name="settings_nav_live_hidden">導覽列隱藏直播</string>
-    <string name="settings_nav_live_hidden_subtitle">開啟後導覽列不再顯示直播入口</string>
+    <string name="settings_gesture_control">觸控手勢</string>
+    <string name="settings_gesture_control_subtitle">關閉後進度、音量、亮度都不再用手勢調；長按快進倍速選在這裡</string>
+    <string name="settings_gesture_speed_value">開 · 長按 %1$d 倍速</string>
     <string name="settings_auto_switch_line">自動換線</string>
     <string name="settings_auto_block_bad_sources">自動封鎖反覆不可用的源</string>
     <string name="settings_auto_block_bad_sources_subtitle">同一源反覆失敗後自動停用一段時間;已封鎖的源不再參與搜尋與換源</string>
     <string name="settings_source_blocked_count">已封鎖 %1$d 個源</string>
     <string name="settings_source_unblock_all">全部解除</string>
     <string name="settings_m3u8_purify">M3U8 淨化</string>
-    <string name="settings_danmu_switch">彈幕開關</string>
-    <string name="settings_danmu_api">彈幕 API</string>
-    <string name="settings_long_press_speed">長按倍速</string>
     <string name="settings_buffer_time">緩衝時間</string>
-    <string name="settings_search_threads">搜尋執行緒</string>
+    <string name="settings_search_threads">同時搜尋的來源數</string>
+    <string name="settings_search_threads_subtitle">找片與換源都用它當上限</string>
 
     <!-- 設定:二級頁分組小標題 -->
     <string name="settings_group_play_picture">核心與畫面</string>
