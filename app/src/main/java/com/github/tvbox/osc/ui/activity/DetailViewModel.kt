@@ -1630,6 +1630,9 @@ class DetailViewModel : ViewModel() {
                 val waveSizeBefore = doneCount.get()
                 // 记录本波投出前的候选数 —— 波后与它对减得到"本轮新命中"(扩池判据只用增量,不用累计)。
                 val candidatesBeforeWave = synchronized(fallbackCandidates) { fallbackCandidates.size }
+                // 波一投出就立即上报进度:分子(searchedSourceKeys.size)已增长,用户能马上看到"已搜 xx/共 N"。
+                // 不能只在源收口时上报 —— 慢源/超时源一直不返回,进度就会长时间不动(用户反馈"卡住没反应")。
+                if (searchActive(tokenStr)) publishSearchProgress()
                 if (wave.isNotEmpty()) {
                     coroutineScope {
                         wave.mapIndexed { index, bean ->
@@ -1658,7 +1661,8 @@ class DetailViewModel : ViewModel() {
                                         pendingSearchDone.remove(bean.key)
                                         // 取消/换代/冻结后的旧 job 不回写进度:免得旧计数覆盖新搜索的 N/M 显示
                                         if (searchActive(tokenStr)) {
-                                            publishSearchProgress(doneCount.incrementAndGet(), total)
+                                            doneCount.incrementAndGet()
+                                            publishSearchProgress()
                                         }
                                     }
                                 }
@@ -1733,10 +1737,22 @@ class DetailViewModel : ViewModel() {
         }
     }
 
-    /** 搜索进度上报(源级完成即发;候选数带上一份,Loading 态能顺带显示"已找到 K 个来源") */
-    private fun publishSearchProgress(done: Int, total: Int) {
+    /**
+     * 搜索进度上报。
+     *
+     * 分子 = searchedSourceKeys.size = 已投出去的源数(用户要的"已搜 xx / 共 N 个"),
+     * 分母 = 全量源数 total。
+     *
+     * 刻意不用"收口数"(doneCount):有些源会超时不出结果,收口数永远达不到 total,
+     * 进度条会卡在"214/322"这种数字上不动(2026-10-14 真机现场:searched 已到 322、
+     * 进度却停在 214 附近就 all-done)。用户口径明确是"已搜源数 / 总源数",故以投出去为准。
+     */
+    private fun publishSearchProgress() {
+        val total = searchProgress.value?.total ?: 0
+        if (total <= 0) return
+        val searched = searchedSourceKeys.size
         val candidates = synchronized(fallbackCandidates) { fallbackCandidates.size }
-        searchProgress.value = SearchProgress(done, total, candidates)
+        searchProgress.value = SearchProgress(searched.coerceAtMost(total), total, candidates)
     }
 
     /**
