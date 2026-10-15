@@ -55,20 +55,11 @@ object LineHealthMemory {
         return SubscriptionBucket.resolveKey(KEY_PREFIX, api) ?: (KEY_PREFIX + "default")
     }
 
-    /**
-     * 线路健康是否启用(2026-10-13)。
-     *
-     * <p>与源级封禁共用「自动屏蔽反复不可用的源」开关([HawkConfig.AUTO_BLOCK_BAD_SOURCES]):
-     * 两者同属"自动处理质量差的源/线路"这一套机制,关掉就该整体停用 ——
-     * 否则关掉源级封禁后线路仍被偷偷重排,开关语义自相矛盾。
-     *
-     * <p>口径与 [com.github.tvbox.osc.util.SourceHealthMemory.isEnabled] 一致:读不到时**按开启**(默认开)。
-     */
-    fun isEnabled(): Boolean = try {
-        KV.get(HawkConfig.AUTO_BLOCK_BAD_SOURCES, true)
-    } catch (th: Throwable) {
-        true
-    }
+    // 线路健康**没有开关**(2026-10-15)。此前它与源级封禁共用「自动屏蔽反复不可用的源」,
+    // 于是用户关掉"自动屏蔽坏源"会连带停掉线路重排**和等起播的自适应预算** ——
+    // 后者只是"这条线首帧本来就慢,多给它一会儿",与剔除没有任何因果关系。
+    // 现在这套机制只管**位次与耐心**(可疑态降位、按历史首帧给预算),从不剔除任何线路,
+    // 因此常开;真正的屏蔽开关只留在 SourceHealthMemory。
 
     /** 复合键。三要素缺一不可判 —— 空则无法定位一条线路。 */
     @JvmStatic
@@ -107,7 +98,7 @@ object LineHealthMemory {
      */
     @Synchronized
     fun isSuspect(sourceKey: String?, vodId: String?, flag: String?, now: Long = System.currentTimeMillis()): Boolean {
-        if (!isEnabled()) return false
+        // 常开:可疑态只用于降位与"该不该自动切",从不剔除线路
         val k = keyOf(sourceKey, vodId, flag)
         if (k.isEmpty()) return false
         return try {
@@ -188,14 +179,14 @@ object LineHealthMemory {
     /**
      * 这条线路本轮该给多少等起播预算。
      *
-     * <p>开关关闭 / 读不到记忆一律返回 [LineHealthPolicy.DEFAULT_START_BUDGET_MS] ——
+     * <p>读不到记忆时返回 [LineHealthPolicy.DEFAULT_START_BUDGET_MS] ——
      * 那正是加自适应**之前**的总等待(7s + 2×5s),所以"没有数据"永远不会变成多等。
      */
     @JvmStatic
     @Synchronized
     fun startBudgetMs(sourceKey: String?, vodId: String?, flag: String?, now: Long): Long = try {
-        if (!isEnabled()) LineHealthPolicy.DEFAULT_START_BUDGET_MS
-        else LineHealthPolicy.startBudgetMs(lookup(sourceKey, vodId, flag), now)
+        // 常开:预算只管"这条线首帧本来就慢,该多给它一会儿",与要不要屏蔽源没有因果关系
+        LineHealthPolicy.startBudgetMs(lookup(sourceKey, vodId, flag), now)
     } catch (th: Throwable) {
         LineHealthPolicy.DEFAULT_START_BUDGET_MS
     }
@@ -252,7 +243,7 @@ object LineHealthMemory {
      */
     @Synchronized
     fun liftSuspectOnNetworkRestore(now: Long = System.currentTimeMillis()): Int {
-        if (!isEnabled()) return 0
+        // 常开:网络恢复后复位可疑态,是台账维护
         return try {
             val all = loadAll()
             var lifted = 0

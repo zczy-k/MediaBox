@@ -35,8 +35,6 @@ object LineHealthSelector {
     @JvmOverloads
     fun reorder(flags: List<String>, keys: List<String>, now: Long = System.currentTimeMillis()): List<String> {
         if (flags.size < 2) return flags
-        // 总开关关闭 ⇒ 不做任何重排(与"关掉就该和没这套机制一样"一致)
-        if (!LineHealthMemory.isEnabled()) return flags
         if (keys.size != flags.size) return flags   // 契约不符:不动顺序(宁可不优化,不可排错)
         val scores = LineHealthMemory.orderScores(keys.filter { it.isNotEmpty() }, now)
         // 全零 ⇒ 没有记忆可读,原样返回(省一次排序)

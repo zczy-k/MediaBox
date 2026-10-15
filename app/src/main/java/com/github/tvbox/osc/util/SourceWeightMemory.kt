@@ -61,27 +61,23 @@ object SourceWeightMemory {
 
     private fun now() = System.currentTimeMillis()
 
-    // ==================== 开关 ====================
+    // ==================== 常开(2026-10-15 起不再受「自动屏蔽反复不可用的源」管辖) ====================
 
     /**
-     * 权重模型是否启用。
+     * 权重台账**没有开关**,一直记。
      *
-     * <p>与源级封禁 / 线路健康共用同一开关([HawkConfig.AUTO_BLOCK_BAD_SOURCES]):
-     * 三者同属"自动处理质量差的源/线路"这一套机制,关掉就该整体停用 ——
-     * 否则关掉封禁后权重仍偷偷重排,开关语义自相矛盾。默认开启,读不到按开启。
+     * <p>此前它读 [HawkConfig.AUTO_BLOCK_BAD_SOURCES]:用户关掉"自动屏蔽坏源"本来是说不想被剔除,
+     * 却连带把"越用越准的排序"整体冻结 —— 权重只改位次,从不剔除任何源,与那把开关没有因果关系。
+     * 同一份证据的另一个视图([SourceHealthMemory] 的二值封禁)才归那把开关管。
+     *
+     * <p>副作用是好事:关着屏蔽用一段时间,再打开时排序与封禁都已有账可依。
      */
-    fun isEnabled(): Boolean = try {
-        KV.get(HawkConfig.AUTO_BLOCK_BAD_SOURCES, true)
-    } catch (th: Throwable) {
-        true
-    }
 
     // ==================== 记录 ====================
 
     /** 记一次证据(更新权重)。 */
     @JvmStatic
     fun record(sourceKey: String?, kind: SourceWeightPolicy.EvidenceKind) {
-        if (!isEnabled()) return
         val key = sourceKey?.trim().orEmpty()
         if (key.isEmpty()) return
         val t = now()
@@ -111,7 +107,6 @@ object SourceWeightMemory {
      */
     @JvmStatic
     fun markSearched(sourceKey: String?) {
-        if (!isEnabled()) return
         val key = sourceKey?.trim().orEmpty()
         if (key.isEmpty()) return
         val t = now()
@@ -179,7 +174,6 @@ object SourceWeightMemory {
     /** 已屏蔽以外的"低权重源"数量(设置页诊断用)。 */
     @JvmStatic
     fun lowWeightCount(): Int {
-        if (!isEnabled()) return 0
         val t = now()
         synchronized(lock) {
             return load().values.count {

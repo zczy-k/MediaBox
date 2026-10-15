@@ -76,7 +76,6 @@ object LineHealthRecorder {
         userPickedLine: Boolean = false,
         lineFaultUnproven: Boolean = false,
     ): Boolean {
-        if (!LineHealthMemory.isEnabled()) return false       // 总开关关闭:整条线路健康机制等同不存在
         if (userPickedLine) return false                    // 闸 2:用户选的,不产生证据
         val key = LineHealthMemory.keyOf(sourceKey, vodId, flag)
         if (key.isEmpty()) return false
@@ -102,7 +101,6 @@ object LineHealthRecorder {
     /** 上报一次取流耗时(不设闸:耗时是无害的观测值) */
     @JvmStatic
     fun recordResolveMs(sourceKey: String?, vodId: String?, flag: String?, resolveMs: Long) {
-        if (!LineHealthMemory.isEnabled()) return
         if (resolveMs <= 0) return
         LineHealthMemory.recordResolveMs(sourceKey, vodId, flag, resolveMs)
     }
@@ -115,7 +113,6 @@ object LineHealthRecorder {
      */
     @JvmStatic
     fun recordFirstFrame(sourceKey: String?, vodId: String?, flag: String?, firstFrameMs: Long) {
-        if (!LineHealthMemory.isEnabled()) return
         if (firstFrameMs <= 0L) return
         if (KV.get(HawkConfig.PLAYER_IS_LIVE, false)) return
         LineHealthMemory.recordFirstFrame(sourceKey, vodId, flag, firstFrameMs)
@@ -133,12 +130,9 @@ object LineHealthRecorder {
      */
     @JvmStatic
     fun recordPlayed(sourceKey: String?, vodId: String?, flag: String?) {
-        // 两本账各自开关:关掉「自动屏蔽反复不可用的源」只是不再重排线路,
-        // 不该连带把源权重的台账也停掉(否则源分从此只进不出地冻结)
-        if (LineHealthMemory.isEnabled()) {
-            LineHealthMemory.recordPlayed(sourceKey, vodId, flag, System.currentTimeMillis())
-        }
-        if (!SourceWeightMemory.isEnabled()) return
+        // 两本账都不再读那把屏蔽开关(2026-10-15):它们只改位次与耐心,
+        // 关掉"自动屏蔽坏源"不该连带冻结越用越准的台账
+        LineHealthMemory.recordPlayed(sourceKey, vodId, flag, System.currentTimeMillis())
         val key = sourceKey?.trim().orEmpty()
         if (key.isEmpty()) return
         // 直播不参与源权重:频道地址与"这个源好不好用"没有因果关系

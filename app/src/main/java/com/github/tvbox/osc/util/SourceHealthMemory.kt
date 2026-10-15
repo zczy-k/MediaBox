@@ -108,7 +108,18 @@ object SourceHealthMemory {
 
     // ==================== 开关 ====================
 
-    /** 功能开关(需求规则 6:默认开启) */
+    /**
+     * 「自动屏蔽反复不可用的源」这把开关 —— **只管一件事**:要不要把封禁态的源从候选里剔掉。
+     *
+     * <p>⚠️ 2026-10-15 收窄。此前它被六处机制共用:源权重台账、线路健康重排、等起播的自适应预算
+     * 全跟着一起停 —— 用户只是想"别自动屏蔽源",却顺手丢了"越用越准的排序"和"慢线多等一会儿"。
+     * 那三样**只改位次、只调耐心,不剔除任何人**,与这个名字没有因果关系,已改为常开
+     * (见 [SourceWeightMemory] 与 [com.github.tvbox.osc.player.LineHealthMemory])。
+     *
+     * <p>于是这里的口径:**证据照常记**(台账不冻结 —— 哪天重新打开立刻生效,日志也仍解释得通),
+     * 只有"应用屏蔽"的读侧受它管:[isBlocked] / [blockedKeys]，以及专为捞回被屏蔽源而发的
+     * 主动复活探测([probeRecoverableKeys] / [liftByProbe] —— 没在屏蔽任何人时不必花这份网络)。
+     */
     fun isEnabled(): Boolean = try {
         KV.get(HawkConfig.AUTO_BLOCK_BAD_SOURCES, true)
     } catch (th: Throwable) {
@@ -125,7 +136,8 @@ object SourceHealthMemory {
      */
     @JvmStatic
     fun recordFail(kind: SourceFailKind, sourceKey: String?, title: String?): Boolean {
-        if (!isEnabled()) return false
+        // 证据**照常记**：关掉屏蔽不该连带冻结台账 —— 否则重新打开后要重新观察好几天,
+        // 而日志里 `echo-srcban fail` 也会整条消失,变成"为什么没屏蔽"无从可查
         val key = sourceKey?.trim().orEmpty()
         if (key.isEmpty()) return false
         if (!isNetworkAvailable()) {
@@ -204,7 +216,8 @@ object SourceHealthMemory {
         }
         // 权重镜像:与源健康同一份证据,P1-1 接线(见 mirrorWeight 说明)
         mirrorWeight(key, kind)
-        return newlyBanned
+        // 屏蔽没应用时不算"这次封了谁":调用方据此广播 UI 刷新,不能虚报
+        return newlyBanned && isEnabled()
     }
 
     // ==================== 权重镜像(2026-10-13,P1-1 接线) ====================
@@ -225,7 +238,7 @@ object SourceHealthMemory {
      * 所以权重也只被扣一次,不会重复计分。
      */
     private fun mirrorWeight(sourceKey: String, kind: SourceFailKind?) {
-        if (!SourceWeightMemory.isEnabled()) return
+        // 权重是**位次**不是剔除 ⇒ 常记(它已不读那把开关,见 SourceWeightMemory)
         val evidence = when (kind) {
             SourceFailKind.SEARCH_TIMEOUT -> SourceWeightPolicy.EvidenceKind.SEARCH_TIMEOUT
             SourceFailKind.SEARCH_FAILED -> SourceWeightPolicy.EvidenceKind.SEARCH_FAILED
@@ -250,7 +263,7 @@ object SourceHealthMemory {
     @JvmStatic
     @JvmOverloads
     fun recordAnswered(sourceKey: String?, elapsedMs: Long = -1L) {
-        if (!isEnabled()) return
+        // 常记:答话率是"越用越准"的唯一依据,与"要不要屏蔽源"无关
         val key = sourceKey?.trim().orEmpty()
         if (key.isEmpty()) return
         val t = now()
@@ -286,7 +299,7 @@ object SourceHealthMemory {
      */
     @JvmStatic
     fun recordCarriers(sourceKey: String?, titles: Collection<String>) {
-        if (!isEnabled()) return
+        // 常记:"这个源收录过哪些片"是事实,不是剔除判据
         val key = sourceKey?.trim().orEmpty()
         if (key.isEmpty() || titles.isEmpty()) return
         val t = now()
@@ -373,7 +386,7 @@ object SourceHealthMemory {
      */
     @JvmStatic
     fun penalizedKeys(): Set<String> {
-        if (!isEnabled()) return emptySet()
+        // 常开:降权≠屏蔽 —— 这些源照搜,只是排到队尾,不占首轮额度
         val t = now()
         synchronized(lock) {
             val bucket = load()
@@ -423,7 +436,7 @@ object SourceHealthMemory {
      * @return 本次平反的源数量(供日志/诊断)
      */
     fun liftNetworkBans(): Int {
-        if (!isEnabled()) return 0
+        // 常开:平反是给台账收口的维护动作,关不关屏蔽都该做
         val t = now()
         var lifted = 0
         synchronized(lock) {

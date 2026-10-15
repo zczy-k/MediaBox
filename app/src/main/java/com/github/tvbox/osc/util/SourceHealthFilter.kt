@@ -14,7 +14,9 @@ import com.github.tvbox.osc.bean.SourceBean
  * <ul>
  *   <li>**fail-open**:整池被滤空时回退到原列表。否则一旦台账误判,用户会变成"一个源都搜不到"
  *       —— 比"偶尔选到坏源"严重得多;</li>
- *   <li>**开关关闭时彻底放行**:所有判据先看 [SourceHealthMemory.isEnabled],关掉就该和没这套机制一样。</li>
+ *   <li>**屏蔽开关只管屏蔽**:关掉「自动屏蔽反复不可用的源」时,被屏蔽的源照常进池
+ *       ([SourceHealthMemory.isBlocked] / [blockedKeys] 自己放行);
+ *       而**降权**([penalizedKeys])照旧生效 —— 它只改位次、不剔除任何源,不归这把开关管。</li>
  * </ul>
  */
 object SourceHealthFilter {
@@ -39,10 +41,12 @@ object SourceHealthFilter {
      * <p>与 [blockedKeys] 的区别是"降权 ≠ 屏蔽":这些源照搜,只是排到队尾、
      * 不占首轮快速源的并发额度。所以它**不需要** fail-open —— 排序最坏只是没起作用,
      * 不会让用户"搜不到"。
+     *
+     * <p>2026-10-15:**不再受「自动屏蔽反复不可用的源」管辖**。它只改位次、不剔除任何源,
+     * 与那把开关没有因果关系;让开关回到它的名字 —— 只管"要不要把封禁态的源剔掉"。
      */
     @JvmStatic
-    fun penalizedKeys(): Set<String> =
-        if (SourceHealthMemory.isEnabled()) SourceHealthMemory.penalizedKeys() else emptySet()
+    fun penalizedKeys(): Set<String> = SourceHealthMemory.penalizedKeys()
 
     /**
      * 过滤源列表(首页换源 chip、搜索池、详情换源池共用)。
