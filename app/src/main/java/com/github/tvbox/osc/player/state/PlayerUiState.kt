@@ -304,7 +304,8 @@ class SubtitleSheetState(
  */
 class SubtitleSearchSheetState(
     val searchWord: String,
-    val onLoadSubtitle: (Subtitle, String) -> Unit,
+    /** 第二参 = 该文件所属**发布页**地址；第三参 = 用户点的那一行的原始地址（选中态的身份） */
+    val onLoadSubtitle: (Subtitle, String, String) -> Unit,
     /**
      * 本片/本集**当前生效**的在线字幕文件名(来自 [com.github.tvbox.osc.util.TrackMemory])。
      * 面板靠它给列表画选中态 —— 没有它,重开面板看不出上次选的是哪一条。
@@ -315,6 +316,11 @@ class SubtitleSearchSheetState(
      * 只按文件名匹配 ⇒ 从压缩包里挑的那条在列表上永远标不出来。
      */
     val activeReleaseUrl: String? = null,
+    /**
+     * 用户当时点的那一行的地址。**选中态优先用它** —— 一份搜索结果里"同名不同内容"的字幕很常见,
+     * 只比文件名会把好几条一起点亮(真机反馈)。老记录没有这一段时才退回文件名匹配。
+     */
+    val activePickUrl: String? = null,
 )
 
 /** 投屏设备面板状态（替代 View 版 CastDeviceDialog） */

@@ -117,19 +117,28 @@ public final class TrackMemory {
     }
 
     /**
-     * 在线字幕来源记录：{@code #online:发布页|文件名}。
+     * 在线字幕来源记录：{@code #online:发布页|文件名|所选行地址}。
      *
-     * <p>发布页**可以为空**：迅雷这类源直挂字幕文件，根本没有"发布页"这一层。
-     * 早先要求发布页非空、否则返回空记录，而 {@link #saveSubtitle} 遇空记录直接不存
-     * ⇒ 从迅雷挑的字幕一条都记不下来，字幕面板也就永远标不出"当前挂的是哪一条"（真机反馈）。
-     * 没有发布页时记录退化成只留文件名：跨集还原本来就依赖发布页（那条路径自己会因
-     * {@link #onlineRelease} 为空而回落默认链），标色只需要文件名。
+     * <p>三段各有各的用途，缺哪段都行（老记录只有前两段，读第三段返回空串）：
+     * <ul>
+     *   <li>发布页：跨集还原要靠它回去取本集文件；迅雷这类直挂文件的源没有这一层，留空 ——
+     *       早先要求发布页非空、否则整条记录作废，结果从迅雷挑的字幕一条都没记下来（真机反馈）。</li>
+     *   <li>文件名：还原时按集号挑文件的线索，也是面板的兜底标识。</li>
+     *   <li>所选行地址：**面板标选中态用**。一次搜索结果里"同名不同内容"的字幕很常见，
+     *       只比文件名会把好几条一起点亮；行地址才唯一。</li>
+     * </ul>
      */
-    public static String subtitleOnline(String releaseUrl, String fileName) {
+    public static String subtitleOnline(String releaseUrl, String fileName, String pickUrl) {
         String release = trim(releaseUrl);
         String name = trim(fileName);
-        if (release.isEmpty() && name.isEmpty()) return "";
-        return SUBTITLE_ONLINE + release + ONLINE_SEP + name;
+        String pick = trim(pickUrl);
+        if (release.isEmpty() && name.isEmpty() && pick.isEmpty()) return "";
+        return SUBTITLE_ONLINE + release + ONLINE_SEP + name + ONLINE_SEP + pick;
+    }
+
+    /** 没有"所选行地址"时的写法（等价于第三段留空） */
+    public static String subtitleOnline(String releaseUrl, String fileName) {
+        return subtitleOnline(releaseUrl, fileName, "");
     }
 
     public static boolean isSubtitleOff(String record) {
@@ -156,18 +165,36 @@ public final class TrackMemory {
 
     /** 在线字幕的发布页地址(不是直链);非在线记录返回空串 */
     public static String onlineRelease(String record) {
-        if (!isSubtitleOnline(record)) return "";
-        String rest = record.substring(SUBTITLE_ONLINE.length());
-        int sep = rest.indexOf(ONLINE_SEP);
-        return sep < 0 ? rest : rest.substring(0, sep);
+        return onlineSegment(record, 0);
     }
 
     /** 在线字幕当时所选文件的名称(跨集匹配用的线索);可为空串 */
     public static String onlineFileName(String record) {
+        return onlineSegment(record, 1);
+    }
+
+    /**
+     * 用户当时点的那一行的地址(搜索结果的原始 url,未解析成直链)。
+     *
+     * <p>只给面板标选中态用 —— 同名不同内容的字幕在一份搜索结果里很常见,文件名不是身份。
+     * 老记录没有这一段,读出来是空串,调用侧要退回按文件名匹配。
+     */
+    public static String onlinePickUrl(String record) {
+        return onlineSegment(record, 2);
+    }
+
+    /** 取 {@code #online:发布页|文件名|所选行地址} 的第 index 段;缺段/非在线记录返回空串 */
+    private static String onlineSegment(String record, int index) {
         if (!isSubtitleOnline(record)) return "";
         String rest = record.substring(SUBTITLE_ONLINE.length());
-        int sep = rest.indexOf(ONLINE_SEP);
-        return sep < 0 ? "" : rest.substring(sep + ONLINE_SEP.length());
+        int from = 0;
+        for (int i = 0; i < index; i++) {
+            int sep = rest.indexOf(ONLINE_SEP, from);
+            if (sep < 0) return "";
+            from = sep + ONLINE_SEP.length();
+        }
+        int next = rest.indexOf(ONLINE_SEP, from);
+        return next < 0 ? rest.substring(from) : rest.substring(from, next);
     }
 
     // ==================== 读写 ====================

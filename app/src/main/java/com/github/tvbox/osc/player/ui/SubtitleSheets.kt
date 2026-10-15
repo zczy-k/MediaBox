@@ -61,16 +61,17 @@ private fun formatSubtitleDelay(milliseconds: Int): String {
 /**
  * 这一行是不是"当前生效的那条在线字幕"。
  *
- * <p>搜索结果一行通常是**一个发布页**(点进去才是里面的 .srt/.ass),记忆里存的也是
- * "发布页地址 + 文件名"两样 ⇒ 两个都对得上才算选中。只比文件名的话,从压缩包里挑的那条
- * 在列表上永远标不出来(2026-10-15 真机反馈)。
+ * <p>有"所选行地址"就**只认它**：一份搜索结果里同名不同内容的字幕很常见，按文件名匹配会把
+ * 好几条一起点亮（真机反馈）。只有老记录没存这一段时间，才退回"文件名 or 发布页地址"。
  */
 internal fun subtitleRowMatches(
     name: String?,
     url: String?,
     activeName: String?,
     activeReleaseUrl: String?,
+    activePickUrl: String?,
 ): Boolean {
+    if (!activePickUrl.isNullOrEmpty()) return url == activePickUrl
     if (!activeName.isNullOrEmpty() && name == activeName) return true
     return !activeReleaseUrl.isNullOrEmpty() && url == activeReleaseUrl
 }
@@ -467,13 +468,16 @@ fun SubtitleSearchSheet(sheet: SubtitleSearchSheetState, onDismiss: () -> Unit) 
                             verticalArrangement = Arrangement.spacedBy(playerDim(R.dimen.vs_5)),
                         ) {
                             itemsIndexed(items) { _, item ->
+                                // 解析直链会就地改写 item.url(剥掉 xunlei:/subtitlecat: 前缀),
+                                // 所以选中态要的身份必须在点之前先抓下来
+                                val rowUrl = item.url.orEmpty()
                                 SheetButton(
                                     text = item.name + " (" + stringResource(
                                         if (item.isZip) R.string.subtitle_kind_zip else R.string.subtitle_kind_file,
                                     ) + ")",
-                                    // 选中态按记忆里的"文件名 or 发布页地址"认(搜索结果一行常是发布页,只比文件名标不出来)
                                     selected = subtitleRowMatches(
-                                        item.name, item.url, sheet.activeName, sheet.activeReleaseUrl,
+                                        item.name, rowUrl,
+                                        sheet.activeName, sheet.activeReleaseUrl, sheet.activePickUrl,
                                     ),
                                     onClick = {
                                         if (item.isZip) {
@@ -487,7 +491,9 @@ fun SubtitleSearchSheet(sheet: SubtitleSearchSheetState, onDismiss: () -> Unit) 
                                             val releaseUrl = release?.url.orEmpty()
                                             viewModel.getSubtitleUrl(item) { subtitle ->
                                                 mainHandler.post {
-                                                    if (subtitle.url != null) sheet.onLoadSubtitle(subtitle, releaseUrl)
+                                                    if (subtitle.url != null) {
+                                                        sheet.onLoadSubtitle(subtitle, releaseUrl, rowUrl)
+                                                    }
                                                 }
                                             }
                                             dismiss()

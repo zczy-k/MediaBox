@@ -162,13 +162,27 @@ public class TrackMemoryTest {
 
     @Test
     public void subtitleSource_onlineWithoutReleasePage_isStillRemembered() {
-        // 迅雷这类源直挂字幕文件,没有发布页这一层:只凭文件名也要记得住,
+        // 迅雷这类源直挂字幕文件,没有发布页这一层:只凭文件名 + 行地址也要记得住,
         // 否则字幕面板重开时标不出"当前挂的是哪一条"(真机反馈"还是不亮")
-        String online = TrackMemory.subtitleOnline("", "NSFS-388-C-zh-CN.srt（迅雷）");
+        String online = TrackMemory.subtitleOnline("", "NSFS-388-C-zh-CN.srt（迅雷）", "xunlei:6FCB4D");
         assertTrue(TrackMemory.isSubtitleOnline(online));
         assertFalse(TrackMemory.isSubtitleTrack(online));
         assertEquals("", TrackMemory.onlineRelease(online));
         assertEquals("NSFS-388-C-zh-CN.srt（迅雷）", TrackMemory.onlineFileName(online));
+        assertEquals("xunlei:6FCB4D", TrackMemory.onlinePickUrl(online));
+    }
+
+    @Test
+    public void subtitleSource_threeSegments_parseIndependently() {
+        String full = TrackMemory.subtitleOnline("https://assrt.net/xml/sub/627/627916.xml", "a.ass", "https://assrt.net/xml/sub/627/627916.xml");
+        assertEquals("https://assrt.net/xml/sub/627/627916.xml", TrackMemory.onlineRelease(full));
+        assertEquals("a.ass", TrackMemory.onlineFileName(full));
+        assertEquals("https://assrt.net/xml/sub/627/627916.xml", TrackMemory.onlinePickUrl(full));
+        // 老记录只有两段:第三段读成空串,调用侧据此退回按文件名匹配(不能把前两段的值串到第三段)
+        String legacy = TrackMemory.subtitleOnline("https://rel/1", "b.ass");
+        assertEquals("https://rel/1", TrackMemory.onlineRelease(legacy));
+        assertEquals("b.ass", TrackMemory.onlineFileName(legacy));
+        assertEquals("", TrackMemory.onlinePickUrl(legacy));
     }
 
     @Test

@@ -596,28 +596,32 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
         // (搜索结果一行是一个发布页,点进去才是里面的 .srt/.ass ⇒ 只按文件名匹配标不出压缩包那一行)
         String activeName = "";
         String activeRelease = "";
+        String activePick = "";
         String subtitleRecord = TrackMemory.loadSubtitle(trackMemoryKey());
         if (TrackMemory.isSubtitleOnline(subtitleRecord)) {
             activeName = TrackMemory.onlineFileName(subtitleRecord);
             activeRelease = TrackMemory.onlineRelease(subtitleRecord);
+            activePick = TrackMemory.onlinePickUrl(subtitleRecord);
         }
         final String activeFileName = activeName;
         final String activeReleaseUrl = activeRelease;
-        LOG.i("echo-subtitle-pick open sheet active name=" + activeFileName + " release=" + activeReleaseUrl);
-        uiState.setSubtitleSearchSheet(new SubtitleSearchSheetState(word == null ? "" : word, (subtitle, releaseUrl) -> {
+        final String activePickUrl = activePick;
+        LOG.i("echo-subtitle-pick open sheet active name=" + activeFileName
+                + " release=" + activeReleaseUrl + " pick=" + activePickUrl);
+        uiState.setSubtitleSearchSheet(new SubtitleSearchSheetState(word == null ? "" : word, (subtitle, releaseUrl, pickUrl) -> {
             if (!isAttached()) return kotlin.Unit.INSTANCE;
             mActivity.runOnUiThread(() -> {
                 String zimuUrl = subtitle.getUrl();
                 LOG.i("echo-Remote Subtitle Url: " + zimuUrl);
-                // 只记发布页 + 文件名(直链只对当集有效):换集按集号回同一发布页取本集文件
+                // 记三样:发布页(跨集还原用)+ 文件名(线索)+ 所点行地址(选中态的唯一身份)
                 TrackMemory.saveSubtitle(trackMemoryKey(),
-                        TrackMemory.subtitleOnline(releaseUrl, subtitle.getName()));
-                // 面板要用哪两个字段标"当前生效",下次日志直接能对上(发布页行 vs 文件行的名字不是一回事)
-                LOG.i("echo-subtitle-pick saved name=" + subtitle.getName() + " release=" + releaseUrl);
+                        TrackMemory.subtitleOnline(releaseUrl, subtitle.getName(), pickUrl));
+                LOG.i("echo-subtitle-pick saved name=" + subtitle.getName()
+                        + " release=" + releaseUrl + " pick=" + pickUrl);
                 applyUserPickedSubtitle(zimuUrl);
             });
             return kotlin.Unit.INSTANCE;
-        }, activeFileName, activeReleaseUrl));
+        }, activeFileName, activeReleaseUrl, activePickUrl));
     }
 
     @SuppressLint("UseCompatLoadingForColorStateLists")
