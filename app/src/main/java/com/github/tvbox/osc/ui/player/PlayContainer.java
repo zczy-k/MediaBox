@@ -577,13 +577,17 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
         String word = (scheduler.vod().playFlag.contains("Ali") || scheduler.vod().playFlag.contains("parse"))
                 ? scheduler.vod().playNote : scheduler.vod().name;
         PlayerUiState uiState = mController.getUiState();
-        // 面板要标出"上次选的是哪一条":字幕记忆里那个在线文件名就是当前生效的字幕
+        // 面板要标出"上次选的是哪一条":记忆里的文件名 + 它所属的发布页地址
+        // (搜索结果一行是一个发布页,点进去才是里面的 .srt/.ass ⇒ 只按文件名匹配标不出压缩包那一行)
         String activeName = "";
+        String activeRelease = "";
         String subtitleRecord = TrackMemory.loadSubtitle(trackMemoryKey());
         if (TrackMemory.isSubtitleOnline(subtitleRecord)) {
             activeName = TrackMemory.onlineFileName(subtitleRecord);
+            activeRelease = TrackMemory.onlineRelease(subtitleRecord);
         }
         final String activeFileName = activeName;
+        final String activeReleaseUrl = activeRelease;
         uiState.setSubtitleSearchSheet(new SubtitleSearchSheetState(word == null ? "" : word, (subtitle, releaseUrl) -> {
             if (!isAttached()) return kotlin.Unit.INSTANCE;
             mActivity.runOnUiThread(() -> {
@@ -595,7 +599,7 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
                 setSubtitle(zimuUrl);
             });
             return kotlin.Unit.INSTANCE;
-        }, activeFileName));
+        }, activeFileName, activeReleaseUrl));
     }
 
     @SuppressLint("UseCompatLoadingForColorStateLists")

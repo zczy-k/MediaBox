@@ -310,6 +310,11 @@ class SubtitleSearchSheetState(
      * 面板靠它给列表画选中态 —— 没有它,重开面板看不出上次选的是哪一条。
      */
     val activeName: String? = null,
+    /**
+     * 该字幕所属**发布页地址**。搜索结果一行是一个发布页(点进去才是里面的 .srt/.ass 文件),
+     * 只按文件名匹配 ⇒ 从压缩包里挑的那条在列表上永远标不出来。
+     */
+    val activeReleaseUrl: String? = null,
 )
 
 /** 投屏设备面板状态（替代 View 版 CastDeviceDialog） */

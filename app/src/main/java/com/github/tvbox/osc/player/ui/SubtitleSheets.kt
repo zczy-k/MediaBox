@@ -58,6 +58,26 @@ private fun formatSubtitleDelay(milliseconds: Int): String {
     return if (value.isEmpty() || value == "-0") "0" else value
 }
 
+/** 列表一行的身份:优先用地址(同名不同源的发布页不少),没有才退回文件名 */
+private fun rowKey(item: Subtitle): String = item.url?.takeIf { it.isNotEmpty() } ?: item.name ?: ""
+
+/**
+ * 这一行是不是"当前生效的那条在线字幕"。
+ *
+ * <p>搜索结果一行通常是**一个发布页**(点进去才是里面的 .srt/.ass),记忆里存的也是
+ * "发布页地址 + 文件名"两样 ⇒ 两个都对得上才算选中。只比文件名的话,从压缩包里挑的那条
+ * 在列表上永远标不出来(2026-10-15 真机反馈)。
+ */
+internal fun subtitleRowMatches(
+    name: String?,
+    url: String?,
+    activeName: String?,
+    activeReleaseUrl: String?,
+): Boolean {
+    if (!activeName.isNullOrEmpty() && name == activeName) return true
+    return !activeReleaseUrl.isNullOrEmpty() && url == activeReleaseUrl
+}
+
 @Composable
 fun SubtitleSheet(sheet: SubtitleSheetState, onDismiss: () -> Unit) {
     val context = LocalContext.current
@@ -315,6 +335,8 @@ fun SubtitleSearchSheet(sheet: SubtitleSearchSheetState, onDismiss: () -> Unit) 
     var items by remember { mutableStateOf(emptyList<Subtitle>()) }
     var loading by remember { mutableStateOf(false) }
     var mode by remember { mutableStateOf("search") } // search | zipfiles
+    /** 本次面板里点了哪条(直链解析是异步的,先亮起来才知道点的是哪一条) */
+    var picked by remember { mutableStateOf<String?>(null) }
     var page by remember { mutableIntStateOf(1) }
     var canLoadMore by remember { mutableStateOf(false) }
     val zipCache = remember { mutableListOf<Subtitle>() }
@@ -450,12 +472,15 @@ fun SubtitleSearchSheet(sheet: SubtitleSearchSheetState, onDismiss: () -> Unit) 
                             verticalArrangement = Arrangement.spacedBy(playerDim(R.dimen.vs_5)),
                         ) {
                             itemsIndexed(items) { _, item ->
+                                val key = rowKey(item)
                                 SheetButton(
                                     text = item.name + " (" + stringResource(
                                         if (item.isZip) R.string.subtitle_kind_zip else R.string.subtitle_kind_file,
                                     ) + ")",
-                                    // 选中态:重开面板要能看出"现在挂着的是哪一条"(以前全是一样的按钮,看不出来)
-                                    selected = !sheet.activeName.isNullOrEmpty() && item.name == sheet.activeName,
+                                    // 选中态两路:本次会话里点了哪条;重开面板时按记忆里的"文件名 or 发布页地址"认
+                                    selected = key == picked || subtitleRowMatches(
+                                        item.name, item.url, sheet.activeName, sheet.activeReleaseUrl,
+                                    ),
                                     onClick = {
                                         if (item.isZip) {
                                             mode = "zipfiles"
@@ -463,15 +488,18 @@ fun SubtitleSearchSheet(sheet: SubtitleSearchSheetState, onDismiss: () -> Unit) 
                                             loading = true
                                             viewModel.getSearchResultSubtitleUrls(item)
                                         } else {
-                                            // 旧行为:发起直链解析后立即收起,回调在容器侧落地。
-                                            // 发布页取不到就传空串:宁可不记,也不要把文件直链当发布页存进记忆
+                                            // 旧行为:点完立刻收起面板 ⇒ 用户永远看不到"选中"长什么样。
+                                            // 现在先亮起来,等直链解析成功再收;解析失败就留着(亮着的那条即"没挂上")
+                                            picked = key
                                             val releaseUrl = release?.url.orEmpty()
                                             viewModel.getSubtitleUrl(item) { subtitle ->
                                                 mainHandler.post {
-                                                    if (subtitle.url != null) sheet.onLoadSubtitle(subtitle, releaseUrl)
+                                                    if (subtitle.url != null) {
+                                                        sheet.onLoadSubtitle(subtitle, releaseUrl)
+                                                        dismiss()
+                                                    }
                                                 }
                                             }
-                                            dismiss()
                                         }
                                     },
                                 )
