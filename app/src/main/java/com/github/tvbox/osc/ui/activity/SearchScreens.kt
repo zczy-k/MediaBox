@@ -753,6 +753,7 @@ internal fun SearchResultRow(
             VodPoster(
                 name = video.name,
                 pic = video.pic,
+                fitContent = true,
                 modifier = Modifier
                     .width(72.dp)
                     .height(96.dp)
