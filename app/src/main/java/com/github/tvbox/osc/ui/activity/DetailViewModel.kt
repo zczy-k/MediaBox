@@ -789,7 +789,12 @@ class DetailViewModel : ViewModel() {
                 LineQualitySelector.probeVariantsParallel(
                     flags = targets,
                     resolve = { flag -> directUrlOf(list?.get(flag), index) },
-                    probe = { url -> probe.probe(url, headers) },
+                    // 把自己允许的总时间告诉探测本身:它据此决定还要不要换身份再试一档。
+                    // 不说就会拿默认值去排重试,然后被上面这个 2 秒 withTimeout 整条取消 ——
+                    // 连第一次已经拿到的结果都丢(v1.1.35 踩的就是这类"预算各说各话")。
+                    probe = { url ->
+                        probe.probe(url, headers, LineQualityProbeBudget.totalMs)
+                    },
                 )
             }.orEmpty()
             var knownNew = 0
@@ -2499,7 +2504,8 @@ class DetailViewModel : ViewModel() {
             LineQualitySelector.probeVariantsParallel(
                 flags = flagsToProbe,
                 resolve = { flag -> directUrlOf(seriesMap[flag], index) },
-                probe = { url -> probe.probe(url, headers) },
+                // 同上一条路径:预算要告诉探测本身,否则重试会撑破这个 withTimeout(见那里)
+                probe = { url -> probe.probe(url, headers, mode.probeBudgetMs) },
             )
         }
         // 三种结局都记日志:这是"画质优先到底有没有生效"的唯一可观测点。

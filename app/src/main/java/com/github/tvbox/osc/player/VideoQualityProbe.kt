@@ -44,8 +44,21 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
         /** 256KB:够装下 m3u8 master,也能覆盖绝大多数 faststart mp4 的 moov */
         const val DEFAULT_BUDGET_BYTES = 256 * 1024
 
-        /** 单次探测的硬超时:超时按"探测不到"降级,绝不能拖住起播 */
+        /**
+         * 单次探测的硬超时:超时按"探测不到"降级,绝不能拖住起播。
+         *
+         * <p>⚠️ 名字叫 TIMEOUT,但它**不是** OkHttp 的 callTimeout(这里没往客户端上设),
+         * 而是"起播后那条异步小探测"的总预算 —— 由 {@link ResolvedUrlQualityProbe} 用
+         * `withTimeoutOrNull(BUDGET_MS)` 实施。真机实测单次探测要 2~3.5 秒,
+         * 别把它当成"一次 HTTP 的上限"来用,否则任何重试都会被自己掐死(v1.1.35 就踩了)。
+         */
         const val PROBE_TIMEOUT_MS = 800L
+
+        /**
+         * 详情页深探那条路的**单条线路预算**(ms):外层是 `SourceSweepBudget.deepProbeTimeoutMs = 6s`,
+         * 这里留 500ms 余量给自己收尾,免得阶梯跑到一半被协程取消、连已拿到的结果都丢。
+         */
+        const val DEFAULT_BUDGET_MS = 5_500L
 
         /**
          * **分片内探**的读取预算(2026-10-10)。media playlist 里没有分辨率,得去首个分片里解
@@ -66,7 +79,15 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
     /**
      * @return 实测画质;探测不到 / 不支持 / 异常一律 null(调用方静默降级)
      */
-    suspend fun probe(url: String?, headers: Map<String, String>): VideoQualityPolicy.Variant? {
+    /**
+     * @param budgetMs 这一条线路允许花掉的**总**时间(含所有重试档)。默认按详情页深探的预算;
+     *        起播后那条小探测要传自己更小的值,别拿默认值去撑爆自己的 withTimeout。
+     */
+    suspend fun probe(
+        url: String?,
+        headers: Map<String, String>,
+        budgetMs: Long = DEFAULT_BUDGET_MS,
+    ): VideoQualityPolicy.Variant? {
         if (url.isNullOrBlank() || !url.startsWith("http")) return null
         return withContext(Dispatchers.IO) {
             val client = OkGoHelper.getItvClient() ?: return@withContext null
@@ -80,10 +101,13 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
             var tactic = ProbeStrategy.firstTactic(ProbeHostMemory.lastSuccessful(host))
             var outcome = ProbeOutcome.NETWORK
             var tries = 0
+            var lastAttemptMs = 0L
             while (tries < ProbeStrategy.MAX_ATTEMPTS) {
                 tries++
                 val effective = applyTactic(headers, tactic, url)
+                val attemptStartedAt = android.os.SystemClock.elapsedRealtime()
                 val attempt = attemptOnce(client, url, effective, tactic)
+                lastAttemptMs = android.os.SystemClock.elapsedRealtime() - attemptStartedAt
                 if (attempt.variant != null) {
                     ProbeHostMemory.rememberSuccess(host, tactic)
                     return@withContext attempt.variant
@@ -95,19 +119,21 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
                     hasHeader(headers, "User-Agent"),
                     hasHeader(headers, "Referer"),
                 ) ?: break
-                // 时间闸:阶梯**不能把这一条线的探测预算撑爆**。整源探测是按总预算逐条分配的,
-                // 一条多花 1.6 秒,后面就少探一条 —— 所以只在一个 PROBE_TIMEOUT_MS 之内重试。
+                // 时间闸按**实测的单次耗时**判,不按写死的常数:真机单次探测要 2~3.5 秒,
+                // v1.1.35 就是拿 800ms 当上限,结果阶梯一次都没启动(全日志看不到一行 probe-retry)。
+                // 按"再打一次是否还赶得上这条线路的预算"决定 ⇒ 慢站自然只跑一档,快站才值得换身份。
                 val spentMs = android.os.SystemClock.elapsedRealtime() - now
-                if (spentMs > PROBE_TIMEOUT_MS) {
+                if (spentMs + lastAttemptMs > budgetMs) {
                     LOG.i(
                         "echo-quality probe-giveup reason=time-budget spent=" + spentMs +
+                            " last=" + lastAttemptMs + " budget=" + budgetMs +
                             " host=" + host + " outcome=" + outcome.name
                     )
                     break
                 }
                 LOG.i(
                     "echo-quality probe-retry host=" + host + " http=" + attempt.httpCode +
-                        " from=" + tactic.name + " to=" + next.name
+                        " from=" + tactic.name + " to=" + next.name + " spent=" + spentMs
                 )
                 tactic = next
             }

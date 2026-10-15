@@ -30,8 +30,16 @@ object ResolvedUrlQualityProbe {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    /** 硬超时:比探测自身的 [VideoQualityProbe.PROBE_TIMEOUT_MS] 多留一点余量给调度 */
-    private const val BUDGET_MS = VideoQualityProbe.PROBE_TIMEOUT_MS + 400L
+    /**
+     * 这条小探测的预算(= 传给 [VideoQualityProbe.probe] 的 budgetMs,同时也是外层 withTimeout)。
+     *
+     * <p>原来是 `PROBE_TIMEOUT_MS + 400 = 1.2 秒`,而真机实测**单次探测**要 2~3.5 秒
+     * (v1.1.35 日志里 4 条线路的 spent 分别是 2071 / 2439 / 3043 / 3504 毫秒)
+     * ⇒ 这条路径基本每次都被自己的超时掐死,难怪实测档一直攒不起来。
+     * 现在给足"一次完整尝试 + 余量",仍然比详情页深探(6 秒)便宜,
+     * 且它跑在独立作用域、起播之后,不占任何起播时间。
+     */
+    private const val BUDGET_MS = 4_000L
 
     /**
      * 异步测一次 [url] 的画质并写进 [VideoQualityMemory]。**任何失败都静默** ——
@@ -65,7 +73,9 @@ object ResolvedUrlQualityProbe {
                 val known = VideoQualityMemory.lookup(site, vod, line)
                 if (known != null && known.confidence == VideoQualityPolicy.Confidence.MEASURED) return@launch
                 val measured = withTimeoutOrNull(BUDGET_MS) {
-                    VideoQualityProbe().probe(target, headers ?: emptyMap())
+                    // 把自己的预算告诉探测本身:它据此决定"还试不试下一档身份",
+                    // 不然阶梯会跑到一半被上面的 withTimeout 整条取消,连第一次的结果都拿不到
+                    VideoQualityProbe().probe(target, headers ?: emptyMap(), BUDGET_MS)
                 } ?: return@launch
                 if (!measured.known) return@launch
                 VideoQualityMemory.record(site, vod, measured.copy(flag = line))
