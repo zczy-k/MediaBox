@@ -14,8 +14,9 @@ import org.junit.Test
 class ProbeStrategyTest {
 
     /**
-     * 阶梯顺序被真机纠正过:第一版先补 UA,v1.1.36 日志证明补了 UA 仍然 403,
-     * 而从 PC 对同一地址不带任何头反而 200 ⇒ 这些聚合 CDN 卡的是 Referer(防盗链),不是 UA。
+     * 阶梯顺序:第一版先补 UA,v1.1.36 日志证明补了 UA 仍然 403,于是改成先试 Referer
+     * (防盗链更常校验这一项)。⚠️ PC 上"不带任何头反倒 200"那次**不算证据** ——
+     * 它同时换了 UA、TLS 指纹与出口 IP,三个变量分不开,谁起作用要等 `tactic=`/`deny=` 的日志定性。
      */
     @Test
     fun `403 先补 Referer,再连 UA 一起补`() {

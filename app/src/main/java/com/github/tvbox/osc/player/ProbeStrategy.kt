@@ -83,10 +83,12 @@ object ProbeStrategy {
     /**
      * 这一档失败后,下一档用什么身份重试;返回 null = 别再试了。
      *
-     * <p>顺序是 **Referer 先、UA 后**,这条被真机纠正过:第一版按"先补 UA"做,
-     * v1.1.36 日志里 `probe-retry … to=BROWSER_UA` 之后仍然 403,
-     * 而从 PC 上对同一个地址做对照(none / ua / ref / ua+ref **全部 200**)
-     * ⇒ 这些聚合 CDN 卡的不是 UA。防盗链最常看的就是 Referer,所以它排第一。
+     * <p>顺序是 **Referer 先、UA 后**。第一版按"先补 UA"做,v1.1.36 日志里
+     * `probe-retry … to=BROWSER_UA` 之后仍然 403;同一地址在 PC 上不带任何头反倒 200。
+     * ⚠️ 这条对照**证不了**"卡的不是 UA":PC 那次同时换了 UA(curl 与 okhttp 的默认值不同)、
+     * TLS 指纹和出口 IP,三个变量一起动,归因分不出来。改成 Referer 优先只是
+     * "两个假设都没被证伪时,先试防盗链更常见的那一项",真正的判据是这一版加的
+     * 按档结果(`tactic=`)与拒绝原因(`server=`/`deny=`) —— 别再拿状态码猜。
      *
      * <p>`alreadyHasUa` / `alreadyHasReferer` 用来跳过"换了等于没换"的那一档 ——
      * 源站本来就配了 Referer 时再"补 Referer"就是拿同一个请求打第二遍,白烧一次带宽。
