@@ -1,11 +1,39 @@
 package com.github.tvbox.osc.player.effect
 
-/** 画质预设(顺序即面板顺序;Original = 不套效果) */
+/**
+ * 画质预设(顺序即面板顺序;Original = 不套效果)。
+ *
+ * <p>**一档 = 一种看得见的差别**。原来 15 档里 Natural/Bright 与"原始"肉眼难分,
+ * Anime/Sport/Game 与 Vivid 同族(只差锐化幅度),Dehaze 与 Clear 同族,Comfort 与 Soft 同族
+ * —— 那不是在给选择,是在给"该点哪个"增加成本。合并后 8 档。
+ */
 enum class PicturePreset {
-    Original, Natural, Vivid, Clear, Dehaze, Bright, Cinema, Soft, Warm, Cool, Comfort, Anime, Sport, Game, Custom;
+    Original, Clear, Vivid, Cinema, Soft, Warm, Cool, Custom;
 
-    /** 只有「自定义」展开 8 个滑条 */
+    /** 只有「自定义」展开 9 个滑条 */
     val adjustable: Boolean get() = this == Custom
+
+    companion object {
+
+        /**
+         * 被合并掉的旧档名 → 现在的档。**没有这层映射,删一档就会把老用户的设置打回「原始」**
+         * (预置名是按字符串存盘的,枚举少一个就查不到)。
+         */
+        private val legacyNames: Map<String, PicturePreset> = mapOf(
+            "Natural" to PicturePreset.Original, "Bright" to PicturePreset.Original,
+            "Anime" to PicturePreset.Vivid, "Sport" to PicturePreset.Vivid,
+            "Game" to PicturePreset.Vivid,
+            "Dehaze" to PicturePreset.Clear,
+            "Comfort" to PicturePreset.Soft,
+        )
+
+        /** 读 KV 里的预置名:先按现名查,再走合并映射,都不是才落 fallback */
+        fun resolve(name: String?, fallback: PicturePreset = PicturePreset.Original): PicturePreset {
+            if (name.isNullOrEmpty()) return fallback
+            PicturePreset.entries.firstOrNull { it.name == name }?.let { return it }
+            return legacyNames[name] ?: fallback
+        }
+    }
 }
 
 /** 画质参数(不可变)。取值语义:倍率类为 1 恒等、偏移类为 0 恒等;量程见伴生对象常量 */
@@ -108,21 +136,16 @@ data class PictureProfile(
         val OFF = PictureProfile()
 
         fun of(preset: PicturePreset): PictureProfile = when (preset) {
-            PicturePreset.Natural -> basic(1.02f, 1.02f, 0.0f, 0.04f, 0.035f, 0.0f)
-            PicturePreset.Vivid -> basic(1.26f, 1.12f, 0.01f, 0.14f, 0.035f, 0.0f)
-            PicturePreset.Clear -> basic(1.04f, 1.12f, 0.0f, 0.36f, 0.025f, 0.02f)
-            // 「通透」= 去灰为主 + 一点点对比/饱和/锐化:黑位压回去之后颜色本来就实了,再加狠会假
-            PicturePreset.Dehaze -> basic(1.05f, 1.07f, 0.0f, 0.34f, 0.03f, 0.0f)
-                .copy(dehaze = 0.55f, gamma = 0.98f)
-            PicturePreset.Bright -> style(1.04f, 1.05f, 0.01f, 0.04f, 0.06f, 1.01f, 0.0f)
+            // 「清晰」= 通透(去灰)+ 锐化:两者本来就是一回事
+            PicturePreset.Clear -> basic(1.05f, 1.10f, 0.0f, 0.34f, 0.025f, 0.02f)
+                .copy(dehaze = 0.45f, gamma = 0.99f)
+            // 「鲜艳」收编了动画/体育/游戏:它们与它的差别只是"再浓一点、再锐一点"
+            PicturePreset.Vivid -> basic(1.22f, 1.12f, 0.015f, 0.26f, 0.028f, 0.03f)
             PicturePreset.Cinema -> style(1.04f, 1.14f, -0.03f, 0.03f, 0.03f, 0.97f, 26.0f)
-            PicturePreset.Soft -> style(0.95f, 0.94f, 0.005f, 0.0f, 0.05f, 1.03f, 14.0f)
+            // 「柔和」收编了护眼:都是降饱和降对比 + 抬 gamma + 偏暖
+            PicturePreset.Soft -> style(0.94f, 0.94f, 0.0f, 0.0f, 0.05f, 1.035f, 36.0f)
             PicturePreset.Warm -> style(1.05f, 1.04f, 0.0f, 0.03f, 0.02f, 1.0f, 42.0f)
             PicturePreset.Cool -> style(1.04f, 1.05f, 0.0f, 0.03f, 0.02f, 1.0f, -42.0f)
-            PicturePreset.Comfort -> style(0.92f, 0.93f, -0.01f, 0.0f, 0.06f, 1.04f, 58.0f)
-            PicturePreset.Anime -> basic(1.24f, 1.10f, 0.02f, 0.28f, 0.025f, 0.02f)
-            PicturePreset.Sport -> basic(1.12f, 1.14f, 0.02f, 0.24f, DEFAULT_THRESHOLD, 0.04f)
-            PicturePreset.Game -> basic(1.08f, 1.14f, 0.02f, 0.30f, 0.025f, 0.04f)
             PicturePreset.Original, PicturePreset.Custom -> OFF
         }
 

@@ -78,11 +78,9 @@ object PictureEffects {
 
     // ==================== 参数读写 ====================
 
-    /** 当前预置(面板 chips 选中态) */
-    fun preset(): PicturePreset {
-        val name = KV.get(HawkConfig.PICTURE_PRESET, PicturePreset.Original.name)
-        return PicturePreset.entries.firstOrNull { it.name == name } ?: PicturePreset.Original
-    }
+    /** 当前预置(面板 chips 选中态);老 KV 里被合并掉的档名走 [PicturePreset.resolve] 映射 */
+    fun preset(): PicturePreset =
+        PicturePreset.resolve(KV.get(HawkConfig.PICTURE_PRESET, PicturePreset.Original.name))
 
     /** 自定义参数(仅「自定义」预置下参与出画) */
     fun custom(): PictureProfile = PictureProfile(

@@ -26,12 +26,12 @@ class PictureProfileTest {
     @Test
     fun presetTable_keepsSourceValues() {
         val vivid = PictureProfile.of(PicturePreset.Vivid)
-        assertEquals(1.26f, vivid.saturation, 0.0001f)
+        assertEquals(1.22f, vivid.saturation, 0.0001f)
         assertEquals(1.12f, vivid.contrast, 0.0001f)
-        assertEquals(0.01f, vivid.brightness, 0.0001f)
-        assertEquals(0.14f, vivid.sharpness, 0.0001f)
-        assertEquals(0.035f, vivid.threshold, 0.0001f)
-        assertEquals(0f, vivid.shadowLift, 0.0001f)
+        assertEquals(0.015f, vivid.brightness, 0.0001f)
+        assertEquals(0.26f, vivid.sharpness, 0.0001f)
+        assertEquals(0.028f, vivid.threshold, 0.0001f)
+        assertEquals(0.03f, vivid.shadowLift, 0.0001f)
         assertEquals(1f, vivid.gamma, 0.0001f)
         assertEquals(0f, vivid.hue, 0.0001f)
         assertEquals(0f, vivid.temperature, 0.0001f)
@@ -130,10 +130,27 @@ class PictureProfileTest {
     }
 
     @Test
-    fun dehazePreset_pushesBlacksWithoutLiftingShadows() {
-        val preset = PictureProfile.of(PicturePreset.Dehaze)
+    fun clearPreset_carriesTheDehazeItAte() {
+        val preset = PictureProfile.of(PicturePreset.Clear)
+        // 「通透」并进了「清晰」:去灰必须还在,否则合并等于把这个能力删了
         assertTrue(preset.dehaze > 0.3f)
         // 去灰与"暗部提升"方向相反(一个压黑底、一个抬黑底),同时开等于互相抵消
-        assertEquals(0f, preset.shadowLift, 0.0001f)
+        assertTrue(preset.shadowLift < 0.05f)
+    }
+
+    @Test
+    fun resolve_mapsMergedAwayPresets_insteadOfDroppingToOriginal() {
+        // 预设名是字符串存盘的:枚举少一个,老 KV 就查不到 ⇒ 必须有映射,不能默默掉回「原始」
+        assertEquals(PicturePreset.Vivid, PicturePreset.resolve("Anime"))
+        assertEquals(PicturePreset.Vivid, PicturePreset.resolve("Sport"))
+        assertEquals(PicturePreset.Vivid, PicturePreset.resolve("Game"))
+        assertEquals(PicturePreset.Clear, PicturePreset.resolve("Dehaze"))
+        assertEquals(PicturePreset.Soft, PicturePreset.resolve("Comfort"))
+        assertEquals(PicturePreset.Original, PicturePreset.resolve("Natural"))
+        assertEquals(PicturePreset.Original, PicturePreset.resolve("Bright"))
+        // 现名照旧直读;认不出来的串才落 fallback
+        assertEquals(PicturePreset.Cinema, PicturePreset.resolve("Cinema"))
+        assertEquals(PicturePreset.Custom, PicturePreset.resolve("hacked-value", PicturePreset.Custom))
+        assertEquals(PicturePreset.Original, PicturePreset.resolve(null))
     }
 }

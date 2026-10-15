@@ -265,18 +265,11 @@ private fun PictureEffectUnavailableReason.hintRes(): Int? = when (this) {
 @StringRes
 private fun PicturePreset.labelRes(): Int = when (this) {
     PicturePreset.Original -> R.string.player_scale_origin
-    PicturePreset.Natural -> R.string.player_picture_preset_natural
-    PicturePreset.Vivid -> R.string.player_picture_preset_vivid
     PicturePreset.Clear -> R.string.player_picture_preset_clear
-    PicturePreset.Dehaze -> R.string.player_picture_preset_dehaze
-    PicturePreset.Bright -> R.string.player_picture_preset_bright
+    PicturePreset.Vivid -> R.string.player_picture_preset_vivid
     PicturePreset.Cinema -> R.string.player_picture_preset_cinema
     PicturePreset.Soft -> R.string.player_picture_preset_soft
     PicturePreset.Warm -> R.string.player_picture_preset_warm
     PicturePreset.Cool -> R.string.player_picture_preset_cool
-    PicturePreset.Comfort -> R.string.player_picture_preset_comfort
-    PicturePreset.Anime -> R.string.player_picture_preset_anime
-    PicturePreset.Sport -> R.string.player_picture_preset_sport
-    PicturePreset.Game -> R.string.player_picture_preset_game
     PicturePreset.Custom -> R.string.player_picture_preset_custom
 }
