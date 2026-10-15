@@ -19,10 +19,6 @@ import kotlin.math.abs
 class GestureController(private val host: ComposeVideoController) :
     GestureDetector.OnGestureListener, GestureDetector.OnDoubleTapListener, View.OnTouchListener {
 
-    companion object {
-        private const val SLIDE_POSITION_FULL_WIDTH_MS = 240000f
-    }
-
     private val context: Context get() = host.context
 
     // —— 手势引擎字段（照抄 BaseController） ——
@@ -192,7 +188,7 @@ class GestureController(private val host: ComposeVideoController) :
         val wrapper = host.wrapper ?: return
         val duration = PlayerUtils.safeTimeMs(wrapper.duration)
         val currentPosition = PlayerUtils.safeTimeMs(wrapper.currentPosition)
-        var position = (-deltaX / width * SLIDE_POSITION_FULL_WIDTH_MS + currentPosition).toInt()
+        var position = (-deltaX / width * SeekSwipePolicy.fullSwipeSpanMs(duration.toLong()) + currentPosition).toInt()
         if (position > duration) position = duration
         if (position < 0) position = 0
         host.updateSeekUiHint(currentPosition, position)
