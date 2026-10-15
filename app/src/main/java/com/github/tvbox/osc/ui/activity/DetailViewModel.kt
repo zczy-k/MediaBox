@@ -284,7 +284,9 @@ class DetailViewModel : ViewModel() {
                 val id = video.id.orEmpty()
                 if (k.isEmpty() || id.isEmpty()) null else k to id
             }
-            .filter { (k, _) -> k != sourceKey && !usedSourceKeys.contains(k) }
+            // 与 chips 同一口径(2026-10-15):视图层只排除**当前源**,已切过的源仍在列表里、也能切回,
+            // 所以提示也可以指向它们。多排除一类只会让提示变哑(上面注释里那个 bug 就是这么来的)。
+            .filter { (k, _) -> k != sourceKey }
             .distinct()
         val bestByTitle = VideoQualityMemory.lookupBestBatch(candidates)
         var bestHint: CrossSourceHint? = null
@@ -1513,6 +1515,8 @@ class DetailViewModel : ViewModel() {
                     }
                 }
                 vodInfo = info
+                // 把**当前这个源自己**补进换源候选表(用户 2026-10-15 指出的缺口,见函数注释)
+                ensureCurrentSourceCandidate(mVideo)
                 recordCompleteness(info)
                 publishLineQualityHeights()
                 // 详情就绪即探一次未测线路:第一次观看也有画质标签(这里不做"有记忆才探"的 gating)
@@ -2099,12 +2103,17 @@ class DetailViewModel : ViewModel() {
             //   1~2 分 = 只是名字像/仅别名相等/每个词都出现 → 进**相关推荐**,看得见但不自动起播;
             //   0/负分 = 丢弃。
             // 旧实现是二值 isSameTitle,且归一化比搜索页弱(不删括注、无 NFKC/假名折叠)
-            // ⇒ "搜索页能找到、点换源却找不到"的漏搜就从这里产生。
+            // ⇒ "搜索页能找到、点换源却找不到"的漏搜从这里产生。
+            //
+            // ⚠️ 2026-10-15:**这里不再按"当前源/已切过的源"剔条目**。原先那两条件把
+            // 起点源与刚切走的源整条丢出候选表,而"换源列表"只能由这张表渲染 ⇒
+            // 用户看到的正是"这个源明明有这部片,换源列表里就是没有、也切不回去"。
+            // 隐藏当前源是**视图层**的事([publishSourceChips] 早就在排除它),数据层留着它
+            // 没有任何副作用:正在播时它不出现在那一行,切走之后它自然回来。
+            // 自动换源链要跳过试过的源,它自己看 [usedSourceKeys]/[triedKeys],不靠这张表瘦身。
             val candidates = videos.filter {
                 !it.id.isNullOrEmpty()
                     && CandidateMatchPolicy.verdictOf(candidateRelevance(it)) == CandidateMatchPolicy.Verdict.CANDIDATE
-                    && !usedSourceKeys.contains(it.sourceKey)
-                    && it.sourceKey != sourceKey
             }.filter { candidateKeys.add(candidateKey(it)) }
             if (candidates.isNotEmpty()) {
                 data.sourceKey?.let { sourcesWithHit.add(it) }
@@ -2299,8 +2308,9 @@ class DetailViewModel : ViewModel() {
             for (v in videos) {
                 if (v.id.isNullOrEmpty()) continue
                 if (!CandidateMatchPolicy.isSameTitleScore(candidateRelevance(v, title))) continue
-                if (usedSourceKeys.contains(v.sourceKey)) continue
-                if (v.sourceKey == sourceKey) continue
+                // 2026-10-15:这里**不再**按"当前源/已用过的源"筛掉条目(与 onSearchResultEvent 同口径)。
+                // 灌种的是"上次这部片由哪些源收录"这个事实,把它丢掉就等于把可切回的源抹掉;
+                // 当前源不该出现在那一行,由 [CandidatePager.pageableSources] 在视图层排除。
                 if (!candidateKeys.add(candidateKey(v))) continue
                 fresh.add(v)
             }
@@ -3075,11 +3085,20 @@ class DetailViewModel : ViewModel() {
     private fun loadNextFallbackCandidate(): Boolean {
         while (true) {
             if (fallbackCandidates.size > 1) sortFallbackCandidatesByCompleteness()
+            // 2026-10-15(用户指出):试过的候选**不再从表里摘掉**。原先这里 `removeAt(0)` 是
+            // "取走=删除",于是被自动换源路过的源会从换源列表里**永久消失** ——
+            // 用户看到的正是"上一个源明明有这部片,列表里却再也找不到、也切不回去"。
+            // 消费语义改由 triedKeys 承担(同一个候选只试一次,不会原地打转),
+            // 表只增不减;隐藏当前源是视图层([CandidatePager.pageableSources])的事。
             val video = synchronized(fallbackCandidates) {
-                if (fallbackCandidates.isEmpty()) null else fallbackCandidates.removeAt(0)
+                fallbackCandidates.firstOrNull { v ->
+                    !usedSourceKeys.contains(v.sourceKey) && !triedKeys.contains(candidateKey(v))
+                }
             } ?: break
             val cKey = candidateKey(video)
-            if (usedSourceKeys.contains(video.sourceKey) || !triedKeys.add(cKey)) continue
+            // **消费的是"试过"这个事实,不是表里的这一行** —— 先记账再判断,否则下面跳过时
+            // 同一个候选会被反复取到,这里就会死循环。
+            if (!triedKeys.add(cKey)) continue
             // 2026-10-13 真机修复(问题 17c):跳过**本会话内这部片已放不出来**的源。
             // 真机取证(千与千寻):换源链在几个源之间无限循环 —— 换 A 失败→换 B 失败→重搜→又切回 A。
             // usedSourceKeys 只防"同一候选重复取",拦不住"重搜后同源又被重新灌进候选"的死循环。
@@ -3336,6 +3355,28 @@ class DetailViewModel : ViewModel() {
         (video.sourceKey ?: "") + "|" + (video.id ?: "")
 
     private fun candidateKey(key: String, id: String): String = "$key|$id"
+
+    /**
+     * 把**当前这个源自己**补进换源候选表(2026-10-15 用户指出的缺口)。
+     *
+     * <p>## 补的是什么空白
+     * 候选表此前只有一个来源:全站聚合搜索的回包。而"用户点进来的这个源"是从详情直接起播的 ——
+     * 2026-10-14 定案"能起播就不自动搜全站"之后它常常**根本没被搜过**;就算搜过,
+     * 回包也在数据层被"当前源"那条判据丢掉。两条路都进不了表,于是真机表现成:
+     * 起点源因网络波动整源放不出来 → 自动切到下一个源 → **原来那个源在换源列表里永远消失**,
+     * 用户既看不到它也切不回去,而那部片明明就是它给出的。
+     *
+     * <p>视图层([CandidatePager.pageableSources])本来就排除当前源,所以把它留在表里没有副作用:
+     * 正在播时它不出现在那一行,切走之后自然回来。
+     */
+    private fun ensureCurrentSourceCandidate(video: Movie.Video) {
+        val key = video.sourceKey.orEmpty()
+        val id = video.id.orEmpty()
+        if (key.isEmpty() || id.isEmpty()) return
+        if (!candidateKeys.add(candidateKey(key, id))) return
+        synchronized(fallbackCandidates) { fallbackCandidates.add(video) }
+        LOG.i("echo-source-switch anchor-seeded id=" + id)
+    }
 
     fun onEpisodeClick(position: Int) {
         val info = vodInfo ?: return
