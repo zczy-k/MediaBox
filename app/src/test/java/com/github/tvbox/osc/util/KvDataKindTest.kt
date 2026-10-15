@@ -48,6 +48,8 @@ class KvDataKindTest {
             "jsRuntime_源A_key",
             "title_index_abcd",
             "line_health_abcd1234",
+            // "这个源这条片探不出画质"的轮次计数:清掉最坏是重探三遍,不是资产
+            "video_probe_rounds",
         )
         rebuildable.forEach { assertEquals("应可再生: $it", DataKind.REBUILDABLE, KvDataKind.kindOf(it)) }
         assertEquals(rebuildable.size, KvDataKind.rebuildablePrefixes().size)

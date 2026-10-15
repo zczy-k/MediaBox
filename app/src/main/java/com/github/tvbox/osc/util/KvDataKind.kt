@@ -31,6 +31,7 @@ object KvDataKind {
         "jsRuntime_" to DataKind.REBUILDABLE,         // JS 运行时编译产物：加载该源时重编译
         "title_index_" to DataKind.REBUILDABLE,       // 拼音索引：搜索/历史/收藏过程中重新积累
         "line_health_" to DataKind.REBUILDABLE,       // 线路健康：可疑态 15 分钟就过期，本就是短周期
+        "video_probe_rounds" to DataKind.REBUILDABLE,  // "这个源探不出画质"的计数：清掉最坏是重探三遍
 
         // —— 资产（清除缓存永不碰）——
         "source_weight_" to DataKind.ASSET,           // 源短期分 + 长期应答率 + 上次被搜时刻

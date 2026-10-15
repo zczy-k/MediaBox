@@ -36,6 +36,8 @@ import com.github.tvbox.osc.player.SourceQualityScore
 import com.github.tvbox.osc.player.VideoQualityMemory
 import com.github.tvbox.osc.player.VideoQualityPolicy
 import com.github.tvbox.osc.player.VideoQualityProbe
+import com.github.tvbox.osc.player.ProbeRoundMemory
+import com.github.tvbox.osc.player.ProbeRoundPolicy
 import com.github.tvbox.osc.util.EpisodeTotals
 import com.github.tvbox.osc.util.HistoryHelper
 import com.github.tvbox.osc.util.HistoryWriter
@@ -947,6 +949,16 @@ class DetailViewModel : ViewModel() {
             LOG.i("echo-quality sweep skip: nothing missing")
             return
         }
+        // 重复探测的上限(2026-10-15 用户定案):当前源所有线路探一遍之后,最多再重复两遍,
+        // 三遍都没测出新东西就认"这条片这个源确实探不到",不再每次进详情页重烧一遍带宽。
+        // 真机触发点:《狮子王》那个源 4 条线路有 3 条永远测不出(其中一条是 AES 加密分片列表,
+        // 分辨率按 HLS 规范根本不写在子列表里),而每一遍都把三条重新排进计划。
+        // 判据与存储见 player/ProbeRoundPolicy;测到任何东西就清零,所以"探得动"的源不受影响。
+        val doneRounds = ProbeRoundMemory.rounds(siteKey, vod)
+        if (ProbeRoundPolicy.shouldStop(doneRounds)) {
+            LOG.i("echo-quality sweep skip: probe-rounds=" + doneRounds + " site=" + siteKey + " vod=" + vod)
+            return
+        }
         sourceSweepDoneKey = sweepKey
         // 不再按 currentFlag 取集号:统一解析路径自己定位集号(resolveTargetForProbe → probeIndexOf),
         // 因为探测地址与"当前线路"无关(旧代码用当前线路的 index 去取别条线路的 series.url,本身就是近似)
@@ -1025,6 +1037,9 @@ class DetailViewModel : ViewModel() {
                 deepProbed.add(measured.copy(flag = flag))
             }
             LOG.i("echo-quality deep-probe via spider=" + viaSpider + " direct=" + viaDirect)
+            // 这一遍的账:测到任何东西就清零,一条都没测出来才累计一轮(见 [ProbeRoundPolicy])。
+            // 记在"会话是否还有效"之前 —— 哪怕他已经换片,这一遍带宽确实花掉了,结论照样该攒。
+            ProbeRoundMemory.finishRound(siteKey, vod, deepProbed.size)
             val allProbed = deepProbed
             // 落记忆:负结果进冷却、不落记忆(与补探测同一口径,避免 0×0 污染)
             allProbed.forEach { v ->

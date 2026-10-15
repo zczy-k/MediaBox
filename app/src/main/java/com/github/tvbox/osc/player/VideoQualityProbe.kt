@@ -85,7 +85,16 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
         headers: Map<String, String>,
         budgetMs: Long = DEFAULT_BUDGET_MS,
     ): VideoQualityPolicy.Variant? {
-        if (url.isNullOrBlank() || !url.startsWith("http")) return null
+        if (url.isNullOrBlank() || !url.startsWith("http")) {
+            // 这条必须落日志:v1.1.37 真机出现过"三条线路 15 毫秒全报 no-size"却查不到原因,
+            // 就是因为这里静默返回 —— 而"解析给出的地址不是 http"正是深探最常见的空转成因。
+            // 只打尾部(去掉签名参数),既够定位又不刷屏。
+            LOG.i(
+                "echo-quality probe-skip reason=not-http tail=" +
+                    (url?.substringBefore('?')?.takeLast(48) ?: "null")
+            )
+            return null
+        }
         return withContext(Dispatchers.IO) {
             // 同一条地址已经有别的探测在跑就退出:两条路径(起播后小探 / 详情页深探)会撞车,
             // 而探测是和播放抢带宽的,做两遍只是多烧一次
@@ -183,10 +192,15 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
                     // 真机日志证明补了 UA 仍然 403,而从 PC 拿同一地址不带任何头反倒 200
                     // ⇒ 光有状态码推不出原因。CDN 拒绝时几乎总会在头/体里写为什么
                     // (Server、X-Blocked、"Access denied…referer"),不读就永远在猜。
+                    //
+                    // ⚠️ 这里原本是 `LOG.d("VideoQualityProbe", ...)`:LOG.d 把 tag 丢了、
+                    // 只按 msg 判落盘白名单,而 "probe failed: …" 不以任何前缀开头 ⇒ **整行被静默丢弃**。
+                    // v1.1.37 真机因此一条 403 都看不到,只能从"记忆没增长"反推失败。改成 echo-quality 前缀。
                     val fu = response.request.url
                     LOG.i(
                         "echo-quality probe-failed http=" + response.code +
                             " ua=" + uaTag(headers) + " tactic=" + tactic.name +
+                            " host=" + hostOf(url) +
                             " server=" + response.header("Server").orEmpty() +
                             " deny=" + denyHint(response) +
                             " final=" + fu.host + fu.encodedPath
@@ -207,7 +221,7 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
                 val mp4 = Mp4BoxReader.readVideoSize(buffer, buffer.size)
                 if (mp4 != null) {
                     LOG.i("echo-quality probe-ok src=mp4 size=" + mp4.first + "x" + mp4.second +
-                        " bytes=" + buffer.size)
+                        " bytes=" + buffer.size + " tactic=" + tactic.name + " host=" + hostOf(url))
                     return Attempt(
                         VideoQualityPolicy.Variant(
                             width = mp4.first,
@@ -238,7 +252,10 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
                 val text = String(buffer, 0, buffer.size, Charsets.UTF_8)
                 val hls = VideoQualityPolicy.parseHlsMaster(text)
                 if (hls != null) {
-                    LOG.i("echo-quality probe-ok src=hls size=" + hls.width + "x" + hls.height)
+                    LOG.i(
+                        "echo-quality probe-ok src=hls size=" + hls.width + "x" + hls.height +
+                            " bytes=" + buffer.size + " tactic=" + tactic.name + " host=" + hostOf(url)
+                    )
                     return Attempt(hls, ProbeOutcome.OK, response.code)
                 }
                 // 2.5) **分片内探**(2026-10-10):media playlist 里根本没有分辨率字段

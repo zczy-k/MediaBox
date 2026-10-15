@@ -85,6 +85,16 @@ public class HawkConfig {
      * 且必须在站点补资源后能独立失效,不牵连画质记忆一起被清。
      */
     public static final String VIDEO_AVAILABILITY_MEMORY = "video_availability_memory";
+    /**
+     * 「这个源这条片探测无望」的轮次计数(JSON,见 player/ProbeRoundMemory):
+     * 键 "站点|影片",值 "最后时刻,轮次"。用户定的口径 —— 当前源所有线路探一遍之后,
+     * 最多再重复两遍;三遍都没有新东西就确认"真的探不到",不再每次进详情页重花这份带宽。
+     *
+     * <p>与 {@link #VIDEO_QUALITY_MEMORY} 分开存:那边是"测到了的资产"(TTL 30 天、清除缓存永不碰),
+     * 这边是"没测到的计数"(TTL 7 天、可再生)。混表会让两边的裁剪逻辑互相踩,
+     * 更会把一个短期结论存成永久标签。
+     */
+    public static final String VIDEO_PROBE_ROUNDS = "video_probe_rounds";
     public static final String PLAY_SCALE = "play_scale"; //0 texture 2
     // EXO 音频隧道(audio offload,2026-09-11):压缩音频码流直通 DSP 解码;设备/格式不支持时自动回退普通播放
     public static final String PLAY_TUNNEL = "play_tunnel";
