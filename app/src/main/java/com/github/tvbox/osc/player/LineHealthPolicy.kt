@@ -52,6 +52,21 @@ object LineHealthPolicy {
      */
     const val SLOW_LINE_MS = 5_000L
 
+    // —— "上次播通"的加分档位（2026-10-15）——
+    // 为什么要有：换线时最硬的证据就是"这条线刚刚在这部片上真播出过画面"。
+    // 为什么分三档、且 30 天后归零：越近越可信；隔了一个月的"能播"参考价值已经不大
+    // （线路可能早换了一批），不能让它永久压住新线路。
+    /** 24 小时内播通过 */
+    const val PLAYED_FRESH_MS = 24L * 60 * 60 * 1000
+    /** 7 天内播通过 */
+    const val PLAYED_WEEK_MS = 7L * 24 * 60 * 60 * 1000
+    /** 超过 30 天不再加分 */
+    const val PLAYED_STALE_MS = 30L * 24 * 60 * 60 * 1000
+
+    const val SCORE_PLAYED_FRESH = 60
+    const val SCORE_PLAYED_WEEK = 40
+    const val SCORE_PLAYED_STALE = 20
+
     /** 单条线路的健康状态(可序列化) */
     data class State(
         /** 连续失败次数;成功起播即归零 */
@@ -106,17 +121,39 @@ object LineHealthPolicy {
     fun isSlow(state: State): Boolean = state.resolveMs >= SLOW_LINE_MS
 
     /**
-     * 换线时的排序分(**越大越先试**)。只在 [isSuspect]/[isSlow] 为真时偏离中性,
-     * 其余一律 0 —— 与"宁漏不误杀"一致:没有确凿证据就不动顺序。
+     * 换线时的排序分(**越大越先试**)。
+     *
+     * <p>两半：**坏证据扣分**（[isSuspect]/[isSlow]）+ **上次真播通的加分**（[playedBonus]）。
+     * 后者是 2026-10-15 补的 —— `playedAt` 一直在记（每次成功起播都写），但打分时
+     * `else -> 0` 完全不用它，于是"上周就是这条线播通的"这份确凿证据换不来一个身位，
+     * 重看同一部片时上次那条能播的线路和从没试过的线路排在一起。
      *
      * <p>⚠️ 不是屏蔽,是**排后**:`PlaybackRetryDelegate.tryNextLine` 仍会把
      * 所有线路(含被压分的)逐个试完才会 exhausted。
      */
-    fun orderScore(state: State, now: Long): Int = when {
-        isSuspect(state, now) && isSlow(state) -> -200
-        isSuspect(state, now) -> -100
-        isSlow(state) -> -50
-        else -> 0
+    fun orderScore(state: State, now: Long): Int =
+        when {
+            isSuspect(state, now) && isSlow(state) -> -200
+            isSuspect(state, now) -> -100
+            isSlow(state) -> -50
+            else -> 0
+        } + playedBonus(state, now)
+
+    /**
+     * "上次真正播通过"的加分：越近越可信，超过 [PLAYED_STALE_MS] 就不算了。
+     *
+     * <p>刚失败过（可疑）的线路**一分不给**：坏证据优先于好证据 —— 上周能播、
+     * 刚才连挂两次，该排后面，而不是靠旧功抵。
+     */
+    fun playedBonus(state: State, now: Long): Int {
+        if (state.playedAt <= 0L || isSuspect(state, now)) return 0
+        val age = now - state.playedAt
+        if (age < 0L || age > PLAYED_STALE_MS) return 0
+        return when {
+            age <= PLAYED_FRESH_MS -> SCORE_PLAYED_FRESH
+            age <= PLAYED_WEEK_MS -> SCORE_PLAYED_WEEK
+            else -> SCORE_PLAYED_STALE
+        }
     }
 
     /**

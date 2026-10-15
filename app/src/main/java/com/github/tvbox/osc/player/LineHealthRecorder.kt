@@ -1,7 +1,11 @@
 package com.github.tvbox.osc.player
 
+import com.github.tvbox.osc.util.HawkConfig
+import com.github.tvbox.osc.util.KV
 import com.github.tvbox.osc.util.LOG
 import com.github.tvbox.osc.util.SourceHealthMemory
+import com.github.tvbox.osc.util.SourceWeightMemory
+import com.github.tvbox.osc.util.SourceWeightPolicy
 
 /**
  * 线路健康的上报闸门(2026-10-12):把"这次播放失败该不该记到线路上"的判断收在一处。
@@ -93,10 +97,28 @@ object LineHealthRecorder {
         LineHealthMemory.recordResolveMs(sourceKey, vodId, flag, resolveMs)
     }
 
-    /** 上报一次成功起播:连续失败归零 */
+    /**
+     * 上报一次成功起播：线路侧连续失败归零，并给**源级**记一次 `PLAY_SUCCESS`。
+     *
+     * <p>源级这一笔是 2026-10-15 补的：`PLAY_SUCCESS` 这个证据类型一直存在却没有任何调用点，
+     * 于是源权重实际只是"答不答话"的应答率 —— 一个源每次秒回、给出来的线路却全都播不通，
+     * 分数照样顶格。起播成功是"这个源的片子真能播"的唯一确凿证据。
+     *
+     * <p>⚠️ **只加不减**：播放失败不扣源的分（网络抖动、解码器不支持、单条地址过期都会造成失败，
+     * 归因太脏 —— 当年「天堂」被一条坏地址整源封 6 小时就是这么来的），失败仍只记线路级。
+     */
     @JvmStatic
     fun recordPlayed(sourceKey: String?, vodId: String?, flag: String?) {
-        if (!LineHealthMemory.isEnabled()) return
-        LineHealthMemory.recordPlayed(sourceKey, vodId, flag, System.currentTimeMillis())
+        // 两本账各自开关:关掉「自动屏蔽反复不可用的源」只是不再重排线路,
+        // 不该连带把源权重的台账也停掉(否则源分从此只进不出地冻结)
+        if (LineHealthMemory.isEnabled()) {
+            LineHealthMemory.recordPlayed(sourceKey, vodId, flag, System.currentTimeMillis())
+        }
+        if (!SourceWeightMemory.isEnabled()) return
+        val key = sourceKey?.trim().orEmpty()
+        if (key.isEmpty()) return
+        // 直播不参与源权重:频道地址与"这个源好不好用"没有因果关系
+        if (KV.get(HawkConfig.PLAYER_IS_LIVE, false)) return
+        SourceWeightMemory.record(key, SourceWeightPolicy.EvidenceKind.PLAY_SUCCESS)
     }
 }

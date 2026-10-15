@@ -25,9 +25,10 @@ import org.json.JSONObject
  * **读永远读不到、成功上报永远不生效**,而 TypeScript/JSON 都不会报错,是纯静默故障
  * (CI 只抓到了编译期那部分)。扁平结构让"键就是键"没有中间层可忘。
  *
- * <p>## 只记"有问题"的
- * 成功是常态,记录它会让条目数乘以 3。所以 [recordPlayed] 只用于**归零已有条目**
- * (已有失败记录时才需要重置),不会为"一切正常"的线路新建条目。
+ * <p>## 记得什么
+ * 失败痕迹 + **每次成功起播的时刻**。后者从 2026-10-15 起才真正落盘,因为
+ * [LineHealthPolicy.orderScore] 除了扣分还要靠它加分("上次就是这条线播通的"排在从没试过的之前)。
+ * 条目数由 [MAX_ENTRIES] 封顶,超出按 `failAt`/`playedAt` 较新者留下、最旧的淘汰。
  *
  * <p>## 四条硬约束
  * 见 [LineHealthPolicy] 的 KDoc:只降权不屏蔽 / 按片绑定 /
@@ -37,6 +38,9 @@ object LineHealthMemory {
 
     /** 条目上限:覆盖约 300 部片的近期观看;超出按时间淘汰 */
     private const val MAX_ENTRIES = 1500
+
+    /** 同一线路多久内的重复"播通"不再落盘(见 [recordPlayed]) */
+    private const val REPLAY_DEDUPE_MS = 60_000L
 
     /** 与源健康台账同款:按点播源地址分桶,换仓后旧记忆自动作废 */
     private const val KEY_PREFIX = "line_health_"
@@ -133,9 +137,13 @@ object LineHealthMemory {
     /**
      * 记一次成功起播。
      *
-     * <p>⚠️ 已有条目才写:见类 KDoc 的"只记有问题的" ——
-     * 为"一切正常"的线路新建条目会让容量翻三倍,而它们的记忆价值为零
-     * (正常线路本来就不会被降权)。
+     * <p>2026-10-15 起**干净线路也要记**：[LineHealthPolicy.playedBonus] 用的正是这个 `playedAt`
+     * （"上次就是这条线播通的"是重看同一部片时最硬的证据）。此前这里只为已有失败痕迹的条目归零，
+     * 于是 `playedAt` 在正常线路上永远是 0，加分档位形同虚设。
+     *
+     * <p>容量仍由 [MAX_ENTRIES] 兜住（条目时间戳取 `failAt`/`playedAt` 较大者，淘汰最久没碰的）。
+     * [REPLAY_DEDUPE_MS] 内不重复落盘：一次 READY 会连带 seek/换清晰度反复触发，
+     * 而"多久以前播过"的分档粒度是 24 小时，1 分钟内的重写纯属白写整张表。
      */
     @Synchronized
     fun recordPlayed(sourceKey: String?, vodId: String?, flag: String?, now: Long = System.currentTimeMillis()) {
@@ -143,9 +151,9 @@ object LineHealthMemory {
         if (k.isEmpty()) return
         try {
             val all = loadAll()
-            // 没有条目就什么都不做 —— 这正是"只记有问题的"
             val current = decode(all.optJSONObject(k))
-            if (current.failStreak == 0 && current.failAt == 0L) return
+            // 去重只挡"没什么可改"的重复 READY；带失败痕迹的条目必须立刻归零，不能等 60s
+            if (current.failStreak == 0 && current.playedAt > 0L && now - current.playedAt < REPLAY_DEDUPE_MS) return
             val next = LineHealthPolicy.recordPlayed(current, now)
             if (next.failStreak == current.failStreak && next.playedAt == current.playedAt) return
             all.put(k, encode(next))

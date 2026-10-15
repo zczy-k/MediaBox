@@ -111,6 +111,71 @@ class LineHealthPolicyTest {
         assertEquals(0, LineHealthPolicy.orderScore(LineHealthPolicy.State(), t0))
     }
 
+    // ==================== 上次播通的正向分 ====================
+
+    @Test
+    fun `刚播通过的线路排在从没试过的之前`() {
+        val played = LineHealthPolicy.recordPlayed(LineHealthPolicy.State(), t0)
+        val never = LineHealthPolicy.State()
+        assertTrue(
+            "重看同一部片时,上次真播出过画面的线路必须有身位: " +
+                LineHealthPolicy.orderScore(played, t0),
+            LineHealthPolicy.orderScore(played, t0) > LineHealthPolicy.orderScore(never, t0),
+        )
+        assertEquals(LineHealthPolicy.SCORE_PLAYED_FRESH, LineHealthPolicy.orderScore(played, t0))
+    }
+
+    @Test
+    fun `播通加分随时效衰减到零`() {
+        val played = LineHealthPolicy.recordPlayed(LineHealthPolicy.State(), t0)
+        assertEquals(
+            LineHealthPolicy.SCORE_PLAYED_WEEK,
+            LineHealthPolicy.orderScore(played, t0 + LineHealthPolicy.PLAYED_FRESH_MS + 1),
+        )
+        assertEquals(
+            LineHealthPolicy.SCORE_PLAYED_STALE,
+            LineHealthPolicy.orderScore(played, t0 + LineHealthPolicy.PLAYED_WEEK_MS + 1),
+        )
+        // 超过 30 天:旧功抵不了新证据,回到中性(不能永久压住新线路)
+        assertEquals(
+            0,
+            LineHealthPolicy.orderScore(played, t0 + LineHealthPolicy.PLAYED_STALE_MS + 1),
+        )
+    }
+
+    @Test
+    fun `可疑线路不靠旧功抵`() {
+        // 先播通,再连续失败两次 ⇒ 扣分生效且正向分归零
+        var s = LineHealthPolicy.recordPlayed(LineHealthPolicy.State(), t0)
+        s = LineHealthPolicy.recordFail(s, t0 + 1000)
+        s = LineHealthPolicy.recordFail(s, t0 + 2000)
+        val now = t0 + 3000
+        assertTrue("必须已判可疑", LineHealthPolicy.isSuspect(s, now))
+        assertEquals(0, LineHealthPolicy.playedBonus(s, now))
+        assertTrue(
+            "可疑的净分必须是负的: " + LineHealthPolicy.orderScore(s, now),
+            LineHealthPolicy.orderScore(s, now) < 0,
+        )
+    }
+
+    @Test
+    fun `慢过的线路只要真播通仍能排到没试过的之前`() {
+        val slowButPlayed = LineHealthPolicy.recordPlayed(
+            LineHealthPolicy.recordResolveMs(LineHealthPolicy.State(), LineHealthPolicy.SLOW_LINE_MS), t0,
+        )
+        // -50(慢) + 60(刚播通) > 0(没试过):取流慢但确实能播,值得再试一次
+        assertTrue(
+            "净分: " + LineHealthPolicy.orderScore(slowButPlayed, t0),
+            LineHealthPolicy.orderScore(slowButPlayed, t0) > 0,
+        )
+    }
+
+    @Test
+    fun `时钟回拨不加分`() {
+        val played = LineHealthPolicy.recordPlayed(LineHealthPolicy.State(), t0 + 60_000)
+        assertEquals(0, LineHealthPolicy.orderScore(played, t0))
+    }
+
     @Test
     fun `可疑加慢压得最狠`() {
         val s = LineHealthPolicy.recordFail(

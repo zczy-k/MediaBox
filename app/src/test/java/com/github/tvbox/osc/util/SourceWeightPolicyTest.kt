@@ -187,8 +187,18 @@ class SourceWeightPolicyTest {
         assertEquals(2.0, w.bad, 0.0001)
     }
 
-    // ==================== 显示档位 ====================
+    @Test
+    fun `播通一次就记一笔正向长期账`() {
+        // PLAY_SUCCESS 是源级唯一"真能播"的证据(2026-10-15 接线:此前这个类型存在却无人调用)
+        val w = SourceWeightPolicy.record(null, SourceWeightPolicy.EvidenceKind.PLAY_SUCCESS, t0)
+        assertEquals(1.0, w.ok, 0.0001)
+        assertEquals(0.0, w.bad, 0.0001)
+        assertEquals(SourceWeightPolicy.MAX_SCORE, w.score)
+        // 只加不减:失败扣的是线路级,源级不扣分的约定由 signOf 锁住
+        assertEquals(1, SourceWeightPolicy.signOf(SourceWeightPolicy.EvidenceKind.PLAY_SUCCESS))
+    }
 
+    // ==================== 显示档位 ====================
     @Test
     fun `显示三档按阈值映射`() {
         assertEquals(SourceWeightPolicy.Tier.GREEN, SourceWeightPolicy.tier(SourceWeightPolicy.Weight(60, t0), t0))
