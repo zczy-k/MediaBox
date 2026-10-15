@@ -13,40 +13,51 @@ import org.junit.Test
  */
 class ProbeStrategyTest {
 
-    // ---------- 只有 403 值得换身份 ----------
-
+    /**
+     * 阶梯顺序被真机纠正过:第一版先补 UA,v1.1.36 日志证明补了 UA 仍然 403,
+     * 而从 PC 对同一地址不带任何头反而 200 ⇒ 这些聚合 CDN 卡的是 Referer(防盗链),不是 UA。
+     */
     @Test
-    fun `403 且源站没配 UA ⇒ 下一档补浏览器 UA`() {
-        assertEquals(
-            ProbeTactic.BROWSER_UA,
-            ProbeStrategy.nextTactic(ProbeTactic.SOURCE_HEADERS, ProbeOutcome.FORBIDDEN, false, false),
-        )
-    }
-
-    /** 源站本来就有 UA 时再"补 UA"是同一个请求打两遍:白烧一次带宽,还让人以为换过身份 */
-    @Test
-    fun `源站已配的头直接跳过,不换等于没换的那一档不进阶梯`() {
+    fun `403 先补 Referer,再连 UA 一起补`() {
         assertEquals(
             ProbeTactic.REFERER,
-            ProbeStrategy.nextTactic(ProbeTactic.SOURCE_HEADERS, ProbeOutcome.FORBIDDEN, true, false),
+            ProbeStrategy.nextTactic(ProbeTactic.SOURCE_HEADERS, ProbeOutcome.FORBIDDEN, false, false),
         )
-        // UA 与 Referer 都有 ⇒ 没有可换的身份了
+        assertEquals(
+            ProbeTactic.REFERER_PLUS_UA,
+            ProbeStrategy.nextTactic(ProbeTactic.REFERER, ProbeOutcome.FORBIDDEN, false, false),
+        )
+    }
+
+    /** 源站已经配了那一档 ⇒ 不许拿同一个请求再打一遍 */
+    @Test
+    fun `换了等于没换的那一档不进阶梯`() {
+        // Referer 已配 ⇒ 补 Referer 无意义;而下一档还要补 UA,这里 alreadyHasUa=false 仍可救
+        assertEquals(
+            ProbeTactic.REFERER_PLUS_UA,
+            ProbeStrategy.nextTactic(ProbeTactic.SOURCE_HEADERS, ProbeOutcome.FORBIDDEN, false, true),
+        )
+        // 两个头源站都配了还被拒 ⇒ 不是缺头,别磨
         assertNull(
-            ProbeStrategy.nextTactic(ProbeTactic.SOURCE_HEADERS, ProbeOutcome.FORBIDDEN, true, true),
+            ProbeStrategy.nextTactic(ProbeTactic.REFERER_PLUS_UA, ProbeOutcome.FORBIDDEN, true, true),
         )
     }
 
     @Test
-    fun `阶梯最长三档,补完 UA 再补 Referer`() {
+    fun `阶梯两档用尽就停`() {
         var tactic: ProbeTactic? = ProbeTactic.SOURCE_HEADERS
         var steps = 0
-        while (tactic != null && tactic != ProbeTactic.UA_PLUS_REFERER && steps < ProbeTactic.entries.size) {
+        while (tactic != null && tactic != ProbeTactic.REFERER_PLUS_UA &&
+            steps < ProbeTactic.entries.size
+        ) {
             tactic = ProbeStrategy.nextTactic(tactic, ProbeOutcome.FORBIDDEN, false, false)
             steps++
         }
-        assertEquals(ProbeTactic.UA_PLUS_REFERER, tactic)
-        // 身份换尽了还是 403 ⇒ 停,交给冷却而不是继续磨
-        assertNull(ProbeStrategy.nextTactic(ProbeTactic.UA_PLUS_REFERER, ProbeOutcome.FORBIDDEN, false, false))
+        assertEquals(ProbeTactic.REFERER_PLUS_UA, tactic)
+        assertEquals(2, steps)
+        assertNull(
+            ProbeStrategy.nextTactic(ProbeTactic.REFERER_PLUS_UA, ProbeOutcome.FORBIDDEN, false, false),
+        )
     }
 
     @Test
@@ -69,9 +80,12 @@ class ProbeStrategyTest {
 
     // ---------- 冷却分性质 ----------
 
-    /** 鉴权类(换完身份仍被拒)才长期冷却;网关/网络只短冷却 */
+    /**
+     * 鉴权类要**把身份档位真的用尽**才冷却。
+     * 真机踩过:只试过 UA 那一档就把站点冷却 30 分钟,结果同一条能测的线被排除在探测之外。
+     */
     @Test
-    fun `冷却按失败性质分档`() {
+    fun `冷却按失败性质分档,且鉴权类要档位用尽`() {
         assertEquals(
             ProbeStrategy.COOL_DOWN_FORBIDDEN_MS,
             ProbeStrategy.coolDownMs(ProbeOutcome.FORBIDDEN, outOfTactics = true),
@@ -87,10 +101,7 @@ class ProbeStrategyTest {
         )
     }
 
-    /**
-     * 404 / 内容不可用 / 没有分辨率 ⇒ **不给站点上冷却**。
-     * 它们说的是"这一条地址",不是"这个站不能测"——贴错标签的整个站的画质优选就废了。
-     */
+    /** 404 / 内容不可用 / 没有分辨率都不该给站点贴标签:那是这一条地址的事 */
     @Test
     fun `地址级失败不给站点贴标签`() {
         listOf(
@@ -103,7 +114,12 @@ class ProbeStrategyTest {
         }
     }
 
-    // ---------- HTTP 状态码分类 ----------
+    /** 冷却时长本身:鉴权类压到 10 分钟(真机误伤的教训),不能长到"换一部片还不给机会" */
+    @Test
+    fun `冷却时长在合理量级`() {
+        assertEquals(10L * 60 * 1000, ProbeStrategy.COOL_DOWN_FORBIDDEN_MS)
+        assertEquals(3L * 60 * 1000, ProbeStrategy.COOL_DOWN_TRANSIENT_MS)
+    }
 
     @Test
     fun `状态码分类覆盖常见几种拒绝方式`() {
@@ -120,14 +136,8 @@ class ProbeStrategyTest {
     /** 上次靠哪档成功,下次就从那档开始(省掉注定失败的往返) */
     @Test
     fun `记住成功的档位`() {
-        assertEquals(
-            ProbeTactic.SOURCE_HEADERS,
-            ProbeStrategy.firstTactic(null),
-        )
-        assertEquals(
-            ProbeTactic.REFERER,
-            ProbeStrategy.firstTactic(ProbeTactic.REFERER),
-        )
+        assertEquals(ProbeTactic.SOURCE_HEADERS, ProbeStrategy.firstTactic(null))
+        assertEquals(ProbeTactic.REFERER, ProbeStrategy.firstTactic(ProbeTactic.REFERER))
     }
 
     @Test
@@ -136,7 +146,7 @@ class ProbeStrategyTest {
     }
 }
 
-/** 站点记忆是纯进程内提示缓存:必须能记起、能过期、满了能重来,且不崩并发访问 */
+/** 站点记忆是纯进程内提示缓存:要能记起、能过期、并发访问不崩,还要能挡住同一条地址的重复探测 */
 class ProbeHostMemoryTest {
 
     @Test
@@ -149,13 +159,12 @@ class ProbeHostMemoryTest {
     @Test
     fun `成功档位与冷却各自独立`() {
         ProbeHostMemory.clearForTest()
-        ProbeHostMemory.rememberSuccess("a.com", ProbeTactic.BROWSER_UA)
-        assertEquals(ProbeTactic.BROWSER_UA, ProbeHostMemory.lastSuccessful("a.com"))
-        // 测通过 ≠ 之后不能冷却(站点会改策略),也 ≠ 冷却过就忘了档位
+        ProbeHostMemory.rememberSuccess("a.com", ProbeTactic.REFERER)
+        assertEquals(ProbeTactic.REFERER, ProbeHostMemory.lastSuccessful("a.com"))
         ProbeHostMemory.coolDown("a.com", 60_000L, 1_000L)
         assertTrue(ProbeHostMemory.isCooling("a.com", 2_000L))
         assertFalse(ProbeHostMemory.isCooling("a.com", 61_000L))
-        assertEquals(ProbeTactic.BROWSER_UA, ProbeHostMemory.lastSuccessful("a.com"))
+        assertEquals(ProbeTactic.REFERER, ProbeHostMemory.lastSuccessful("a.com"))
     }
 
     /** 冷却只往长了改:并发的两条线路同时失败时,短的不能把长的抹掉 */
@@ -164,9 +173,29 @@ class ProbeHostMemoryTest {
         ProbeHostMemory.clearForTest()
         ProbeHostMemory.coolDown("b.com", ProbeStrategy.COOL_DOWN_FORBIDDEN_MS, 0L)
         ProbeHostMemory.coolDown("b.com", ProbeStrategy.COOL_DOWN_TRANSIENT_MS, 1_000L)
-        // 已经过了短冷却的时刻,仍在长冷却里 ⇒ 说明短的那次没把长的抹掉
         assertTrue(ProbeHostMemory.isCooling("b.com", ProbeStrategy.COOL_DOWN_TRANSIENT_MS + 1_000L))
         assertFalse(ProbeHostMemory.isCooling("b.com", ProbeStrategy.COOL_DOWN_FORBIDDEN_MS))
+    }
+
+    /** 同一条地址被两条路径同时探 ⇒ 第二条必须让路(探测和播放抢带宽) */
+    @Test
+    fun `同一地址的并发探测只放行一个`() {
+        ProbeHostMemory.clearForTest()
+        val url = "https://cdn.example.com/a/index.m3u8"
+        assertTrue(ProbeHostMemory.beginProbe(url))
+        assertFalse(ProbeHostMemory.beginProbe(url))
+        ProbeHostMemory.endProbe(url)
+        assertTrue(ProbeHostMemory.beginProbe(url))
+    }
+
+    /** 去重表满了要放行:宁可多探一次,也不能挡正常探测 */
+    @Test
+    fun `去重表满时放行`() {
+        ProbeHostMemory.clearForTest()
+        for (i in 0..40) {
+            assertTrue("第 $i 条应被放行", ProbeHostMemory.beginProbe("https://h$i.example.com/x.m3u8"))
+        }
+        ProbeHostMemory.clearForTest()
     }
 
     @Test

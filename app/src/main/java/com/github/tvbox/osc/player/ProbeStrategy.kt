@@ -11,7 +11,7 @@ enum class ProbeOutcome {
     /** 拿到分辨率(或拿到可用的 master) */
     OK,
 
-    /** 401/403:鉴权类 —— 换 UA / 补 Referer 是**唯一有可能救活**的一类 */
+    /** 401/403:鉴权类 —— 只有这一类值得换身份重试 */
     FORBIDDEN,
 
     /** 404/410:这条直链已经失效。换头无用,重试也无用 */
@@ -36,13 +36,16 @@ enum class ProbeOutcome {
  * <p>⚠️ 默认档是"与播放同源的 header"([ProbeTactic.SOURCE_HEADERS]),这条不能破:
  * 真机踩过探测用 `UA.random()` 而播放用源站 UA ⇒ **同一个 m3u8 播放顺畅、探测 404**,
  * 于是所有基于探测的画质决策都建在一个播放时根本不会出现的假象上。
- * 所以补 UA/Referer 只允许发生在"已经被 403 拒绝之后",而不是无条件加。
+ * 所以补头只允许发生在"已经被 403 拒绝之后",而不是无条件加。
  */
 enum class ProbeTactic {
     SOURCE_HEADERS,
-    BROWSER_UA,
+
+    /** 只补 Referer(聚合 CDN 的防盗链多数看这一项) */
     REFERER,
-    UA_PLUS_REFERER,
+
+    /** Referer + UA 一起补(单补 Referer 仍被拒时的最后一档) */
+    REFERER_PLUS_UA,
 }
 
 /**
@@ -50,7 +53,7 @@ enum class ProbeTactic {
  *
  * <p>设计取向:
  * <ul>
- *   <li>**只在有希望的方向上重试**。403 才换 UA/Referer;5xx、超时、404 换头必然无用,
+ *   <li>**只在有希望的方向上重试**。403 才换身份(先 Referer 后加 UA);5xx、超时、404 换头必然无用,
  *       一次都不多试 —— 探测是和播放抢带宽的,乱重试会把起播拖慢。</li>
  *   <li>**冷却按失败性质分档**:鉴权类(这个站确实挑头)冷却久一点,
  *       网关/网络类冷却短(可能只是抖动,过几分钟还要能测);
@@ -63,8 +66,16 @@ object ProbeStrategy {
     /** 一条地址最多试几档(含默认档):再多就是在烧用户的带宽 */
     const val MAX_ATTEMPTS = 3
 
-    /** 鉴权类(403 换完所有头仍失败)的站点冷却:这站挑头,短期内别再陪它玩 */
-    const val COOL_DOWN_FORBIDDEN_MS = 30L * 60 * 1000
+    /**
+     * 鉴权类(403 把身份档位用尽仍失败)的站点冷却。
+     *
+     * <p>⚠️ 第一版这里是 30 分钟,真机立刻误伤:1080zyk 那条线因为"我们只试了 UA 那一档"
+     * 就被整个排除在探测之外 30 分钟(`probe-skip reason=host-cooldown`)。
+     * 冷却判的是"这个站拒绝被探测",而我们**试错方向**的时候不该判它 ——
+     * 所以顺序修好(Referer 优先)之后,时长也压到 10 分钟:一波观看内不再纠缠,
+     * 换一部片又不给机会就太难看。
+     */
+    const val COOL_DOWN_FORBIDDEN_MS = 10L * 60 * 1000
 
     /** 网关/网络类冷却:短到不影响下一次看片,又能挡住一波抖动里的连环重试 */
     const val COOL_DOWN_TRANSIENT_MS = 3L * 60 * 1000
@@ -72,11 +83,14 @@ object ProbeStrategy {
     /**
      * 这一档失败后,下一档用什么身份重试;返回 null = 别再试了。
      *
-     * <p>`alreadyHasUa` / `alreadyHasReferer` 用来跳过"换了等于没换"的档 ——
-     * 否则源站本来就配了 UA 时,我们会拿同一个 UA 再打一次,白烧一次请求。
+     * <p>顺序是 **Referer 先、UA 后**,这条被真机纠正过:第一版按"先补 UA"做,
+     * v1.1.36 日志里 `probe-retry … to=BROWSER_UA` 之后仍然 403,
+     * 而从 PC 上对同一个地址做对照(none / ua / ref / ua+ref **全部 200**)
+     * ⇒ 这些聚合 CDN 卡的不是 UA。防盗链最常看的就是 Referer,所以它排第一。
      *
-     * <p>阶梯**单调**(补过的头不会又被拆掉),否则 UA→Referer→UA… 会绕圈,
-     * 只能靠 [MAX_ATTEMPTS] 截断 —— 那就是白烧两次带宽换一个"我们试过了"。
+     * <p>`alreadyHasUa` / `alreadyHasReferer` 用来跳过"换了等于没换"的那一档 ——
+     * 源站本来就配了 Referer 时再"补 Referer"就是拿同一个请求打第二遍,白烧一次带宽。
+     * 阶梯**单调**,补过的头不会被拆掉。
      */
     @JvmStatic
     fun nextTactic(
@@ -87,16 +101,15 @@ object ProbeStrategy {
     ): ProbeTactic? {
         if (outcome != ProbeOutcome.FORBIDDEN) return null
         return when (current) {
-            // 源站两个头都配了 yet 被拒 ⇒ 不是缺头,再试同样的请求没有意义
+            // 先补 Referer(聚合 CDN 的防盗链看这一项);源站已配 Referer 就跳过它,只剩 UA 可补
             ProbeTactic.SOURCE_HEADERS -> when {
-                !alreadyHasUa -> ProbeTactic.BROWSER_UA
                 !alreadyHasReferer -> ProbeTactic.REFERER
+                !alreadyHasUa -> ProbeTactic.REFERER_PLUS_UA
                 else -> null
             }
-            // 补了 UA 还被拒 ⇒ 再补 Referer(档名里的 UA 仍然带着)
-            ProbeTactic.BROWSER_UA -> if (alreadyHasReferer) null else ProbeTactic.UA_PLUS_REFERER
-            ProbeTactic.REFERER -> if (alreadyHasUa) null else ProbeTactic.UA_PLUS_REFERER
-            ProbeTactic.UA_PLUS_REFERER -> null
+            // 只补 Referer 仍被拒 ⇒ 再带上 UA(有些站两个都校验)
+            ProbeTactic.REFERER -> if (alreadyHasUa) null else ProbeTactic.REFERER_PLUS_UA
+            ProbeTactic.REFERER_PLUS_UA -> null
         }
     }
 

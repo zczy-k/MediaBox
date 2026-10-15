@@ -60,9 +60,36 @@ object ProbeHostMemory {
     @Synchronized
     fun trackedHosts(): Int = hosts.size
 
+    /** 同时最多记多少个"正在探测中"的地址(超了就放弃去重,不能挡正常探测) */
+    private const val MAX_IN_FLIGHT = 32
+    private val inFlight = HashSet<String>()
+
+    /**
+     * 占住这个地址的探测权;返回 false = 已经有人在探同一条地址。
+     *
+     * <p>真机日志里同一 `index.m3u8` 会在两三百毫秒内被打两次 —— "起播后小探"与"详情页深探"
+     * 各自独立跑,谁也不知道对方在探什么。探测本身是**和播放抢带宽**的,同一条地址探两次
+     * 只是把同一件事做两遍,所以这里做去重;满了就直接放行(宁可多探一次也不能挡路)。
+     */
+    @Synchronized
+    fun beginProbe(url: String): Boolean {
+        if (!inFlight.add(url)) return false
+        if (inFlight.size > MAX_IN_FLIGHT) {
+            inFlight.remove(url)
+            return true
+        }
+        return true
+    }
+
+    @Synchronized
+    fun endProbe(url: String) {
+        inFlight.remove(url)
+    }
+
     /** 测试用:清空 */
     @Synchronized
     fun clearForTest() {
         hosts.clear()
+        inFlight.clear()
     }
 }

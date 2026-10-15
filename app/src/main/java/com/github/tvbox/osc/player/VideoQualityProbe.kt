@@ -28,8 +28,8 @@ import java.io.InputStream
  * 实测档一条都攒不出来 ⇒ 画质升级判定永远拿到 `untriedHigher=0` ⇒ 看着像"源内不换线"。
  * 现在按失败性质分别应对(阶梯与冷却见 [ProbeStrategy]):
  * <ul>
- *   <li>403/401 ⇒ 只在**被拒之后**才补 UA、再补 Referer(源站已配 UA/Referer 时跳过那一档,
- *       绝不拿同一个头再打一次);</li>
+ *   <li>403/401 ⇒ 只在**被拒之后**才补头,先补 Referer、仍被拒再连 UA 一起补
+ *       (源站已配 Referer/UA 时跳过那一档,绝不拿同一个头再打一次);</li>
  *   <li>5xx / 超时 ⇒ 换头无用,不重试,只给站点一个短冷却(可能只是抖动);</li>
  *   <li>404/410 ⇒ 这条直链过期了,一次都不多试,但**不给站点贴标签**;</li>
  *   <li>200 回 HTML / 没有分辨率 ⇒ 内容不可用,同样不冷却站点;</li>
@@ -77,9 +77,6 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
     )
 
     /**
-     * @return 实测画质;探测不到 / 不支持 / 异常一律 null(调用方静默降级)
-     */
-    /**
      * @param budgetMs 这一条线路允许花掉的**总**时间(含所有重试档)。默认按详情页深探的预算;
      *        起播后那条小探测要传自己更小的值,别拿默认值去撑爆自己的 withTimeout。
      */
@@ -89,6 +86,26 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
         budgetMs: Long = DEFAULT_BUDGET_MS,
     ): VideoQualityPolicy.Variant? {
         if (url.isNullOrBlank() || !url.startsWith("http")) return null
+        return withContext(Dispatchers.IO) {
+            // 同一条地址已经有别的探测在跑就退出:两条路径(起播后小探 / 详情页深探)会撞车,
+            // 而探测是和播放抢带宽的,做两遍只是多烧一次
+            if (!ProbeHostMemory.beginProbe(url)) {
+                LOG.i("echo-quality probe-skip reason=in-flight host=" + hostOf(url))
+                return@withContext null
+            }
+            try {
+                probeWithinBudget(url, headers, budgetMs)
+            } finally {
+                ProbeHostMemory.endProbe(url)
+            }
+        }
+    }
+
+    private suspend fun probeWithinBudget(
+        url: String,
+        headers: Map<String, String>,
+        budgetMs: Long,
+    ): VideoQualityPolicy.Variant? {
         return withContext(Dispatchers.IO) {
             val client = OkGoHelper.getItvClient() ?: return@withContext null
             val host = hostOf(url)
@@ -161,10 +178,17 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
                     // 真机踩过:同一地址一次 200、一次 404,而唯一的变量就是 UA(详见 DetailViewModel.probeHeaders)
                     // tactic= 是 2026-10-15 补的:同一个地址会被拿不同身份打几次,
                     // 不打这一档就分不清"源站本来不给"和"我们这一步还没换对头"。
+                    //
+                    // deny= 是**同一批 403 教出来的第二课**:我们连着两版按"缺 UA"猜,
+                    // 真机日志证明补了 UA 仍然 403,而从 PC 拿同一地址不带任何头反倒 200
+                    // ⇒ 光有状态码推不出原因。CDN 拒绝时几乎总会在头/体里写为什么
+                    // (Server、X-Blocked、"Access denied…referer"),不读就永远在猜。
                     val fu = response.request.url
                     LOG.i(
                         "echo-quality probe-failed http=" + response.code +
                             " ua=" + uaTag(headers) + " tactic=" + tactic.name +
+                            " server=" + response.header("Server").orEmpty() +
+                            " deny=" + denyHint(response) +
                             " final=" + fu.host + fu.encodedPath
                     )
                     return Attempt(null, ProbeStrategy.classifyHttp(response.code), response.code)
@@ -282,18 +306,16 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
     private fun applyTactic(base: Map<String, String>, tactic: ProbeTactic, url: String): Map<String, String> {
         if (tactic == ProbeTactic.SOURCE_HEADERS) return base
         val out = LinkedHashMap(base)
-        if (!hasHeader(out, "User-Agent") &&
-            (tactic == ProbeTactic.BROWSER_UA || tactic == ProbeTactic.UA_PLUS_REFERER)
-        ) {
-            // 用一个**固定**的常见浏览器 UA(与字幕抓取同一常量),不用 UA.random():
-            // 随机池里抽到什么取决于运气,探测结果就不可复现,失败也就无从对照
-            out["User-Agent"] = Utils.UaWinChrome
-        }
         if (!hasHeader(out, "Referer") &&
-            (tactic == ProbeTactic.REFERER || tactic == ProbeTactic.UA_PLUS_REFERER)
+            (tactic == ProbeTactic.REFERER || tactic == ProbeTactic.REFERER_PLUS_UA)
         ) {
             // Referer 取该地址自己的 origin:CDN 挡裸取时多数校验的就是这一项
             originOf(url)?.let { out["Referer"] = it }
+        }
+        if (!hasHeader(out, "User-Agent") && tactic == ProbeTactic.REFERER_PLUS_UA) {
+            // 用一个**固定**的常见浏览器 UA(与字幕抓取同一常量),不用 UA.random():
+            // 随机池里抽到什么取决于运气,探测结果就不可复现,失败也就无从对照
+            out["User-Agent"] = Utils.UaWinChrome
         }
         return out
     }
@@ -371,6 +393,28 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
         } catch (t: Throwable) {
             null
         }
+    }
+
+    /**
+     * 拒绝原因摘要:先取错误体第一行(CDN 常直接写 "Access denied...referer/banned/UA"),
+     * 再看几个常见的拒绝头。**只读 200 字节**(`peekBody` 不动真实响应流),
+     * 因为拒绝页可能是几 KB 的 HTML。
+     *
+     * <p>这条是给"别再猜"用的:前两版都按"缺 UA"猜方向,日志里只有状态码,
+     * 结果改了一版仍不明白为什么 403。
+     */
+    private fun denyHint(response: okhttp3.Response): String {
+        val body = try {
+            response.peekBody(200).string().lineSequence()
+                .firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+        } catch (t: Throwable) {
+            ""
+        }
+        val heads = listOf(
+            "X-Blocked", "X-Forbidden-Reason", "X-Tengine-Error", "WWW-Authenticate", "X-Powered-By",
+        ).mapNotNull { name -> response.header(name)?.take(40)?.let { name + "=" + it } }.joinToString(" ")
+        val text = if (body.isNotEmpty()) body else heads
+        return text.replace('\n', ' ').replace('"', '\'').ifBlank { "-" }.take(90)
     }
 
     /**
