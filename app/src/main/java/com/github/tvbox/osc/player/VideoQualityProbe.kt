@@ -413,25 +413,23 @@ class VideoQualityProbe(private val budgetBytes: Int = DEFAULT_BUDGET_BYTES) {
     }
 
     /**
-     * 拒绝原因摘要:先取错误体第一行(CDN 常直接写 "Access denied...referer/banned/UA"),
-     * 再看几个常见的拒绝头。**只读 200 字节**(`peekBody` 不动真实响应流),
-     * 因为拒绝页可能是几 KB 的 HTML。
+     * 拒绝原因摘要。**只读 600 字节**(`peekBody` 不动真实响应流),因为拒绝页可能是几 KB 的 HTML。
      *
-     * <p>这条是给"别再猜"用的:前两版都按"缺 UA"猜方向,日志里只有状态码,
-     * 结果改了一版仍不明白为什么 403。
+     * <p>这条是给"别再猜"用的:前两版都按"缺 UA"猜方向,日志里只有状态码,改了一版仍不明白为什么 403。
+     * ⚠️ 第一版直接取错误体**第一行**,真机打回来的是 `deny=<!DOCTYPE html>`(这些站回的是 HTML 拒绝页,
+     * 第一行永远是 doctype)⇒ 等于没说话。去标签、优先定位带原因关键词的那一小段,
+     * 判据都在 [ProbeStrategy.denySummary]。
      */
     private fun denyHint(response: okhttp3.Response): String {
         val body = try {
-            response.peekBody(200).string().lineSequence()
-                .firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+            response.peekBody(600).string()
         } catch (t: Throwable) {
             ""
         }
         val heads = listOf(
             "X-Blocked", "X-Forbidden-Reason", "X-Tengine-Error", "WWW-Authenticate", "X-Powered-By",
         ).mapNotNull { name -> response.header(name)?.take(40)?.let { name + "=" + it } }.joinToString(" ")
-        val text = if (body.isNotEmpty()) body else heads
-        return text.replace('\n', ' ').replace('"', '\'').ifBlank { "-" }.take(90)
+        return ProbeStrategy.denySummary(body, heads)
     }
 
     /**

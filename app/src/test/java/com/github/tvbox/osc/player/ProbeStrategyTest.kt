@@ -145,6 +145,38 @@ class ProbeStrategyTest {
     fun `重试上限不超过阶梯长度`() {
         assertTrue(ProbeStrategy.MAX_ATTEMPTS <= ProbeTactic.entries.size)
     }
+
+    /**
+     * `deny=` 的第一版真机打回来是 `<!DOCTYPE html>` —— 这些站回的是 HTML 拒绝页,
+     * 第一行永远是 doctype,等于什么也没说。判据见 [ProbeStrategy.denySummary]。
+     */
+    @Test
+    fun `HTML 拒绝页要抠出真正的那句话`() {
+        val page = "<!DOCTYPE html><html><head><title>403</title></head><body>" +
+            "<script>var x=1;</script><h1>Access Denied</h1>" +
+            "<p>Referer check failed, request from 1.2.3.4 is blocked</p></body></html>"
+        val hint = ProbeStrategy.denySummary(page, null)
+        assertFalse("不能再是 doctype", hint.startsWith("<"))
+        assertTrue("要带上拒绝原话: $hint", hint.contains("Access Denied"))
+        assertTrue("定位到原因句: $hint", hint.contains("Referer"))
+    }
+
+    @Test
+    fun `纯文本体直接用而空体才退回头里的提示`() {
+        assertEquals("token expired", ProbeStrategy.denySummary("token expired", "X-Tengine-Error=bx"))
+        assertEquals(
+            "X-Tengine-Error=bx",
+            ProbeStrategy.denySummary("<!doctype html><html><body></body></html>", "X-Tengine-Error=bx"),
+        )
+        assertEquals("什么都没给时不留空行", "-", ProbeStrategy.denySummary("", ""))
+    }
+
+    @Test
+    fun `中文拒绝页也能定位`() {
+        val page = "<html><body><div>导航 首页 频道</div><span>您访问的地址已被禁止,请勿频繁请求</span></body></html>"
+        val hint = ProbeStrategy.denySummary(page, null)
+        assertTrue("该抓到" + "禁止: $hint", hint.contains("禁止"))
+    }
 }
 
 /** 站点记忆是纯进程内提示缓存:要能记起、能过期、并发访问不崩,还要能挡住同一条地址的重复探测 */

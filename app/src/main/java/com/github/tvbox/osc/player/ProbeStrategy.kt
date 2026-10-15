@@ -80,6 +80,13 @@ object ProbeStrategy {
     /** 网关/网络类冷却:短到不影响下一次看片,又能挡住一波抖动里的连环重试 */
     const val COOL_DOWN_TRANSIENT_MS = 3L * 60 * 1000
 
+    /** CDN 自述拒绝原因时最常见的词(中英都收;只为把原话定位到,不做翻译不做判断) */
+    private val DENY_REASON = Regex(
+        "denied|forbidden|unauthoriz|not allowed|blocked?|banned|expire|expired|invalid token|token|referer|referrer" +
+            "|禁止|拒绝|无权|过期|到期|频繁|限制|防盗",
+        RegexOption.IGNORE_CASE,
+    )
+
     /**
      * 这一档失败后,下一档用什么身份重试;返回 null = 别再试了。
      *
@@ -139,5 +146,37 @@ object ProbeStrategy {
         code == 404 || code == 410 || code == 415 -> ProbeOutcome.NOT_FOUND
         code in 500..599 -> ProbeOutcome.SERVER
         else -> ProbeOutcome.CONTENT_UNUSABLE
+    }
+
+    /**
+     * 从 CDN 的拒绝响应里**抠出能读的原因**(2026-10-15 真机教训)。
+     *
+     * <p>第一版只取错误体第一行,真机打回来的是 `deny=<!DOCTYPE html>` —— 因为这类站
+     * 回的是 HTML 拒绝页,第一行永远是 doctype,等于什么也没说。
+     * 这里先去掉标签与脚本/样式块、折叠空白,再**优先取带原因关键词的那一句**;
+     * 一句都没有就退回整段摘要,段落也为空时才用头里的提示(如 X-Tengine-Error)。
+     *
+     * <p>关键词表按"防盗链最常见的自述"收:referer / token / expire / ban / deny /
+     * forbidden / block / unauthorized,加上中文侧的 禁止 / 拒绝 / 过期 / 无权 / 频繁 / 限制。
+     * 不做翻译、不做解读 —— 这条日志的唯一职责是把 CDN 自己的话带到现场。
+     */
+    @JvmStatic
+    fun denySummary(body: String?, headerHints: String? = null): String {
+        val stripped = body.orEmpty()
+            .replace(Regex("(?is)<(script|style)[^>]*>.*?</\\1>"), " ")
+            .replace(Regex("(?s)<[^>]*>"), " ")
+            .replace(Regex("&[a-z]+;|&#\\d+;"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        if (stripped.isEmpty()) return headerHints.orEmpty().ifBlank { "-" }.take(90)
+        val hit = DENY_REASON.find(stripped)?.value
+        val text = if (hit != null) {
+            // 取关键词所在的那一小段(前后各留一点),而不是从页头截起 —— 前面往往是导航文案
+            val at = stripped.indexOf(hit).coerceAtLeast(0)
+            stripped.substring(maxOf(0, at - 30), minOf(stripped.length, at + hit.length + 55))
+        } else {
+            stripped.take(60)
+        }
+        return text.replace('\n', ' ').replace('"', '\'')
     }
 }
