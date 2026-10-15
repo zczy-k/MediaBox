@@ -63,13 +63,16 @@ final class PlaybackAttemptState {
     int switchLineGraceLeft = 0;
 
     /**
-     * 上一次换线是不是"它还在推进、只是我们没等到"(宽限用尽才放弃)。
+     * 本次换线**没有线路本身的坏证据**(2026-10-15 分段归因)。两种来源:
+     * ①宽限用尽才放弃、而它的缓冲一直在长 —— 是"我没等到",不是"它死了";
+     * ②换线发生时地址根本还没交给内核(卡在站点不答话、本地链路、或我们自己的 m3u8 净化里),
+     * 这条线路压根还没被试过。
      *
-     * <p>真值时线路侧**只记时刻、不累计连续失败**:我们没有它"死了"的证据,只有"我没等到"。
-     * 当成失败会二次伤害 —— 一条首帧本来就慢的高码率线会被越换越后、再也轮不到。
+     * <p>真值时线路侧**只记时刻、不累计连续失败**:当成失败会二次伤害 ——
+     * 一条本来好好的线会因为"这个站今天很慢"被越排越后、再也轮不到。
      * 一次性:被 {@code tryNextLine} 读走即清零,免得污染后面的换线。
      */
-    boolean switchLineGaveUpWhileProgressing = false;
+    boolean switchLineLineFaultUnproven = false;
 
     final Set<String> triedLineFlags = new HashSet<>();
 
@@ -208,6 +211,23 @@ final class PlaybackAttemptState {
      */
     int switchLineLastBuffered = -1;
 
+    /**
+     * 起播分段的三个时刻(2026-10-15 分段计时,配合 {@link PlayStage}),0 = 还没走到。
+     *
+     * <p>{@code stageAnsweredAt} = 爬虫的结果被采纳(过期/换源中那些都不算,所以归属是对的);
+     * {@code stagePurifyAt} = m3u8 净化开始拉它自己的播放列表;{@code stageKernelAt} = 地址定稿交给内核。
+     * 之前只有一把总秒表,超时后无法回答"到底慢在哪一段" ⇒ 既不敢调阈值,也冤枉过线路。
+     */
+    long stageAnsweredAt = 0L;
+
+    /**
+     * 取流请求**发起**的时刻(与 {@link #resolveStartElapsed} 同源,但那个是消费式的、读走就清零)。
+     * 分段日志要算"爬虫等了多久",所以必须留一份不被消费的原件。
+     */
+    long stageRequestedAt = 0L;
+    long stagePurifyAt = 0L;
+    long stageKernelAt = 0L;
+
     /** 新一次播放的清场:重试阶梯 + 内核/解码自动态 + 起播标记 */
     void beginNewPlay() {
         playbackStarted = false;
@@ -215,7 +235,11 @@ final class PlaybackAttemptState {
         everHadVideoTrack = false;
         qualityRecorded = false;
         playTimeoutBasePosition = 0;
-        switchLineGaveUpWhileProgressing = false;
+        switchLineLineFaultUnproven = false;
+        stageRequestedAt = 0L;
+        stageAnsweredAt = 0L;
+        stagePurifyAt = 0L;
+        stageKernelAt = 0L;
         // 宽限额度**只在这里发**,不在 startSwitchLinePlayTimeout 里发:那个函数会被多个入口
         // 重复调用(汇合点 playUrl 与页面桥各一次,同址重播还再来),在那里发等于每次重播都续一次命,
         // "17 秒封顶"就变成"最长不确定"。花完之后的重播走原来的"到点就切" —— 宁可少等不可无限等。

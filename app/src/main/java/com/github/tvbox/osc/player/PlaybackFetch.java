@@ -89,6 +89,10 @@ final class PlaybackFetch {
                     return;
                 }
                 controller.cancelResolvePlayUrlTimeout();
+                controller.markStageAnswered();
+                // 分段计时:这一刻起"爬虫已经答话"。只有走到这里才算采纳
+                // (上面的过期/换源中校验都已 return),所以"站点答得慢不慢"的样本归属才正确。
+                controller.markStageAnswered();
                 // 线路健康"取流耗时"上报(2026-10-13,方案 A 接线)。
                 // 只有走到这里才算"结果被采纳"(上面的过期/换源中校验都已通过)⇒ 样本归属正确。
                 recordResolveElapsed(info);

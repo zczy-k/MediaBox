@@ -515,6 +515,16 @@ public class PlaybackController {
         }
 
         @Override
+        public PlayStage playStage() {
+            return PlaybackController.this.playStage();
+        }
+
+        @Override
+        public long stageElapsedMs() {
+            return PlaybackController.this.stageElapsedMs();
+        }
+
+        @Override
         public boolean isPlaybackStarted() {
             return PlaybackController.this.isPlaybackStarted();
         }
@@ -710,8 +720,16 @@ public class PlaybackController {
         long armedAt = st.playArmElapsed;
         if (armedAt > 0L) {
             st.playArmElapsed = 0L;
+            long now = android.os.SystemClock.elapsedRealtime();
             VodInfo startedVod = vod();
-            LOG.i("echo-firstframe ms=" + (android.os.SystemClock.elapsedRealtime() - armedAt)
+            // 分段耗时(-1 = 这一段测不到,不是零):py 爬虫的 HTTP 发生在 Python 内部,
+            // Java 只见进出,所以 spider 段是整块、不假装能拆出"发出去/等回包"。
+            LOG.i("echo-firstframe ms=" + (now - armedAt)
+                    + " total=" + span(st.stageRequestedAt, now)
+                    + " spider=" + span(st.stageRequestedAt, st.stageAnsweredAt)
+                    + " local=" + span(st.stageAnsweredAt, st.stagePurifyAt > 0L ? st.stagePurifyAt : st.stageKernelAt)
+                    + " purify=" + span(st.stagePurifyAt, st.stageKernelAt)
+                    + " player=" + span(st.stageKernelAt, now)
                     + " line=" + (startedVod == null ? "?" : startedVod.playFlag));
         }
         // 自适应画质:稳定期计时起点(升档门控"进集 ≥60s")
@@ -755,6 +773,9 @@ public class PlaybackController {
         // 线路健康:记下本次取流的发起时刻,结果被接受时算出耗时上报(见 PlaybackFetch)。
         // 取流请求即将发出,这里是最贴近"这个源开始答话"的起点。
         st.resolveStartElapsed = android.os.SystemClock.elapsedRealtime();
+        // 原件留一份:resolveStartElapsed 是消费式的(结果被采纳就清零),
+        // 而超时日志要能回答"爬虫那一段到底等了多久"
+        st.stageRequestedAt = st.resolveStartElapsed;
         timeouts.startResolvePlayUrlTimeout(getResolvePlayUrlTimeoutMs());
     }
 
@@ -820,6 +841,46 @@ public class PlaybackController {
     /** 只取消"取流超时"(取流结果已到达时;换线播放超时另计,不能一起取消) */
     public void cancelResolvePlayUrlTimeout() {
         timeouts.cancelResolvePlayUrlTimeout();
+    }
+
+    /** 爬虫结果被采纳的时刻(分段计时用;只有过了过期与换源中校验才会走到这里) */
+    public void markStageAnswered() {
+        if (st.stageAnsweredAt == 0L) st.stageAnsweredAt = android.os.SystemClock.elapsedRealtime();
+    }
+
+    /** 当前卡在哪一段(站点不答话 / 本地链路 / 净化在拉列表 / 已交给内核) */
+    public PlayStage playStage() {
+        // "答没答话"用 stageAnsweredAt 判,不用 resolveStartElapsed:后者是消费式的
+        // (结果被采纳就清零),拿它判会把"已采纳"和"根本没发起"混成同一种状态
+        return PlayStages.of(st.stageAnsweredAt == 0L, st.stagePurifyAt != 0L, st.stageKernelAt != 0L);
+    }
+
+    /** 本段已经等了多久(超时日志要说清"慢在哪一段、已经慢了多少") */
+    public long stageElapsedMs() {
+        return span(stageMarkFor(playStage()), android.os.SystemClock.elapsedRealtime());
+    }
+
+    /**
+     * 两个时刻之间的跨度;任一端没记到就返回 **-1**(不是 0)。
+     * 分段数据里"这一段没测到"必须看得出来 —— 把没测到写成 0 就是在编造一个更快的分布。
+     */
+    private static long span(long from, long to) {
+        return from <= 0L ? -1L : Math.max(-1L, to - from);
+    }
+
+    private long stageMarkFor(PlayStage stage) {
+        switch (stage) {
+            case SPIDER_WAIT:
+                return st.stageRequestedAt;
+            case LOCAL_HANDOFF:
+                return st.stageAnsweredAt;
+            case PURIFY_IN_FLIGHT:
+                return st.stagePurifyAt;
+            case PLAYER_START:
+                return st.stageKernelAt;
+            default:
+                return 0L;
+        }
     }
 
     /** 预览态启用/全屏禁用自动换线(全屏时用户在看画面,不该被换线打断) */
@@ -1270,7 +1331,10 @@ public class PlaybackController {
             return;
         }
         LOG.i("echo-playM3u8:" + url);
-        // 净化链是唯一不走 goPlayUrl 的起播路径(净化完成回调 startPlayUrl),起播前由页面桥校验代际
+        // 净化链唯一不走 goPlayUrl 的起播路径(净化完成回调 startPlayUrl),起播前由页面桥校验代际
+        // 记下这一刻:净化要**自己再拉 1~2 次网络**(master 列表两次),而它原本没有自己的计时器,
+        // 慢在它身上的话会被算成"这条线路起播失败" —— 分段就是为了把它认出来。
+        st.stagePurifyAt = android.os.SystemClock.elapsedRealtime();
         if (view != null) view.playM3u8(url, headers, playUrlGeneration);
         // 净化期间先记下起点地址,否则净化源上 autoRetry/retryAfterStartedError 找不到可重播地址
         setWebPlayUrl(url);
@@ -1337,6 +1401,9 @@ public class PlaybackController {
             return;
         }
         if (view == null || !view.isPageAlive()) return;
+        // 地址定稿、即将交给内核 —— 从这里往后的等待才真的只可能是"这条流出不出画面"。
+        // 净化链完成后也是回到这里,所以这一刻同时意味着净化已经回来。
+        st.stageKernelAt = android.os.SystemClock.elapsedRealtime();
         // 调用方与解析回调同帧或同线程 ⇒ 本地址归属当前轮,在排队前签发代际(见 playUrlGeneration 注释)
         playUrlGeneration = resolver.currentGen();
         final String finalUrl = url;

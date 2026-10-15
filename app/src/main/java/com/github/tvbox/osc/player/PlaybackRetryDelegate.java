@@ -70,6 +70,12 @@ final class PlaybackRetryDelegate {
         /** 已缓冲百分比(内核无关口径;取不到返回 -1)——"这条线还在进数据"的唯一硬证据 */
         int bufferedPercent();
 
+        /** 当前卡在哪一段(站点不答话 / 本地链路 / 净化在拉列表 / 已交给内核) */
+        PlayStage playStage();
+
+        /** 本段已经等了多久(毫秒;取不到起点返回 -1) */
+        long stageElapsedMs();
+
         boolean isPlaybackStarted();
 
         /** 总闸下本次是否允许跨内容复用内核(内核在、未报错)。重试阶梯的"先释放再重播"以它为准;软解回退不查(改解码必须重建) */
@@ -509,11 +515,11 @@ final class PlaybackRetryDelegate {
             // 2026-10-15 加第四种情形:换线是**等起播超时**触发的,而超时时这条线还在进数据
             // (宽限预算用尽)⇒ 我们手上只有"我没等到",没有"它死了"。这种同样只记时刻不累计,
             // 否则一条首帧本来就慢的高码率线会被越换越后、再也轮不到(一次耐心不足要一直还债)。
-            boolean gaveUpWhileProgressing = st.switchLineGaveUpWhileProgressing;
-            st.switchLineGaveUpWhileProgressing = false;
+            boolean lineFaultUnproven = st.switchLineLineFaultUnproven;
+            st.switchLineLineFaultUnproven = false;
             LineHealthRecorder.INSTANCE.recordFailure(
                     vod.sourceKey, vod.id, currentFlag,
-                    st.lastFailureNetwork, st.userPickedLine, gaveUpWhileProgressing);
+                    st.lastFailureNetwork, st.userPickedLine, lineFaultUnproven);
         }
         List<String> lineFlags = EpisodeMatcher.lineFlagsInDisplayOrder(vod);
         // 候选 = **全部**未试且带剧集的线路(跨"当前线路之前/之后"统一取)。
@@ -794,7 +800,13 @@ final class PlaybackRetryDelegate {
         PlaybackAttemptState st = host.attemptState();
         if (maybeRollbackUpgrade("resolve-timeout")) return;
         if (retryWithFreshResolve("resolveTimeout")) return;
-        LOG.i("echo-resolvePlayUrl timeout, try next line");
+        // 分段归因(2026-10-15):取流超时时地址**还没到手**,这条线路根本没被试过 ——
+        // 慢的是站点不答话、或我们自己的本地链路。把它记成"线路失败"是纯粹的冤枉
+        // (py/js 源冷启动尤其中招),所以下面这次换线一律不累计连续失败。
+        PlayStage stage = host.playStage();
+        LOG.i("echo-resolvePlayUrl timeout, try next line stage=" + stage.tag()
+                + " waited=" + host.stageElapsedMs());
+        st.switchLineLineFaultUnproven = !stage.blamesTheLine();
         host.cancelPlayRequest();
         host.stopParse();
         // 2026-10-14 真机修复(线路切换缺陷):用户手选的线**取流超时**时,不再"只报错停留",
@@ -836,7 +848,12 @@ final class PlaybackRetryDelegate {
         int buffered = host.bufferedPercent();
         LineStartGraceDecision decision = LineStartGracePolicy.decide(
                 host.isPlaybackStarted(), state, buffered, st.switchLineLastBuffered, st.switchLineGraceLeft);
-        LOG.i("echo-switchLinePlay timeout state=" + state + " started=" + st.playbackStarted
+        // 分段归因(2026-10-15):这个定时器是在 playUrl 入口 arm 的,而净化链(m3u8 要自己再拉
+        // 1~2 次网络)发生在它之后 —— 所以"超时"完全可能是**我们还在拉播放列表**,而不是这条流不行。
+        // 只有 stage=player-start(地址确实交给内核了)才有资格把账记到线路头上。
+        PlayStage stage = host.playStage();
+        LOG.i("echo-switchLinePlay timeout stage=" + stage.tag() + " stageWaited=" + host.stageElapsedMs()
+                + " state=" + state + " started=" + st.playbackStarted
                 + " buffered=" + buffered + " last=" + st.switchLineLastBuffered
                 + " graceLeft=" + st.switchLineGraceLeft + " decision=" + decision);
         // 记下这一拍的读数,下一拍比增量(必须先取到决策:决策用的是上一拍的值)
@@ -851,8 +868,9 @@ final class PlaybackRetryDelegate {
             host.startSwitchLineGraceTimeout();
             return;
         }
-        // 走到这里就是要换线;SWITCH_WAS_PROGRESSING 时把"我没等到"与"它死了"分开记
-        st.switchLineGaveUpWhileProgressing = decision.gaveUpWhileProgressing();
+        // 走到这里就是要换线。两种"不算线路失败":缓冲确实在长(我没等到)、
+        // 以及地址还没交给内核(慢在站点/本地链路/净化)
+        st.switchLineLineFaultUnproven = decision.gaveUpWhileProgressing() || !stage.blamesTheLine();
         host.stopParse();
         if (st.hasAutoSwitchedPlayer) {
             if (!tryNextLineIfEnabled()) reportExhausted();
