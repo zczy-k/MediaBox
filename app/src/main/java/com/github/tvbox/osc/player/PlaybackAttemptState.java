@@ -47,6 +47,30 @@ final class PlaybackAttemptState {
      */
     long resolveStartElapsed = 0L;
 
+    /**
+     * 本轮"把地址交给播放器"的时刻(首帧耗时埋点起点,2026-10-15)。
+     *
+     * <p>{@link #resolveStartElapsed} 量的是**取流拿地址**多久,不含内核 prepare 到第一帧那一段 ——
+     * 而"高分辨率线路起播慢"恰恰慢在这段。没有这个数就只能按线路标签猜谁该多等;攒够样本后,
+     * 宽限预算可以按这条线的历史首帧耗时自适应。消费式读取(见 {@code markPlaybackStarted})。
+     */
+    long playArmElapsed = 0L;
+
+    /**
+     * 换线后等起播的**剩余宽限次数**(见 {@link LineStartGracePolicy}):每次"还在进数据"的复查消耗一次,
+     * 由 {@code startSwitchLinePlayTimeout} 发满额度。
+     */
+    int switchLineGraceLeft = 0;
+
+    /**
+     * 上一次换线是不是"它还在推进、只是我们没等到"(宽限用尽才放弃)。
+     *
+     * <p>真值时线路侧**只记时刻、不累计连续失败**:我们没有它"死了"的证据,只有"我没等到"。
+     * 当成失败会二次伤害 —— 一条首帧本来就慢的高码率线会被越换越后、再也轮不到。
+     * 一次性:被 {@code tryNextLine} 读走即清零,免得污染后面的换线。
+     */
+    boolean switchLineGaveUpWhileProgressing = false;
+
     final Set<String> triedLineFlags = new HashSet<>();
 
     long lastRetryTime = 0;
@@ -184,6 +208,7 @@ final class PlaybackAttemptState {
         everHadVideoTrack = false;
         qualityRecorded = false;
         playTimeoutBasePosition = 0;
+        switchLineGaveUpWhileProgressing = false;
         resolveStartElapsed = 0L;
         allowSwitchPlayer = true;
         hasAutoSwitchedPlayer = false;

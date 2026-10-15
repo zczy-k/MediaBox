@@ -69,6 +69,15 @@ final class PlaybackTimeouts {
         handler.sendEmptyMessageDelayed(MSG_SWITCH_LINE_PLAY_TIMEOUT, SWITCH_LINE_PLAY_TIMEOUT_MS);
     }
 
+    /**
+     * 宽限期复查(2026-10-15):到点时若"还在准备且缓冲真在长",不按失败处理,而是再问一次。
+     * 判据与封顶见 {@link LineStartGracePolicy} —— 这不是把秒表调长,是把"没起来"和"还没起来完"分开。
+     */
+    void startSwitchLineGraceTimeout() {
+        cancelPlayTimeout();
+        handler.sendEmptyMessageDelayed(MSG_SWITCH_LINE_PLAY_TIMEOUT, LineStartGracePolicy.CHECK_MS);
+    }
+
     void cancelPlayTimeout() {
         handler.removeMessages(MSG_RESOLVE_PLAY_URL_TIMEOUT);
         handler.removeMessages(MSG_SWITCH_LINE_PLAY_TIMEOUT);

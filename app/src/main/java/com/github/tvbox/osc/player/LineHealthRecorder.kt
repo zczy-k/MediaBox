@@ -59,6 +59,9 @@ object LineHealthRecorder {
      *
      * @param noNetwork 调用方判定的"这次失败像弱网"(最后一次播放错误为网络类)
      * @param userPickedLine 用户是否手动选了这条线路(手动选择不产生"线路无效"证据)
+     * @param gaveUpWhileProgressing **是我们没等到,不是它死了**:换线由"等起播超时"触发,
+     *        而到点时这条线还在准备/缓冲且缓冲百分比在长(宽限预算已用尽)。
+     *        这种证据不足以判定线路无效 —— 高码率线路首帧本来就要更久,记成失败会把它越压越后。
      * @return 是否真的记了(供日志/测试判断闸门是否按预期放行)
      */
     @JvmStatic
@@ -69,6 +72,7 @@ object LineHealthRecorder {
         flag: String?,
         noNetwork: Boolean = false,
         userPickedLine: Boolean = false,
+        gaveUpWhileProgressing: Boolean = false,
     ): Boolean {
         if (!LineHealthMemory.isEnabled()) return false       // 总开关关闭:整条线路健康机制等同不存在
         if (userPickedLine) return false                    // 闸 2:用户选的,不产生证据
@@ -78,12 +82,16 @@ object LineHealthRecorder {
         // 闸 1:两个弱网信号取或(见 KDoc)。断网判定取不到上下文时按"有网"处理
         // (见 SourceHealthMemory.isNetworkAvailable 的容错口径),不会因一次异常而永久抑制累计。
         val weakNetwork = noNetwork || !SourceHealthMemory.isNetworkAvailable()
-        // 闸 1 + 落库
-        LineHealthMemory.recordFail(sourceKey, vodId, flag, System.currentTimeMillis(), weakNetwork)
+        // 闸 1 + 落库。suppressCount 有两个来源:弱网(一次抖动不该把一批好线打成可疑)、
+        // 以及"还在推进时我们主动放弃"(只有"没等到"的证据,没有"它死了"的证据)。
+        val suppressCount = weakNetwork || gaveUpWhileProgressing
+        LineHealthMemory.recordFail(sourceKey, vodId, flag, System.currentTimeMillis(), suppressCount)
         LOG.i(
             "echo-line-health fail key=" + key +
                 " noNetwork=" + noNetwork +
                 " weakNet=" + weakNetwork +
+                " progressing=" + gaveUpWhileProgressing +
+                " suppressed=" + suppressCount +
                 " streak=" + LineHealthMemory.lookup(sourceKey, vodId, flag).failStreak,
         )
         return true

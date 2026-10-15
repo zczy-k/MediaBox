@@ -496,6 +496,25 @@ public class PlaybackController {
         }
 
         @Override
+        public void startSwitchLineGraceTimeout() {
+            PlaybackController.this.startSwitchLineGraceTimeout();
+        }
+
+        @Override
+        public int bufferedPercent() {
+            // 内核无关:所有 AbstractPlayer 都有 getBufferedPercentage;取不到一律 -1
+            // (= "没有证据",于是照旧立刻换线,不会比改动前更宽容)
+            PlaybackViewBridge v = view;
+            if (v == null) return -1;
+            try {
+                AbstractPlayer p = v.mediaPlayer();
+                return p == null ? -1 : p.getBufferedPercentage();
+            } catch (Throwable th) {
+                return -1;
+            }
+        }
+
+        @Override
         public boolean isPlaybackStarted() {
             return PlaybackController.this.isPlaybackStarted();
         }
@@ -686,6 +705,15 @@ public class PlaybackController {
     public void markPlaybackStarted() {
         st.playbackStarted = true;
         cancelPlayTimeout();
+        // 首帧耗时埋点(2026-10-15,观察项):resolveMs 只量到"拿到地址",这段才含 prepare 到第一帧。
+        // 攒够样本前不动现有的固定预算,先让"高分辨率线路到底要等多久"有数可查。
+        long armedAt = st.playArmElapsed;
+        if (armedAt > 0L) {
+            st.playArmElapsed = 0L;
+            VodInfo startedVod = vod();
+            LOG.i("echo-firstframe ms=" + (android.os.SystemClock.elapsedRealtime() - armedAt)
+                    + " line=" + (startedVod == null ? "?" : startedVod.playFlag));
+        }
         // 自适应画质:稳定期计时起点(升档门控"进集 ≥60s")
         retry.noteEpisodeStart();
         // 线路健康的**成功**上报(2026-10-12):归零该线路的连续失败计数。
@@ -770,8 +798,18 @@ public class PlaybackController {
             return;
         }
         cancelPlayTimeout();
-        LOG.i("echo-switchLinePlay start timeout");
+        // 宽限额度在这里发(每次"把地址交给播放器"都是新的一轮):到点时若这条线还在进数据,
+        // 允许再复查 LineStartGracePolicy.MAX_CHECKS 次,而不是 7 秒一到就换线。
+        st.switchLineGraceLeft = LineStartGracePolicy.MAX_CHECKS;
+        st.switchLineGaveUpWhileProgressing = false;
+        st.playArmElapsed = android.os.SystemClock.elapsedRealtime();
+        LOG.i("echo-switchLinePlay start timeout grace=" + st.switchLineGraceLeft);
         timeouts.startSwitchLinePlayTimeout();
+    }
+
+    /** 宽限期内的一次复查(判据仍在 handleSwitchLinePlayTimeout) */
+    void startSwitchLineGraceTimeout() {
+        timeouts.startSwitchLineGraceTimeout();
     }
 
     public void cancelSwitchLinePlayTimeout() {

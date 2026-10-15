@@ -64,6 +64,12 @@ final class PlaybackRetryDelegate {
 
         void cancelPlayTimeout();
 
+        /** 宽限期复查(还在进数据时用它替掉"到点就换线") */
+        void startSwitchLineGraceTimeout();
+
+        /** 已缓冲百分比(内核无关口径;取不到返回 -1)——"这条线还在进数据"的唯一硬证据 */
+        int bufferedPercent();
+
         boolean isPlaybackStarted();
 
         /** 总闸下本次是否允许跨内容复用内核(内核在、未报错)。重试阶梯的"先释放再重播"以它为准;软解回退不查(改解码必须重建) */
@@ -499,9 +505,15 @@ final class PlaybackRetryDelegate {
             // ⚠️ 三道闸全在 LineHealthRecorder 里(userPickedLine / 会话去重 / 弱网抑制),
             //    这里只管"确实是要换掉当前线了"这一个事实 —— 换线即上一条线的失败证据。
             //    noNetwork 从 lastFailureNetwork 取:最后一次错误是网络类 ⇒ 判弱网,只记证据不加 streak。
+            //
+            // 2026-10-15 加第四种情形:换线是**等起播超时**触发的,而超时时这条线还在进数据
+            // (宽限预算用尽)⇒ 我们手上只有"我没等到",没有"它死了"。这种同样只记时刻不累计,
+            // 否则一条首帧本来就慢的高码率线会被越换越后、再也轮不到(一次耐心不足要一直还债)。
+            boolean gaveUpWhileProgressing = st.switchLineGaveUpWhileProgressing;
+            st.switchLineGaveUpWhileProgressing = false;
             LineHealthRecorder.INSTANCE.recordFailure(
                     vod.sourceKey, vod.id, currentFlag,
-                    st.lastFailureNetwork, st.userPickedLine);
+                    st.lastFailureNetwork, st.userPickedLine, gaveUpWhileProgressing);
         }
         List<String> lineFlags = EpisodeMatcher.lineFlagsInDisplayOrder(vod);
         // 候选 = **全部**未试且带剧集的线路(跨"当前线路之前/之后"统一取)。
@@ -817,13 +829,28 @@ final class PlaybackRetryDelegate {
         PlaybackAttemptState st = host.attemptState();
         PlaybackViewBridge view = host.view();
         int state = view == null ? -1 : view.currentPlayState();
-        LOG.i("echo-switchLinePlay timeout state: " + state + ", started: " + st.playbackStarted);
-        if (host.isPlaybackStarted()) {
+        // 宽限判据(2026-10-15):到点先问"这条线还在不在进数据",而不是直接换线。
+        // 高码率线路 prepare 到第一帧常要 8~15 秒,原来 7 秒秒表一响就当它死了 ——
+        // 用户看到的"网速已经起来、正要播却被切走"就是这个。真死线不受影响:
+        // 连不上的地址会一直报 PREPARING 而缓冲百分比始终 0,照样立刻切。
+        int buffered = host.bufferedPercent();
+        LineStartGraceDecision decision = LineStartGracePolicy.decide(
+                host.isPlaybackStarted(), state, buffered, st.switchLineGraceLeft);
+        LOG.i("echo-switchLinePlay timeout state=" + state + " started=" + st.playbackStarted
+                + " buffered=" + buffered + " graceLeft=" + st.switchLineGraceLeft
+                + " decision=" + decision);
+        if (decision == LineStartGraceDecision.STARTED) {
             host.cancelPlayTimeout();
             if (view != null) view.hideTipOnUiThread();
             return;
         }
-        LOG.i("echo-switchLinePlay timeout, try next line");
+        if (decision == LineStartGraceDecision.WAIT_MORE) {
+            st.switchLineGraceLeft--;
+            host.startSwitchLineGraceTimeout();
+            return;
+        }
+        // 走到这里就是要换线;SWITCH_WAS_PROGRESSING 时把"我没等到"与"它死了"分开记
+        st.switchLineGaveUpWhileProgressing = decision.gaveUpWhileProgressing();
         host.stopParse();
         if (st.hasAutoSwitchedPlayer) {
             if (!tryNextLineIfEnabled()) reportExhausted();
