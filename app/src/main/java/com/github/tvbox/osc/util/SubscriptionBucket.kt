@@ -39,6 +39,7 @@ object SubscriptionBucket {
         HawkConfig.SOURCE_HEALTH + "_nolist_",
         "title_index_",
         "search_cache_",
+        "nohit_",
         "line_health_",
     )
 

@@ -45,6 +45,7 @@ class KvDataKindTest {
     fun rebuildableFamilies_areTheOnlyOnesCleared() {
         val rebuildable = listOf(
             "search_cache_奈义日记",
+            "nohit_狮子王",
             "jsRuntime_源A_key",
             "title_index_abcd",
             "line_health_abcd1234",

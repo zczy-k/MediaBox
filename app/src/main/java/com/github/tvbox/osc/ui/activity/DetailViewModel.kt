@@ -12,6 +12,8 @@ import com.github.tvbox.osc.util.CompletenessMemory
 import com.github.tvbox.osc.util.DetailNoListMemory
 import com.github.tvbox.osc.util.SearchSettings
 import com.github.tvbox.osc.util.SearchResultCache
+import com.github.tvbox.osc.util.NoHitSourceCache
+import com.github.tvbox.osc.util.NoHitSourcePolicy
 import com.github.tvbox.osc.util.SourceCompletenessPolicy
 import com.github.tvbox.osc.util.QualityLabelPolicy
 import com.github.tvbox.osc.util.EpisodeMatcher
@@ -334,6 +336,15 @@ class DetailViewModel : ViewModel() {
      * 只在主线程读写(事件回调与 viewModelScope 协程都在 Main),无需并发容器。
      */
     private val fallbackSearchHits = HashMap<String, List<Movie.Video>>()
+
+    /**
+     * 本轮**答过话、却一个同名条目都没给**的源(2026-10-15 零命中短路)。
+     *
+     * <p>与 [fallbackSearchHits] 共用同一套合并写/边界兑现时机(见 [scheduleFallbackHitsSave]):
+     * 逐源落盘会让主线程反复序列化整张表,而"不落盘"就等于这次搜过白搜。
+     * 超时/异常/解析崩**不进这张表** —— 那是源的耐心问题,不是它有没有(见 [NoHitSourcePolicy])。
+     */
+    private val pendingNoHitSources = ArrayList<String>()
 
     // P-完整性方案(2026-10-09):当前片的权威参照系与起播/纠偏状态
     // completenessTitleKey/OwnCount 由 recordCompleteness 在详情就绪时写入
@@ -1611,6 +1622,9 @@ class DetailViewModel : ViewModel() {
         if (searchTitle != title) {
             poolRound = ExpandPoolPolicy.FIRST_ROUND
             searchedSourceKeys.clear()
+            // 换片:上一部的零命中名单在函数开头的 flushFallbackHitsSave() 里已按**旧片名**落盘,
+            // 这里清空才不会把 A 片的"没有"记到 B 片头上
+            pendingNoHitSources.clear()
         }
         searchTitle = title
         // 新一轮搜索 ⇒ 解冻(上一轮可能因为起播成功被冻结过;那条源后来放不出来时还得靠它)
@@ -1660,12 +1674,33 @@ class DetailViewModel : ViewModel() {
         // 手动 ⇒ 一次把搜索范围内的源全部投出(并发由自适应信号量限流,取消的只是批次屏障);
         // 自动兜底路径不变(它要的是"快出第一个候选",扩池阶梯继续保留)。
         //
+        // 零命中短路(2026-10-15)。上一轮里"这个源**答过话**、也确实没给出这部片"是有的,
+        // 而这条事实此前什么都没留下 —— 于是重进同一部片要把这几百个源各烧一次 8 秒超时额度
+        // (真机《狮子王》两分钟:55 答话 / 51 空响应 / 28 超时,给出这部剧的源是个位数)。
+        //
+        // ⚠️ 两条边界(判据见 [NoHitSourcePolicy]):
+        //   ① 只有"确实答过话"才入账,超时/异常/解析崩绝不进 —— 那是源的耐心问题,不是它有没有;
+        //   ② 用户主动点「换源」或手动那一轮**一律穿透**,他的意图就是"还要继续找",
+        //      用缓存少给几个源只会让他认为功能坏了。
+        val knownAbsent = if (NoHitSourcePolicy.allowShortCircuit(userInitiated, manualSwitchActive)) {
+            NoHitSourceCache.knownAbsent(SearchSettings.normalizedTitle(title))
+        } else {
+            emptySet()
+        }
+        val askablePool = if (knownAbsent.isEmpty()) orderedPool else orderedPool.filter { it.key !in knownAbsent }
+        if (knownAbsent.isNotEmpty()) {
+            LOG.i(
+                "echo-source-search known-absent-skip n=" + knownAbsent.size +
+                    " remain=" + askablePool.size + " total=" + orderedPool.size +
+                    " title=" + title + " token=$myToken"
+            )
+        }
         // 搜索范围就是**过滤后的全部可用源**:原先那个"固定截断到 120 个"的退路已随「自动扩池」开关
         // 一起移除 —— 源集合 300+ 时截断会让范围外的源**永远不参与换源**,而它想省的时间
         // 现在已经由"并发按超时占比自适应退让"去省了。
-        val effectiveTotal = orderedPool.size
-        val roundSize = if (manualSwitchActive) effectiveTotal else roundPoolSize(orderedPool.size)
-        val sources = orderedPool.take(roundSize)
+        val effectiveTotal = askablePool.size
+        val roundSize = if (manualSwitchActive) effectiveTotal else roundPoolSize(askablePool.size)
+        val sources = askablePool.take(roundSize)
         // 诊断包靠这行判断"预热到底有没有触发、候选池多大" —— 真机日志被 ROM 屏蔽时,
         // 文件日志(仅 diag 包落盘)是唯一可观测点。前缀 echo-source- 已在 LOG 白名单里。
         // round/pool/total 三者同看,才能确认"动态扩池"真的在逐轮扩大。
@@ -1679,7 +1714,7 @@ class DetailViewModel : ViewModel() {
         // 旧实现会置 sourcesSearching=true + 进度 (0,total),波次循环发现没有新源可投立刻 break 收口,
         // 于是用户看到"进度条一闪就没了、列表一条没多" —— 分不清"已经搜完"还是"点坏了"。
         // 现在:直接给出终态提示(仅用户主动点换源时提示),并解除"不冻结"闩锁,让冻结保护回归。
-        val unsearchedCount = orderedPool.take(effectiveTotal).count { it.key !in searchedSourceKeys }
+        val unsearchedCount = askablePool.take(effectiveTotal).count { it.key !in searchedSourceKeys }
         if (unsearchedCount == 0) {
             LOG.i(
                 "echo-source-search no-new-source total=" + effectiveTotal +
@@ -1704,7 +1739,7 @@ class DetailViewModel : ViewModel() {
         searchJob?.cancel()
         sourcesSearching.value = sources.isNotEmpty()
         relatedVideos.value = emptyList()
-        // 进度分母用**全量源数**(orderedPool.size),不是首轮宽度 sources.size ——
+        // 进度分母用**本轮真正要问的源数**(askablePool.size),不是首轮宽度 sources.size ——
         // 用户要看到的是"共 322 个源、已搜 xx 个"的真实进度,而首轮只投 1/3(108)。
         // 若分母写首轮宽度,进度条一到 108/108 就"满"了,后面扩池的 214 个源无从体现。
         // ⚠️ 分子用**已投源数**而不是 0(2026-10-14):searchedSourceKeys 是同片跨轮累计的,
@@ -1759,7 +1794,7 @@ class DetailViewModel : ViewModel() {
             // 322 个源全部答话、0 命中)。预算用完后其余源只问原词一次 ⇒ 变体收益集中在前几十个源,
             // 因为片名写法差异通常在权重最高的那批源里就能补回来。
             val variantAsks = java.util.concurrent.atomic.AtomicInteger()
-            val poolView = orderedPool.take(effectiveTotal)  // 本轮有效范围(按权重降序);每波只 take 前 N 个并滤掉已投
+            val poolView = askablePool.take(effectiveTotal)  // 本轮有效范围(按权重降序);每波只 take 前 N 个并滤掉已投
             // 查询变体(原词 + 去分隔符 + 去年份 + 去季/版本后缀 + 简繁互转),用于"该源零候选时补发一次"
             val searchVariants = SearchSettings.queryVariants(title)
             var waveSize = roundSize    // 当前波宽度(首轮 = 外层算好的 roundSize)
@@ -2038,7 +2073,7 @@ class DetailViewModel : ViewModel() {
             // 命中回存(2026-10-13):只收**同名**条目,供"同一部片再次进入"秒出候选。
             // 按源覆盖:同一源后到的结果更全(查询变体可能回包多次)。
             val hitSourceKey = data.sourceKey
-            if (!hitSourceKey.isNullOrEmpty() && videos.isNotEmpty()) {
+            if (!hitSourceKey.isNullOrEmpty()) {
                 val sameTitle = videos.filter {
                     !it.id.isNullOrEmpty() && CandidateMatchPolicy.isSameTitleScore(candidateRelevance(it))
                 }
@@ -2047,6 +2082,15 @@ class DetailViewModel : ViewModel() {
                     // 合并写(见 hitsSaveJob):逐源到达就逐源落盘会让主线程反复序列化整张表;
                     // 但**不落盘**就等于"这次搜过的命中白搜"—— 上一版只在搜索全跑完时写一次,
                     // 用户提前退出/换片就把整轮命中丢了,"同一部片再次进入依旧慢"于是复发。
+                    scheduleFallbackHitsSave()
+                    // 这次给出了同名条目 ⇒ 上次那条"没有"必须作废,否则它会一直挡住这个源
+                    pendingNoHitSources.remove(hitSourceKey)
+                    NoHitSourceCache.forget(normalizedSearchTitle(), hitSourceKey)
+                } else if (hitSourceKey != sourceKey) {
+                    // 零命中(2026-10-15):答了话、一个同名条目都没给(空列表,或回的全是别的片名)。
+                    // 判据用的是**同名判定**而不是"列表为空" —— 回了别人的片名同样算这部片它没有。
+                    // 正在播的那条源不记:这部片显然就是从那儿播起来的,记它只会自相矛盾。
+                    pendingNoHitSources.add(hitSourceKey)
                     scheduleFallbackHitsSave()
                 }
             }
@@ -2280,11 +2324,19 @@ class DetailViewModel : ViewModel() {
      * 于是"同一部片再次进入依旧慢"会复发(这正是 2026-10-10 之前的形态)。
      */
     private fun saveFallbackHitsToCache() {
-        if (fallbackSearchHits.isEmpty()) return
         val normalized = SearchSettings.normalizedTitle(searchTitle)
         if (normalized.isEmpty()) return
+        // 零命中名单与命中表同一个合并窗口、同一批边界(开头/换片/冻结/收口)一起兑现
+        if (pendingNoHitSources.isNotEmpty()) {
+            NoHitSourceCache.record(normalized, pendingNoHitSources.toList())
+            pendingNoHitSources.clear()
+        }
+        if (fallbackSearchHits.isEmpty()) return
         SearchResultCache.save(normalized, HashMap(fallbackSearchHits))
     }
+
+    /** 缓存/台账用的片名键(与命中缓存同一份归一化,两边才能同进同退) */
+    private fun normalizedSearchTitle(): String = SearchSettings.normalizedTitle(searchTitle)
 
     /** 当前源 + 已返回的同名影片候选源;不等待仍在进行的搜索,未知候选不增加起播延迟。 */
     private fun knownMatchingSourceCount(currentSourceKey: String): Int {

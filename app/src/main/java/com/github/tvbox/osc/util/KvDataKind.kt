@@ -28,6 +28,7 @@ object KvDataKind {
     private val kinds: List<Pair<String, DataKind>> = listOf(
         // —— 可再生 ——
         "search_cache_" to DataKind.REBUILDABLE,      // 搜索命中缓存：下次搜同一词自然再写
+        "nohit_" to DataKind.REBUILDABLE,             // "这源答过话但没这部片"：清了最坏是把源池重问一遍
         "jsRuntime_" to DataKind.REBUILDABLE,         // JS 运行时编译产物：加载该源时重编译
         "title_index_" to DataKind.REBUILDABLE,       // 拼音索引：搜索/历史/收藏过程中重新积累
         "line_health_" to DataKind.REBUILDABLE,       // 线路健康：可疑态 15 分钟就过期，本就是短周期
