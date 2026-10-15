@@ -312,8 +312,13 @@ public class FileUtils {
     private static final String EXTERNAL_CACHE_KEEP_DIR = "config";
 
     /**
-     * 应用缓存占用(内部缓存 + 外部缓存,不含 {@link #EXTERNAL_CACHE_KEEP_DIR} 用户数据)。
-     * 口径说明:Exo 视频缓存目录 exo-video-cache 位于外部缓存,只统计内部缓存会漏掉绝大部分占用;
+     * 应用缓存占用(内部缓存 + 外部缓存 + {@code files/csp},不含 {@link #EXTERNAL_CACHE_KEEP_DIR} 用户数据)。
+     *
+     * <p>口径必须跟「清除缓存」按钮**实际删的东西**一致:它除了两处缓存目录,还删
+     * {@code files/csp}(爬虫的 jar/so,真机实测 2~8MB)。以前只统计 cache 目录,
+     * 于是"显示 8MB、其实清掉 15MB"—— 数字与行为不一致,用户没法拿它做判断。
+     *
+     * <p>其余口径:Exo 视频缓存目录 exo-video-cache 位于外部缓存,只统计内部缓存会漏掉绝大部分占用;
      * 外部缓存不可用时 getExternalCacheDir() 返回 null,此时不叠加,避免与内部缓存重复计数。
      * 目录递归统计是耗时 IO,须在后台线程调用。
      */
@@ -323,6 +328,7 @@ public class FileUtils {
         if (externalCacheDir != null && !externalCacheDir.getAbsolutePath().equals(getCachePath())) {
             size += directorySize(externalCacheDir, EXTERNAL_CACHE_KEEP_DIR);
         }
+        size += directorySize(new File(getFilePath() + "/csp/"), null);
         return size;
     }
 

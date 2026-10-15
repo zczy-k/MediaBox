@@ -124,6 +124,9 @@ public class LOG {
      * 折成空串语义不变;而 R8 常量折叠后连字面量一起消失。
      */
     private static final String FILE_LOG_NAME = FILE_LOG ? "preload_debug.log" : "";
+
+    /** 落盘日志单文件上限(4MB):到线就轮转成 .1,见 {@link #rotateFileLog} */
+    private static final long FILE_LOG_MAX_BYTES = 4L * 1024L * 1024L;
     private static ExecutorService fileLogExecutor;
 
     private static void fileLog(String level, String msg) {
@@ -143,7 +146,9 @@ public class LOG {
         try {
             fileLogExecutor.execute(() -> {
                 // 每行独立开关文件:保证进程被杀时已写入的内容不丢(排查场景量小,开销可接受)
-                try (FileWriter writer = new FileWriter(new File(AppContextHolder.context().getFilesDir(), FILE_LOG_NAME), true)) {
+                File current = new File(AppContextHolder.context().getFilesDir(), FILE_LOG_NAME);
+                rotateFileLog(current);
+                try (FileWriter writer = new FileWriter(current, true)) {
                     writer.write(line + "\n");
                 } catch (Throwable ignored) {
                     // 落盘失败即放弃:fileLog 自身兜底,不能再走 LOG 以免递归
@@ -152,6 +157,23 @@ public class LOG {
         } catch (Throwable ignored) {
             // 同上:提交落盘任务失败即放弃,防递归
         }
+    }
+
+    /**
+     * 落盘日志的大小闸:超过 {@link #FILE_LOG_MAX_BYTES} 就把当前文件挪成 {@code .1}(旧的 {@code .1} 丢掉),
+     * 从空文件重新写。
+     *
+     * <p>原来只追加、没有上限:诊断包天天装,这个文件就一直长(真机实测已 2.4MB),
+     * 而且它在 {@code files/} 下,「清除缓存」按设计不碰 {@code files/} —— 等于没人管。
+     * 留一份 {@code .1} 而不是直接清空,是因为排查时最需要的往往就是"事故前最后几秒"。
+     */
+    private static void rotateFileLog(File current) {
+        if (current.length() <= FILE_LOG_MAX_BYTES) return;
+        File older = new File(current.getParentFile(), FILE_LOG_NAME + ".1");
+        // 腾不出位置就继续往当前文件写 —— 宁可超限,也不要做出"删了旧的又挪不动"的半截轮转
+        if (older.exists() && !older.delete()) return;
+        //noinspection ResultOfMethodCallIgnored
+        current.renameTo(older);
     }
 
     public static void e(String msg) {
