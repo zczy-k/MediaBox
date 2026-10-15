@@ -40,6 +40,7 @@ object KvDataKind {
         "completeness_sets" to DataKind.ASSET,        // 剧集完整度
         "progress_index_" to DataKind.ASSET,          // 续播进度索引
         "track_mem_" to DataKind.ASSET,               // 音轨/视轨/字幕选择（用户逐片挑过的决定）
+        "bucket_seen" to DataKind.ASSET,              // 订阅桶的"最后被碰到"时钟；丢了最坏是少回收一轮
 
         // —— 用户数据 ——
         "cache_" to DataKind.USER,                    // spider 业务数据：不少源在里面存登录态/token

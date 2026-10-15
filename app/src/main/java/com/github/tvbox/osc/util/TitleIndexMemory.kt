@@ -70,7 +70,7 @@ object TitleIndexMemory {
         } catch (th: Throwable) {
             ""
         }
-        return if (api.isNullOrEmpty()) null else KEY_PREFIX + MD5.string2MD5(api)
+        return SubscriptionBucket.resolveKey(KEY_PREFIX, api)
     }
 
     /** 一条索引项:归一化标题(键)、拼音、原片名、写入时刻 */

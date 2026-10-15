@@ -17,6 +17,7 @@ import com.github.tvbox.osc.util.LOG;
 import com.github.tvbox.osc.util.LanguageManager;
 import com.github.tvbox.osc.util.OkGoHelper;
 import com.github.tvbox.osc.util.PlayerHelper;
+import com.github.tvbox.osc.util.SubscriptionBucket;
 import com.github.tvbox.osc.util.SubtitleCacheJanitor;
 import com.p2p.P2PClass;
 import com.whl.quickjs.android.QuickJSLoader;
@@ -96,6 +97,10 @@ public class App extends Application {
             // 文件名取服务端下发的名字、不会互相覆盖,原本没有任何删除逻辑 ⇒ "看片越多占用越大"。
             // 按 LRU 裁剪到 SubtitleCacheJanitor.MAX_FILES 条,封住上界。
             SubtitleCacheJanitor.trim(getCacheDir());
+            // 订阅桶:把老格式(未规范化地址)的台账搬到新桶名,并回收彻底弃用的仓。
+            // 冷路径(扫全表键名),所以放这条后台线程,不放主线程。
+            SubscriptionBucket.migrateAndReclaim();
+
         }, "startup-cache-purge").start();
     }
 

@@ -3,7 +3,7 @@ package com.github.tvbox.osc.player
 import com.github.tvbox.osc.util.HawkConfig
 import com.github.tvbox.osc.util.KV
 import com.github.tvbox.osc.util.LOG
-import com.github.tvbox.osc.util.MD5
+import com.github.tvbox.osc.util.SubscriptionBucket
 import org.json.JSONObject
 
 /**
@@ -52,7 +52,7 @@ object LineHealthMemory {
             ""
         }
         // 取不到地址时退回固定桶:功能降级为"不分桶",但不因此完全不记
-        return KEY_PREFIX + if (api.isNullOrEmpty()) "default" else MD5.string2MD5(api)
+        return SubscriptionBucket.resolveKey(KEY_PREFIX, api) ?: (KEY_PREFIX + "default")
     }
 
     /**

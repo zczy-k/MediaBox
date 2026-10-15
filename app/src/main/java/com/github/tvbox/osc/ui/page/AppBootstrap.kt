@@ -12,6 +12,7 @@ import com.github.tvbox.osc.util.HawkConfig
 import com.github.tvbox.osc.util.HistoryHelper
 import com.github.tvbox.osc.util.KV
 import com.github.tvbox.osc.util.MD5
+import com.github.tvbox.osc.util.SubscriptionBucket
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -68,6 +69,9 @@ object AppBootstrap {
     fun onApiUrlChanged() {
         ApiConfig.get().invalidateVodConfig()
         SearchViewModel.clearCheckedSources()
+        // 换仓冷路径:把老格式(未规范化地址)的桶搬到新桶名下,并给登记表盖时间戳。
+        // 放 IO 线程 —— 它要扫全表键名,卡在换源 UI 上没有任何收益。
+        scope.launch { SubscriptionBucket.migrateAndReclaim() }
         EventBus.getDefault().post(RefreshEvent(RefreshEvent.TYPE_API_URL_CHANGE))
         retry()
     }

@@ -217,8 +217,7 @@ object SourceWeightMemory {
         } catch (th: Throwable) {
             ""
         }
-        if (api.isNullOrEmpty()) return null
-        return KEY_PREFIX + MD5.string2MD5(api)
+        return SubscriptionBucket.resolveKey(KEY_PREFIX, api)
     }
 
     /** 取权重表(必要时装载)。调用方**必须**持 [lock] */

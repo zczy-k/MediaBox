@@ -125,8 +125,7 @@ object DetailNoListMemory {
         } catch (th: Throwable) {
             ""
         }
-        if (api.isNullOrEmpty()) return null
-        return HawkConfig.SOURCE_HEALTH + "_nolist_" + MD5.string2MD5(api)
+        return SubscriptionBucket.resolveKey(HawkConfig.SOURCE_HEALTH + "_nolist_", api)
     }
 
     /** 取当前桶的内存态(必要时装载)。调用方**必须**持 [lock] */

@@ -40,7 +40,7 @@ object SearchResultCache {
         } catch (th: Throwable) {
             ""
         }
-        return if (api.isNullOrEmpty()) null else "search_cache_" + MD5.string2MD5(api)
+        return SubscriptionBucket.resolveKey("search_cache_", api)
     }
 
     /**
