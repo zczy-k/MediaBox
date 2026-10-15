@@ -20,6 +20,7 @@ import androidx.annotation.NonNull;
 
 import com.github.tvbox.osc.R;
 import android.widget.FrameLayout;
+import com.github.tvbox.osc.bean.Subtitle;
 import com.github.tvbox.osc.bean.VodInfo;
 import com.github.tvbox.osc.data.CacheManager;
 import com.github.tvbox.osc.dlna.CastVideo;
@@ -1009,7 +1010,8 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
     }
 
     /**
-     * 还原"在线字幕"选择:同一发布页里按集号找本集文件,取不到就回落默认链(直链只对当集有效,入库的是发布页)。
+     * 还原"在线字幕"选择:有发布页的按集号在本发布页里挑本集文件;没有发布页的按当时点的那一行地址还原。
+     * 两条路都取不到才回落默认链。
      *
      * <p>发布页 + 直链是两跳异步请求,回来时可能已换集/换源/用户自己选过字幕,故落地前必须过
      * {@link #isSubtitleResultCurrent} 的三道守卫。
@@ -1017,8 +1019,16 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
     private void resolveRememberedOnlineSubtitle(String memoryKey, String record, Runnable fallback) {
         String releaseUrl = TrackMemory.onlineRelease(record);
         // ViewModel 挂在宿主 Activity 上(与字幕面板同一实例);拿不到就回落,不猜
-        if (TextUtils.isEmpty(releaseUrl) || !(mActivity instanceof ViewModelStoreOwner)) {
+        if (!(mActivity instanceof ViewModelStoreOwner)) {
             runOnUi(fallback);
+            return;
+        }
+        // 迅雷 / SubtitleCat 这类来源**直挂字幕文件**:搜索结果一行就是文件本身,没有发布页这一层。
+        // 真机反馈"挑完能显示,退出重进就没了、要手动再点一次" —— 还原路径只认发布页,
+        // 发布页为空就当场回落默认链,于是这类来源的字幕永远恢复不了。
+        // 记录里第三段存的正是用户当时点的那一行地址,直接交给同一个解析器(它认各来源的前缀)。
+        if (TextUtils.isEmpty(releaseUrl)) {
+            resolveRememberedRowSubtitle(memoryKey, TrackMemory.onlinePickUrl(record), fallback);
             return;
         }
         VodInfo.VodSeries series = scheduler.vod() == null ? null
@@ -1045,6 +1055,37 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
                     if (!isSubtitleResultCurrent(memoryKey, episodeKey, decisionSeq)) return;
                     LOG.i("echo-track-memory online subtitle miss, fallback");
                     fallback.run();
+                }));
+    }
+
+    /**
+     * 没有发布页时(迅雷 / SubtitleCat 这类直挂文件的来源)按记录里的"所点行地址"还原。
+     *
+     * <p>哪个前缀属于哪个来源是来源侧的知识,所以这里不自己认前缀,一律交给
+     * {@link SubtitleViewModel#getSubtitleUrl} —— 它与面板点字幕时走的是同一个解析器。
+     */
+    private void resolveRememberedRowSubtitle(String memoryKey, String pickUrl, Runnable fallback) {
+        if (TextUtils.isEmpty(pickUrl)) {
+            LOG.i("echo-track-memory online subtitle has neither release nor row url, fallback");
+            runOnUi(fallback);
+            return;
+        }
+        final String episodeKey = scheduler.progressKey();
+        final int decisionSeq = subtitleDecisionSeq;
+        Subtitle row = new Subtitle();
+        row.setUrl(pickUrl);
+        LOG.i("echo-track-memory online subtitle by row url: " + pickUrl);
+        new ViewModelProvider((ViewModelStoreOwner) mActivity).get(SubtitleViewModel.class)
+                .getSubtitleUrl(row, subtitle -> runOnUi(() -> {
+                    if (!isSubtitleResultCurrent(memoryKey, episodeKey, decisionSeq)) return;
+                    String url = subtitle == null ? null : subtitle.getUrl();
+                    if (TextUtils.isEmpty(url)) {
+                        LOG.i("echo-track-memory online subtitle row url unresolved, fallback");
+                        fallback.run();
+                        return;
+                    }
+                    LOG.i("echo-track-memory online subtitle restored by row url");
+                    setSubtitle(url);
                 }));
     }
 
