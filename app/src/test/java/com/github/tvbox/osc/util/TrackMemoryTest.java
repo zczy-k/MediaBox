@@ -152,10 +152,23 @@ public class TrackMemoryTest {
     public void subtitleSource_emptyInputsRejected() {
         assertEquals("", TrackMemory.subtitleLocal(null));
         assertEquals("", TrackMemory.subtitleLocal("   "));
-        assertEquals("", TrackMemory.subtitleOnline("", "a.ass"));
+        // 发布页与文件名都没有 ⇒ 这条记录没有信息量,不存
+        assertEquals("", TrackMemory.subtitleOnline("", "   "));
+        assertEquals("", TrackMemory.subtitleOnline(null, null));
         assertFalse(TrackMemory.isSubtitleOnline(null));
         assertEquals("", TrackMemory.onlineRelease(TrackMemory.SUBTITLE_OFF));
         assertEquals("", TrackMemory.onlineFileName(TrackMemory.SUBTITLE_OFF));
+    }
+
+    @Test
+    public void subtitleSource_onlineWithoutReleasePage_isStillRemembered() {
+        // 迅雷这类源直挂字幕文件,没有发布页这一层:只凭文件名也要记得住,
+        // 否则字幕面板重开时标不出"当前挂的是哪一条"(真机反馈"还是不亮")
+        String online = TrackMemory.subtitleOnline("", "NSFS-388-C-zh-CN.srt（迅雷）");
+        assertTrue(TrackMemory.isSubtitleOnline(online));
+        assertFalse(TrackMemory.isSubtitleTrack(online));
+        assertEquals("", TrackMemory.onlineRelease(online));
+        assertEquals("NSFS-388-C-zh-CN.srt（迅雷）", TrackMemory.onlineFileName(online));
     }
 
     @Test

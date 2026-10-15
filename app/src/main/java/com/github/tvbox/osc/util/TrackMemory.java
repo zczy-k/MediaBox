@@ -116,10 +116,20 @@ public final class TrackMemory {
         return value.isEmpty() ? "" : SUBTITLE_LOCAL + value;
     }
 
+    /**
+     * 在线字幕来源记录：{@code #online:发布页|文件名}。
+     *
+     * <p>发布页**可以为空**：迅雷这类源直挂字幕文件，根本没有"发布页"这一层。
+     * 早先要求发布页非空、否则返回空记录，而 {@link #saveSubtitle} 遇空记录直接不存
+     * ⇒ 从迅雷挑的字幕一条都记不下来，字幕面板也就永远标不出"当前挂的是哪一条"（真机反馈）。
+     * 没有发布页时记录退化成只留文件名：跨集还原本来就依赖发布页（那条路径自己会因
+     * {@link #onlineRelease} 为空而回落默认链），标色只需要文件名。
+     */
     public static String subtitleOnline(String releaseUrl, String fileName) {
         String release = trim(releaseUrl);
-        if (release.isEmpty()) return "";
-        return SUBTITLE_ONLINE + release + ONLINE_SEP + trim(fileName);
+        String name = trim(fileName);
+        if (release.isEmpty() && name.isEmpty()) return "";
+        return SUBTITLE_ONLINE + release + ONLINE_SEP + name;
     }
 
     public static boolean isSubtitleOff(String record) {
