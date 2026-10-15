@@ -437,6 +437,10 @@ object SearchSettings {
     fun isNonMainContent(name: String?, note: String?, keyword: String?): Boolean {
         val k = normalizeCached(keyword)
         if (k.isEmpty() || NON_MAIN_CONTENT_PATTERN.containsMatchIn(k)) return false
+        // ⚠️ 先按**原始名**判,再按规范化名判(2026-10-15 真机:`怒之杀[电影解说]`被当成精确同名)。
+        // normalize() 会把整段括号删掉,于是"解说"这个词在读到之前就消失了 ——
+        // 降权规则形同虚设,衍生条目直接以 5 分(全等)排到正片前面。
+        if (NON_MAIN_CONTENT_PATTERN.containsMatchIn(name.orEmpty())) return true
         val n = normalizeCached(name)
         if (NON_MAIN_CONTENT_PATTERN.containsMatchIn(n)) return true
         if (NON_MAIN_CONTENT_PATTERN.containsMatchIn(note.orEmpty())) return true

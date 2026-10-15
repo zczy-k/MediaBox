@@ -31,6 +31,26 @@ class SearchRelevanceTest {
         assertTrue(partial > trailerExact)
     }
 
+    /**
+     * 真机(2026-10-15):从《怒之杀》卡片点进去,自动挑中的却是"怒之杀[电影解说]"。
+     * 根因是判定顺序 —— normalize 会整段删掉括号内容,"解说"在读到之前就没了,
+     * 于是降权规则形同虚设,这条以**全等 5 分**排在正片前面。
+     */
+    @Test
+    fun `括号里的解说同样要降权`() {
+        val main = SearchSettings.relevanceScore("怒之杀", null, "怒之杀")
+        for (name in listOf("怒之杀[电影解说]", "怒之杀【影视解说】", "怒之杀（解说版）", "[电影解说]怒之杀")) {
+            val s = SearchSettings.relevanceScore(name, null, "怒之杀")
+            assertTrue("$name 应被降权,实际=$s", s in 1..2)
+            assertTrue("$name 不该排过正片", main > s)
+            assertTrue("$name 应判为非正片", SearchSettings.isNonMainContent(name, null, "怒之杀"))
+        }
+        // 年份/版本这类括号是正片常见的正常后缀,**不能**跟着一起降权
+        // (括号被 normalize 整段删掉 ⇒ 仍是全等 5 分,这条既有行为要保持)
+        assertEquals(5, SearchSettings.relevanceScore("怒之杀(2024)", null, "怒之杀"))
+        assertEquals(5, SearchSettings.relevanceScore("狮子王[普通话版]", null, "狮子王"))
+    }
+
     @Test
     fun `note命中预告同样降权`() {
         assertEquals(2, SearchSettings.relevanceScore("花开锦绣", null, "花开锦绣", "官方预告片"))
