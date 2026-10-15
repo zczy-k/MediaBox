@@ -137,6 +137,74 @@ public class FileUtils {
         return AppContextHolder.context().getFilesDir().getAbsolutePath();
     }
 
+    /** 持久层目录名:放在 files 下、系统"清除缓存"与手机管家清理都碰不到的那几样下载产物 */
+    public static final String DURABLE_DIR_NAME = "durable";
+
+    /**
+     * 下载产物的持久目录 {@code files/durable/}(爬虫 jar 包、字幕落盘、导入字幕副本)。
+     *
+     * <p>为什么不在 {@code cache/} 下:系统设置的「清除缓存」和手机管家的"清理垃圾"只扫 cache 目录,
+     * 而这几样删掉的代价与普通缓存完全不是一回事 ——
+     * <ul>
+     *   <li>jar 包是从订阅配置里的地址下载的,**源站一改地址或下架就永远下不回来**,
+     *       表现是"这个源打不开":它是下载产物,不是缓存;</li>
+     *   <li>导入字幕的副本被清掉后,那条"这部片用这个字幕"的决定就悬空
+     *       (日志里的 {@code local subtitle gone, fallback} 正是这个)。</li>
+     * </ul>
+     * 放 files 下的语义是用户要的那种:**只有卸载 App 或应用管理里"删除数据"才会一起没掉**,
+     * 清手机垃圾不会误删。图片/WebView/HTTP 缓存仍留在 cache —— 那些被清了无所谓,本来就该让管家能清。
+     *
+     * <p>⚠️ 反过来,系统也不会替我们回收这里:占用全靠各自的上界封着
+     * (字幕 LRU 200 条见 {@link SubtitleCacheJanitor},jar 见 {@code pruneSpiderJarCache})。
+     * 「修复工具」仍会显式清它 —— 显示的数字必须等于按钮真能清掉的东西。
+     */
+    public static File getDurableDir() {
+        File dir = new File(getFilePath(), DURABLE_DIR_NAME);
+        if (!dir.exists()) dir.mkdirs();
+        return dir;
+    }
+
+    /**
+     * 把历史上留在 {@code cache/} 的 jar、{@code zimu/}、导入副本 {@code subtitle_*}
+     * 一次性搬进 {@link #getDurableDir()}。
+     *
+     * <p>必须**在任何源加载与字幕解析之前**跑完:JarLoader 一开始下载就会在旧目录建文件,搬晚了等于白搬。
+     * 同分区 {@code renameTo} 只改目录项(几个文件毫秒级),所以在启动主线程早期同步执行,不放后台。
+     * 目标已存在(搬过一次 / 全新安装)就什么都不做 ⇒ 幂等。搬不动只记日志:各写入方首次使用时
+     * 会自建目录,不该因为搬迁失败而让功能不可用。
+     *
+     * @return 本次移动的条目数
+     */
+    public static int migrateLegacyCachesToDurable() {
+        int moved = 0;
+        try {
+            File cache = getCacheDir();
+            File durable = new File(getFilePath(), DURABLE_DIR_NAME);
+            if (!durable.exists()) durable.mkdirs();
+            for (String name : new String[]{"jar", "zimu"}) {
+                File from = new File(cache, name);
+                File to = new File(durable, name);
+                if (!from.exists() || to.exists()) continue;
+                if (from.renameTo(to)) moved++;
+                else LOG.i("echo-durable move-failed: " + name);
+            }
+            File[] copies = cache.listFiles();
+            if (copies != null) {
+                for (File one : copies) {
+                    if (!one.isFile() || !one.getName().startsWith("subtitle_")) continue;
+                    File to = new File(durable, one.getName());
+                    if (to.exists()) continue;
+                    if (one.renameTo(to)) moved++;
+                    else LOG.i("echo-durable copy-move-failed: " + one.getName());
+                }
+            }
+            if (moved > 0) LOG.i("echo-durable migrated=" + moved + " -> " + durable.getAbsolutePath());
+        } catch (Throwable th) {
+            LOG.e("FileUtils", th);
+        }
+        return moved;
+    }
+
     public static void cleanDirectory(File dir) {
         if (!dir.exists()) return;
         File[] files = dir.listFiles();
@@ -329,6 +397,9 @@ public class FileUtils {
             size += directorySize(externalCacheDir, EXTERNAL_CACHE_KEEP_DIR);
         }
         size += directorySize(new File(getFilePath() + "/csp/"), null);
+        // 持久层(jar / 字幕落盘 / 导入副本)也算进来:它在 files 下、系统清不到,
+        // 但「修复工具」会显式删它 —— 显示的数字必须等于按钮真能清掉的东西。
+        size += directorySize(new File(getFilePath() + "/" + DURABLE_DIR_NAME + "/"), null);
         return size;
     }
 
@@ -367,8 +438,11 @@ public class FileUtils {
      * 故点「清除缓存」后数字立即归零,不再延迟到下次启动(此前 2026-09-13 的"写待清理标记 + 下次启动 purge"
      * 方案被本次替换;{@link #purgeExoCacheIfPending()} 保留以清理历史遗留标记)。
      * 用 {@link #deleteFileTree} 递归强删整个目录树(含各级子目录),避免 deleteFile "只清内容保留目录"留下空子目录。
-     * 与系统设置里的「清除缓存」同语义,因此也会清掉已下载的爬虫 jar 缓存(cache/jar/),
-     * 下次按需重新下载;{@link #EXTERNAL_CACHE_KEEP_DIR} 用户数据(config 订阅源)保留不动。
+     * 与系统设置里的「清除缓存」同语义:{@code cache/} 下的东西一律删。
+     * ⚠️ 2026-10-15 起**已下载的爬虫 jar / 字幕落盘 / 导入副本不在这里删** —— 它们挪到了
+     * {@code files/durable}(手机管家扫不到),由 {@link #clearSpiderCacheFiles()} 显式清,
+     * 两处加起来才等于设置页显示的那个数字。
+     * {@link #EXTERNAL_CACHE_KEEP_DIR} 用户数据(config 订阅源)保留不动。
      * 耗时 IO,须在后台线程调用。
      */
     public static void clearCache() {
@@ -443,7 +517,9 @@ public class FileUtils {
 
     public static void clearSpiderCacheFiles() {
         cleanDirectory(new File(getFilePath() + "/csp/"));
-        cleanDirectory(new File(getCachePath() + "/jar/"));
+        // 2026-10-15:爬虫 jar 与字幕落盘/导入副本从 cache 挪进 files/durable(系统"清除缓存"与
+        // 手机管家都碰不到它),所以「修复工具」要显式清 —— 少清一样就等于"点了却没清干净"。
+        cleanDirectory(new File(getFilePath() + "/" + DURABLE_DIR_NAME + "/"));
         cleanDirectory(new File(getCachePath() + "/py/"));
         cleanDirectory(new File(getCachePath() + "/catvod_jsapi/"));
         clearJsModuleCache();

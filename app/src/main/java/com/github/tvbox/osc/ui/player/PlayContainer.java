@@ -55,6 +55,7 @@ import com.github.tvbox.osc.util.LOG;
 import com.github.tvbox.osc.util.SourceIdentityMask;
 import com.github.tvbox.osc.util.MD5;
 import com.github.tvbox.osc.util.PlayerHelper;
+import com.github.tvbox.osc.util.FileUtils;
 import com.github.tvbox.osc.util.SubtitleHelper;
 import com.github.tvbox.osc.util.TrackMemory;
 import com.github.tvbox.osc.util.KV;
@@ -550,7 +551,8 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
                 String name = queryDisplayName(activity, uri);
                 if (name == null || !name.contains(".")) name = "local_subtitle.srt";
                 name = name.replaceAll("[\\\\/:*?\"<>|]", "_");
-                File dst = new File(activity.getCacheDir(), "subtitle_" + System.currentTimeMillis() + "_" + name);
+                // 导入副本放 files/durable:这是用户自己挑的文件,被"清垃圾"删掉后那条字幕决定就悬空了
+                File dst = new File(FileUtils.getDurableDir(), "subtitle_" + System.currentTimeMillis() + "_" + name);
                 try (java.io.InputStream in = activity.getContentResolver().openInputStream(uri);
                      java.io.FileOutputStream out = new java.io.FileOutputStream(dst)) {
                     byte[] buf = new byte[8192];
@@ -948,6 +950,19 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
         }
         if (TrackMemory.isSubtitleLocal(record)) {
             String path = TrackMemory.localPath(record);
+            if (!TextUtils.isEmpty(path) && !new File(path).exists()) {
+                // 2026-10-15:导入副本从 cache/ 挪进 files/durable,启动时按文件名搬走 ⇒ 老记录里
+                // 存的旧绝对路径读不到了。文件确实在新位置就按文件名找回来并把记录改写(一次性修好,
+                // 不是每次兜底);找不到才落回下面的 gone 日志 —— 那条日志是有用的信号,不能提前吞掉。
+                File retry = new File(FileUtils.getDurableDir(), new File(path).getName());
+                if (retry.exists()) {
+                    String repaired = TrackMemory.subtitleLocal(retry.getAbsolutePath());
+                    LOG.i("echo-track-memory local subtitle moved, repaired: " + path + " -> " + retry.getAbsolutePath());
+                    TrackMemory.saveSubtitle(memoryKey, repaired);
+                    setSubtitle(retry.getAbsolutePath());
+                    return;
+                }
+            }
             if (!TextUtils.isEmpty(path) && new File(path).exists()) {
                 setSubtitle(path);
                 return;

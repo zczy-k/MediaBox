@@ -36,7 +36,10 @@ object SubtitleCacheJanitor {
     /**
      * 扫一遍字幕落盘目录并按 LRU 裁剪。**幂等**,可重复调用。
      *
-     * @param cacheDir 内部缓存目录(不能用外部缓存:外部缓存会被系统的"清除缓存"直接清掉)
+     * @param cacheDir 持久根目录([FileUtils.getDurableDir],即 `files/durable`):
+     *        里面是 `zimu/` 与导入副本 `subtitle_*`。**不能传 cacheDir 或外部缓存** ——
+     *        2026-10-15 起这几样挪进了 files,因为手机管家"清理垃圾"只扫 cache,
+     *        而导入字幕副本被误删等于把用户"这部片用这个字幕"的决定清掉了。
      * @return 被删文件数;目录不存在返回 0
      */
     @JvmStatic

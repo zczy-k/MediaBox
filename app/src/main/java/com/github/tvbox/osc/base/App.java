@@ -64,6 +64,10 @@ public class App extends Application {
         // 启动看门狗(2026-09-21):装崩溃记录器。必须最早装 —— 第三方爬虫可能在
         // Application.onCreate 之后的任意时刻于自己的线程上闪退,晚了就记不到。
         com.github.tvbox.osc.util.BootGuard.install();
+        // 2026-10-15:把留在 cache 里的下载产物(爬虫 jar、字幕落盘、导入字幕副本)搬到 files/durable。
+        // 必须**同步**且赶在任何源加载之前:JarLoader 一开始下载就会在旧目录建新文件,搬晚了等于白搬;
+        // 而同分区 rename 只改目录项(几毫秒),不值得为它开一条线程再去讲究时序。
+        FileUtils.migrateLegacyCachesToDurable();
         initParams();
         // OKGo
         OkGoHelper.init(); //台标获取
@@ -93,10 +97,12 @@ public class App extends Application {
             FileUtils.cleanPlayerCache();
             // 爬虫 jar 只增不减(文件名 = MD5(url)):保留最近 20 个,封住上界。
             FileUtils.pruneSpiderJarCache();
-            // 字幕落盘目录(内部 cacheDir/zimu/ 与导入副本 subtitle_*)是全 App **唯一无上限**的缓存:
+            // 字幕落盘目录(files/durable/zimu/ 与导入副本 subtitle_*)原本是全 App 唯一无上限的一处:
             // 文件名取服务端下发的名字、不会互相覆盖,原本没有任何删除逻辑 ⇒ "看片越多占用越大"。
             // 按 LRU 裁剪到 SubtitleCacheJanitor.MAX_FILES 条,封住上界。
-            SubtitleCacheJanitor.trim(getCacheDir());
+            // ⚠️ 这里不再是 cache:这些是"删了要重新下载/重新挑"的产物,挪去 files/durable 免得被
+            // 手机管家当垃圾清掉(见 FileUtils.getDurableDir),上界就得由我们自己守住。
+            SubtitleCacheJanitor.trim(FileUtils.getDurableDir());
             // 订阅桶:把老格式(未规范化地址)的台账搬到新桶名,并回收彻底弃用的仓。
             // 冷路径(扫全表键名),所以放这条后台线程,不放主线程。
             SubscriptionBucket.migrateAndReclaim();

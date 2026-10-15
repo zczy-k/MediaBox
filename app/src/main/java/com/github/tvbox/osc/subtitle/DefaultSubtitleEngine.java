@@ -122,7 +122,8 @@ public class DefaultSubtitleEngine implements SubtitleEngine {
 
                 String subtitlePath = subtitleLoadSuccessResult.subtitlePath;
                 if (subtitlePath.startsWith("http://") || subtitlePath.startsWith("https://")) {
-                    String subtitleFileCacheDir = App.getInstance().getCacheDir().getAbsolutePath() + "/zimu/";
+                    // 落盘到 files/durable/zimu:这份是"用户挑过的字幕",不该被手机管家当垃圾清掉
+                    String subtitleFileCacheDir = FileUtils.getDurableDir().getAbsolutePath() + "/zimu/";
                     File cacheDir = new File(subtitleFileCacheDir);
                     if (!cacheDir.exists()) {
                         cacheDir.mkdirs();
@@ -178,7 +179,7 @@ public class DefaultSubtitleEngine implements SubtitleEngine {
         try {
             es.execute(() -> {
                 try {
-                    int removed = SubtitleCacheJanitor.trim(app.getCacheDir());
+                    int removed = SubtitleCacheJanitor.trim(FileUtils.getDurableDir());
                     if (removed > 0) LOG.i("echo-sub cache trim: removed " + removed);
                 } catch (Throwable t) {
                     LOG.d("DefaultSubtitleEngine", "trim failed: " + t.getMessage());

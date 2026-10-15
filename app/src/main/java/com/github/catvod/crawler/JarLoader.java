@@ -393,7 +393,9 @@ public class JarLoader {
     }
 
     private File jarDir() {
-        File dir = new File(AppContextHolder.context().getCacheDir(), "jar");
+        // 下载来的 jar 是"源站一改地址就再也下不回来"的东西 ⇒ 放 files/durable,不放 cache:
+        // 系统「清除缓存」和手机管家的"清理垃圾"只扫 cache,误删一次就可能永久弄丢这个源。
+        File dir = new File(FileUtils.getDurableDir(), "jar");
         if (!dir.exists()) dir.mkdirs();
         return dir;
     }
