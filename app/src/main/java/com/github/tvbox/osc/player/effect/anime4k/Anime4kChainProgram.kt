@@ -182,6 +182,7 @@ internal class Anime4kChainProgram(
                 " deblur=${if (deblurOn) deblur.size else 0} upscale=${upscale.size}x${composed.upscaleCount}" +
                 " targets=${targets.size}",
         )
+        Anime4kStatus.onChainBuilt(composed.upscaleCount)
     }
 
     private fun logFirstFrame() {

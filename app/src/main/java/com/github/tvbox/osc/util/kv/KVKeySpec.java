@@ -151,7 +151,7 @@ public final class KVKeySpec implements KVDecoder.TypeRegistry {
         register(HawkConfig.DANMU_ALPHA, 0f);
         register(HawkConfig.DANMU_SIZE_SCALE, 0f);
         register(HawkConfig.SUBTITLE_EXO_POSITION, 0f);
-        // 画质参数(调色):预置名 + 8 项滑条值
+        // 画质参数(调色):预置名 + 9 项滑条值
         register(HawkConfig.PICTURE_SATURATION, 0f);
         register(HawkConfig.PICTURE_CONTRAST, 0f);
         register(HawkConfig.PICTURE_BRIGHTNESS, 0f);
@@ -160,6 +160,7 @@ public final class KVKeySpec implements KVDecoder.TypeRegistry {
         register(HawkConfig.PICTURE_TEMPERATURE, 0f);
         register(HawkConfig.PICTURE_SHARPNESS, 0f);
         register(HawkConfig.PICTURE_SHADOW_LIFT, 0f);
+        register(HawkConfig.PICTURE_DEHAZE, 0f);
 
         // ---- 集合(元素类型必须显式声明,否则退化为 LinkedTreeMap)----
         register(HawkConfig.SEARCH_HISTORY, new TypeToken<ArrayList<String>>() {

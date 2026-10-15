@@ -99,7 +99,11 @@ object Anime4kStatus {
         failed = true
     }
 
-    /** 「按住对比」期间置位：链退化成纯拷贝 —— 对比必须绕整条链（含 Anime4K），否则对比失真 */
+    /**
+     * 链要不要跳过(纯拷贝):「按住对比」期间,或用户把超分关了但链还挂着。
+     *
+     * <p>后者是"开关不必重播本集"的关键 —— 摘链要重建 VideoSink(只能重播),留着它每帧多一次全屏拷贝。
+     */
     @Volatile
     private var bypassed = false
 
@@ -107,5 +111,15 @@ object Anime4kStatus {
 
     fun setBypass(value: Boolean) {
         bypassed = value
+    }
+
+    /** 最近一次建链的放大次数(源已 ≥ 显示面时为 0);-1 = 本集还没建过链 */
+    @Volatile
+    private var lastUpscaleCount = -1
+
+    fun upscaleCount(): Int = lastUpscaleCount
+
+    fun onChainBuilt(upscaleCount: Int) {
+        lastUpscaleCount = upscaleCount
     }
 }

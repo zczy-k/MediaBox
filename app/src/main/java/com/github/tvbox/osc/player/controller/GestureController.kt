@@ -151,16 +151,22 @@ class GestureController(private val host: ComposeVideoController) :
     /** 锁屏触摸守卫 + 手势分发（旧 rootView OnTouch 与 BaseController.OnTouch 合并，行为等价） */
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouch(v: View, event: MotionEvent): Boolean {
-        if (host.previewMode) {
-            return gestureDetector?.onTouchEvent(event) ?: false
-        }
-        if (host.isLocked()) {
-            if (event.actionMasked == MotionEvent.ACTION_UP) {
-                host.showLockView()
+        val consumed = when {
+            host.previewMode -> gestureDetector?.onTouchEvent(event) ?: false
+            host.isLocked() -> {
+                if (event.actionMasked == MotionEvent.ACTION_UP) host.showLockView()
+                true
             }
-            return true
+            else -> gestureDetector?.onTouchEvent(event) ?: false
         }
-        return gestureDetector?.onTouchEvent(event) ?: false
+        // 松手/打断要在这条**一定收得到事件**的路径上收尾:View.onTouchEvent 只在上面返回 false
+        // 时才被系统调用,把"恢复倍速"只写在那一边 = 长按可能永远不恢复(真机反馈"松手还在快进")。
+        // speedPlayEnd 由 fromLongPress 兜幂等 ⇒ 两条路都调也只会恢复一次。
+        if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+            speedPlayEnd()
+            LOG.i("echo-speed released consumed=" + consumed)
+        }
+        return consumed
     }
 
     fun onTouchEvent(event: MotionEvent) {
@@ -230,17 +236,19 @@ class GestureController(private val host: ComposeVideoController) :
     }
 
     private fun speedPlayStart() {
-        fromLongPress = true
         try {
             val cfg = host.playerConfig ?: return
-            // 倍速提速不入 playerCfg(原实现把 "sp":3.0 经 updatePlayerCfg
-            // 持久化,手势被 CANCEL 中断或后续集数会持续 3.0x);只改播放器速度,配置保持原值
-            host.speedOld = cfg.getDouble("sp").toFloat()
-            // 长按倍速:设置页滑块可调 2x~10x,每次长按实时读 KV,改设置立即生效
+            // optDouble 而不是 getDouble:老配置没有 "sp" 时 getDouble 会抛,
+            // 而抛之前 fromLongPress 已经置位 ⇒ 松手时按一个没发生过的提速去恢复
+            val restore = cfg.optDouble("sp", 1.0).toFloat()
+            host.speedOld = restore
+            // 长按倍速:设置页档位可调 2x/4x/8x,每次长按实时读 KV,改设置立即生效
             val boost = KV.get(HawkConfig.LONG_PRESS_SPEED, HawkConfig.LONG_PRESS_SPEED_DEFAULT).toFloat()
             host.wrapper?.setSpeed(boost)
             host.state.speedBoostValue = boost
             host.state.speedBoostVisible = true
+            fromLongPress = true
+            LOG.i("echo-speed start boost=$boost restore=$restore")
         } catch (e: JSONException) {
             LOG.e("GestureController", e)
         }
@@ -252,5 +260,6 @@ class GestureController(private val host: ComposeVideoController) :
         // 恢复 DOWN 时快照的原速度;cfg 未被修改,无需回写与持久化
         host.wrapper?.setSpeed(host.speedOld)
         host.state.speedBoostVisible = false
+        LOG.i("echo-speed end restore=" + host.speedOld)
     }
 }

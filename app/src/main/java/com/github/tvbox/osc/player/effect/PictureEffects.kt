@@ -60,6 +60,17 @@ object PictureEffects {
     /** 「按住对比」中:临时按恒等参数出画(不落库) */
     private var comparing = false
 
+    /**
+     * 超分这一档**每帧**要不要跑:按住对比 或 用户把开关关了 ⇒ 走链里的纯拷贝分支。
+     *
+     * <p>为什么用 bypass 而不是"把 effect 从列表里摘掉":列表长度一变,media3 要重建 VideoSink,
+     * 我们只能重播本集 —— 于是"开个增强从片头重播"。链既然已经挂上了(本集有第三项),
+     * 关掉就多一次全屏拷贝,这比重播便宜得多。
+     */
+    private fun refreshBypass() {
+        Anime4kStatus.setBypass(comparing || !Anime4kSettings.enabled())
+    }
+
     /** 本集链里 Anime4K 是否参与、参与的哪个档位/去模糊:任一者变了都要重播(效果列表挂上后恒定) */
     private var anime4kOpened = false
     private var anime4kTierOpened: Anime4kTier = Anime4kTier.default
@@ -83,6 +94,7 @@ object PictureEffects {
         temperature = KV.get(HawkConfig.PICTURE_TEMPERATURE, 0f),
         sharpness = KV.get(HawkConfig.PICTURE_SHARPNESS, 0f),
         shadowLift = KV.get(HawkConfig.PICTURE_SHADOW_LIFT, 0f),
+        dehaze = KV.get(HawkConfig.PICTURE_DEHAZE, 0f),
     ).clamped()
 
     /** 当前应生效的参数(「按住对比」期间恒等) */
@@ -111,6 +123,7 @@ object PictureEffects {
         KV.put(HawkConfig.PICTURE_TEMPERATURE, profile.temperature)
         KV.put(HawkConfig.PICTURE_SHARPNESS, profile.sharpness)
         KV.put(HawkConfig.PICTURE_SHADOW_LIFT, profile.shadowLift)
+        KV.put(HawkConfig.PICTURE_DEHAZE, profile.dehaze)
         push()
     }
 
@@ -124,7 +137,27 @@ object PictureEffects {
     fun compare(original: Boolean) {
         if (comparing == original) return
         comparing = original
-        Anime4kStatus.setBypass(original)
+        refreshBypass()
+        push()
+    }
+
+    /**
+     * 面板开关超分:本集链里已经有这一档时**只切每帧 bypass**(下一帧就变,不重播);
+     * 链里还没有(本集起播时是关的)才走原路径 —— 挂新链只能等下次起播。
+     */
+    fun setAnime4kEnabled(enabled: Boolean) {
+        Anime4kSettings.setEnabled(enabled)
+        if (anime4kOpened && !tunneling) {
+            refreshBypass()
+            val player = current?.get()
+            if (player != null &&
+                RedrawPolicy.shouldRedrawOnParams(player.isPlaying, player.isPictureEffectsActive)
+            ) {
+                player.redrawVideoFrame()
+            }
+            LOG.i("echo-picture anime4k live: enabled=" + enabled + " (链常驻,不重播)")
+            return
+        }
         push()
     }
 
@@ -136,8 +169,8 @@ object PictureEffects {
      */
     fun onPrepare(player: ExoPlayer, tunnelingBlocked: Boolean) {
         comparing = false
-        Anime4kStatus.setBypass(false)
         if (KV.get(HawkConfig.PLAYER_IS_LIVE, false)) {
+            Anime4kStatus.setBypass(false)
             current = null
             LOG.i("echo-picture-effects skip: live")
             return
@@ -155,6 +188,7 @@ object PictureEffects {
         anime4kOpened = anime4kWanted
         anime4kTierOpened = tier
         anime4kDeblurOpened = Anime4kSettings.deblur()
+        refreshBypass()
         colorTone.setProfile(profile)
         detail.setProfile(profile)
         // 链挂着 ⟺ 当前参数非恒等:关闭(参数回恒等)只表示"下次起播不再挂链",绝不下发空列表摘链
@@ -210,20 +244,27 @@ object PictureEffects {
         )
     }
 
-    /** 面板改参数后调用:true = 需要重播本集才生效(开=本集还没挂链;关=预置回「原始」且链还挂着);同启用态调参不触发 */
+    /** 面板改参数后调用:true = 需要重播本集才生效(只有"要挂链但本集没挂"这一种情况;关成恒等不再要求摘链) */
     fun consumeRestartNeeded(): Boolean {
         val player = current?.get() ?: return false
         if (tunneling || player.isPictureHdrSource()) return false
         val anime4kWanted = Anime4kSettings.enabled()
-        if (anime4kWanted != anime4kOpened) return true
+        // 开→关不重播:链里的第三项留着,每帧走纯拷贝(见 [refreshBypass]);
+        // 关→开且本集起播时没挂这一档,才必须等下次起播(media3 只在渲染器 enable 时建 sink)
+        if (anime4kWanted && !anime4kOpened) return true
         if (anime4kWanted && Anime4kTier.current() != anime4kTierOpened) return true
         if (anime4kWanted && Anime4kSettings.deblur() != anime4kDeblurOpened) return true
-        return restartNeeded(wanted(), openedThisSession, preset() == PicturePreset.Original)
+        return restartNeeded(wanted(), openedThisSession)
     }
 
-    /** 上一条的口径本体(独立出来供 JVM 单测):开=有效果但本集没挂链;关=已回恒等、挂着链且预置是「原始」 */
-    internal fun restartNeeded(wantEffects: Boolean, opened: Boolean, presetOriginal: Boolean): Boolean =
-        if (wantEffects) !opened else (opened && presetOriginal)
+    /**
+     * 上一条的口径本体(独立出来供 JVM 单测):**要效果、本集却没挂链** ⇒ 重播一次挂上。
+     *
+     * <p>反向(全关但链挂着)**不重播**:摘链的收益是一次全屏拷贝,代价是从头重播本集 —— 不划算。
+     * 链会在下次起播时自然不挂。
+     */
+    internal fun restartNeeded(wantEffects: Boolean, opened: Boolean): Boolean =
+        wantEffects && !opened
 
     /** 参数变化:本集已挂效果时只改实例参数(着色器每帧现读)并补一次重绘;本集未挂则先下发一次(链要等重播后的 prepare 才真建) */
     private fun push() {

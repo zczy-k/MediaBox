@@ -35,6 +35,7 @@ import com.github.tvbox.osc.player.state.ParamsChoice
 import com.github.tvbox.osc.player.state.ParamsSheetState
 import com.github.tvbox.osc.player.effect.PictureEffects
 import com.github.tvbox.osc.player.effect.anime4k.Anime4kSettings
+import com.github.tvbox.osc.player.effect.anime4k.Anime4kStatus
 import com.github.tvbox.osc.player.effect.anime4k.Anime4kTier
 import com.github.tvbox.osc.player.state.PictureParamsState
 import com.github.tvbox.osc.player.state.PlayerActions
@@ -526,8 +527,10 @@ class ComposeVideoController @JvmOverloads constructor(
                 anime4kUnavailable = PictureEffects.anime4kUnavailable(),
                 anime4kSharpen = Anime4kSettings.sharpen(),
                 anime4kDeblur = Anime4kSettings.deblur(),
+                anime4kNoUpscale = Anime4kSettings.enabled() && Anime4kStatus.upscaleCount() == 0,
                 onAnime4kToggled = {
-                    Anime4kSettings.setEnabled(it)
+                    // 链已挂时这里只切每帧 bypass(不重播);没挂过才走"下次起播生效"提示
+                    PictureEffects.setAnime4kEnabled(it)
                     restartForPictureIfNeeded()
                     refreshParamsSheet()
                 },

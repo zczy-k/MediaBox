@@ -97,6 +97,17 @@ internal fun PictureParams(state: PictureParamsState) {
                 state.onAnime4kSharpenChanged(it)
             }
         }
+        if (state.anime4kNoUpscale) {
+            // 超分一次都没放大(源已 ≥ 显示面)时只降噪 —— 不说的话,用户得到的结论是"这功能没效果"
+            Text(
+                text = stringResource(R.string.player_anime4k_no_upscale),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = playerTextSize(R.dimen.ts_18),
+                fontWeight = FontWeight.Medium,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
         if (state.anime4kUnavailable) {
             Spacer(Modifier.height(playerDim(R.dimen.vs_15)))
             Text(
@@ -183,6 +194,15 @@ internal fun PictureParams(state: PictureParamsState) {
                 tuning = tuning.copy(shadowLift = it)
                 state.onTuningChanged(tuning)
             }
+            PictureSlider(
+                R.string.player_picture_dehaze,
+                tuning.dehaze,
+                PictureProfile.MIN_DEHAZE..PictureProfile.MAX_DEHAZE,
+                "%.2f",
+            ) {
+                tuning = tuning.copy(dehaze = it)
+                state.onTuningChanged(tuning)
+            }
             ParamsGroupDivider()
         }
         Row(
@@ -248,6 +268,7 @@ private fun PicturePreset.labelRes(): Int = when (this) {
     PicturePreset.Natural -> R.string.player_picture_preset_natural
     PicturePreset.Vivid -> R.string.player_picture_preset_vivid
     PicturePreset.Clear -> R.string.player_picture_preset_clear
+    PicturePreset.Dehaze -> R.string.player_picture_preset_dehaze
     PicturePreset.Bright -> R.string.player_picture_preset_bright
     PicturePreset.Cinema -> R.string.player_picture_preset_cinema
     PicturePreset.Soft -> R.string.player_picture_preset_soft

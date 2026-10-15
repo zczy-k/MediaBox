@@ -250,11 +250,13 @@
     <string name="player_anime4k_tier_ultra">极高</string>
     <string name="player_anime4k_tier_upscale">纯放大</string>
     <string name="player_anime4k_unavailable">当前档位在本机不可用，本次播放已自动跳过</string>
+    <string name="player_anime4k_no_upscale">源已不小于屏幕：本集只降噪，没有放大</string>
     <string name="player_anime4k_sharpen">增强锐度</string>
     <string name="player_anime4k_deblur">去模糊</string>
     <string name="player_picture_preset_natural">自然</string>
     <string name="player_picture_preset_vivid">艳丽</string>
     <string name="player_picture_preset_clear">清晰</string>
+    <string name="player_picture_preset_dehaze">通透</string>
     <string name="player_picture_preset_bright">明亮</string>
     <string name="player_picture_preset_cinema">影院</string>
     <string name="player_picture_preset_soft">柔润</string>
@@ -273,6 +275,7 @@
     <string name="player_picture_temperature">色温</string>
     <string name="player_picture_sharpness">锐度</string>
     <string name="player_picture_shadow">暗部提升</string>
+    <string name="player_picture_dehaze">去灰</string>
     <string name="player_picture_compare">按住对比</string>
     <string name="player_picture_reset">恢复默认</string>
     <string name="player_picture_unavailable_tunnel">隧道模式起播，画面参数本集不生效；关闭隧道并重新起播后生效</string>

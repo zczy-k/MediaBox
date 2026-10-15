@@ -234,7 +234,7 @@ class ParamsSheetState(
 /** 画质参数面板状态：值取自 KV，改动即时落库并下发内核；面板只保留拖动中的副本（拖动不重建本对象） */
 class PictureParamsState(
     val preset: PicturePreset,
-    /** 「自定义」预置下的 8 项滑条值；其余预置不展开滑条 */
+    /** 「自定义」预置下的 9 项滑条值；其余预置不展开滑条 */
     val tuning: PictureProfile,
     /** 当前不可调色的原因（面板显示一行说明；None = 可用） */
     val unavailableReason: PictureEffectUnavailableReason,
@@ -246,6 +246,12 @@ class PictureParamsState(
     val anime4kSharpen: Float,
     /** 链内去模糊（Deblur_DoG）；改它要重播本集（链的 pass 组成变了） */
     val anime4kDeblur: Boolean,
+    /**
+     * 本集超分**一次都没放大**（源分辨率已 ≥ 显示面）。
+     *
+     * <p>这时 Anime4K 只剩降噪，观感几乎不变 —— 不说出来，用户只会得到"这功能是假的"的结论。
+     */
+    val anime4kNoUpscale: Boolean = false,
     val onAnime4kToggled: (Boolean) -> Unit,
     val onAnime4kSharpenChanged: (Float) -> Unit,
     val onAnime4kDeblurToggled: (Boolean) -> Unit,

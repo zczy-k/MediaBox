@@ -101,4 +101,39 @@ class PictureProfileTest {
         assertTrue(PictureProfile(sharpness = 0.2f).isDetailNoOp.not())
         assertTrue(PictureProfile(hue = 30f).isColorNoOp)
     }
+
+    // ==================== 去灰(levels 拉伸) ====================
+
+    @Test
+    fun levelsOf_zeroIsExactIdentity() {
+        val levels = PictureProfile.levelsOf(0f)
+        assertEquals(0f, levels[0], 0f)
+        assertEquals(1f, levels[1], 0f)
+        // 恒等判定必须把去灰算进去:漏了"只拖去灰滑条"会被当成没调,链根本不挂
+        assertTrue(PictureProfile(dehaze = 0.4f).isNoOp.not())
+        assertTrue(PictureProfile(dehaze = 0.4f).isColorNoOp.not())
+    }
+
+    @Test
+    fun levelsOf_mapsEndsAndSurvivesGarbage() {
+        val full = PictureProfile.levelsOf(1f)
+        assertEquals(PictureProfile.DEHAZE_MAX_BLACK, full[0], 0.0001f)
+        assertEquals(1f - PictureProfile.DEHAZE_MAX_WHITE_PUSH, full[1], 0.0001f)
+        val half = PictureProfile.levelsOf(0.5f)
+        assertEquals(PictureProfile.DEHAZE_MAX_BLACK / 2f, half[0], 0.0001f)
+        // NaN / 越界:着色器拿这两个数做除数,绝不能出现 hi <= lo
+        assertEquals(0f, PictureProfile.levelsOf(Float.NaN)[0], 0f)
+        assertEquals(1f, PictureProfile.levelsOf(Float.NaN)[1], 0f)
+        assertEquals(0f, PictureProfile.levelsOf(-3f)[0], 0f)
+        val over = PictureProfile.levelsOf(9f)
+        assertTrue(over[1] > over[0])
+    }
+
+    @Test
+    fun dehazePreset_pushesBlacksWithoutLiftingShadows() {
+        val preset = PictureProfile.of(PicturePreset.Dehaze)
+        assertTrue(preset.dehaze > 0.3f)
+        // 去灰与"暗部提升"方向相反(一个压黑底、一个抬黑底),同时开等于互相抵消
+        assertEquals(0f, preset.shadowLift, 0.0001f)
+    }
 }

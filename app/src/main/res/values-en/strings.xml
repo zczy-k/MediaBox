@@ -236,11 +236,13 @@
     <string name="player_anime4k_tier_ultra">Ultra</string>
     <string name="player_anime4k_tier_upscale">Upscale only</string>
     <string name="player_anime4k_unavailable">This level is unavailable on this device - skipped this time</string>
+    <string name="player_anime4k_no_upscale">Source is already at or above screen size: denoise only, no upscaling</string>
     <string name="player_anime4k_sharpen">Enhance sharpness</string>
     <string name="player_anime4k_deblur">Deblur</string>
     <string name="player_picture_preset_natural">Natural</string>
     <string name="player_picture_preset_vivid">Vivid</string>
     <string name="player_picture_preset_clear">Clear</string>
+    <string name="player_picture_preset_dehaze">Dehaze</string>
     <string name="player_picture_preset_bright">Bright</string>
     <string name="player_picture_preset_cinema">Cinema</string>
     <string name="player_picture_preset_soft">Soft</string>
@@ -259,6 +261,7 @@
     <string name="player_picture_temperature">Temperature</string>
     <string name="player_picture_sharpness">Sharpness</string>
     <string name="player_picture_shadow">Shadow lift</string>
+    <string name="player_picture_dehaze">Dehaze</string>
     <string name="player_picture_compare">Hold to compare</string>
     <string name="player_picture_reset">Reset</string>
     <string name="player_picture_unavailable_tunnel">Started in tunneling mode: picture adjustment is off until playback restarts without tunneling</string>

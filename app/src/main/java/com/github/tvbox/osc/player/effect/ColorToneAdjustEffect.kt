@@ -24,6 +24,9 @@ internal class ColorToneAdjustEffect : GlEffect {
     class Parameters(profile: PictureProfile, val colorMatrix: FloatArray) {
         val gamma: Float = profile.gamma
         val hue: Float = profile.hue
+
+        /** levels 拉伸的两端(黑位, 白位);不去灰时精确是 (0,1) */
+        val levels: FloatArray = PictureProfile.levelsOf(profile.dehaze)
         val noOp: Boolean = profile.isColorNoOp && profile.isToneNoOp
     }
 
@@ -71,6 +74,7 @@ private class ColorToneAdjustShaderProgram(
         glProgram.setFloatsUniform("uColorMatrix", parameters.colorMatrix)
         glProgram.setFloatUniform("uGamma", parameters.gamma)
         glProgram.setFloatUniform("uHue", parameters.hue)
+        glProgram.setFloatsUniform("uLevels", parameters.levels)
     }
 
     private companion object {
@@ -80,6 +84,7 @@ private class ColorToneAdjustShaderProgram(
             uniform mat4 uColorMatrix;
             uniform float uGamma;
             uniform float uHue;
+            uniform vec2 uLevels;
             varying vec2 vTexSamplingCoord;
             vec3 rotateHue(vec3 color, float hue) {
               float angle = radians(hue);
@@ -94,7 +99,9 @@ private class ColorToneAdjustShaderProgram(
             }
             void main() {
               vec4 sample = texture2D(uTexSampler, vTexSamplingCoord);
-              vec3 color = clamp((uColorMatrix * vec4(sample.rgb, 1.0)).rgb, 0.0, 1.0);
+              // 先去灰再做颜色:黑位没压下去之前加饱和只会把灰纱染得更亮
+              vec3 src = clamp((sample.rgb - uLevels.x) / max(uLevels.y - uLevels.x, 0.0001), 0.0, 1.0);
+              vec3 color = clamp((uColorMatrix * vec4(src, 1.0)).rgb, 0.0, 1.0);
               if (abs(uGamma - 1.0) > 0.0001) color = pow(color, vec3(1.0 / max(uGamma, 0.0001)));
               if (abs(uHue) > 0.0001) color = rotateHue(color, uHue);
               gl_FragColor = vec4(color, sample.a);
