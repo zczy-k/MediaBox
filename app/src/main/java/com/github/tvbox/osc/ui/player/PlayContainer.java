@@ -438,6 +438,21 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
         }
     }
 
+    /**
+     * 用户**主动**挑了一条字幕(在线列表 / 本地文件)⇒ 字幕总开关关着就顺手打开。
+     *
+     * <p>真机反馈"选了字幕没反应":开关关着时 {@link #setSubtitle} 第一行就 return,
+     * 于是面板里能选、选了静默丢弃,只剩一行日志。挑字幕这个动作本身就是"我要用字幕"的明确意图,
+     * 不该再要求他先回去找开关。**自动恢复路径不走这里** —— 那条必须尊重"关着就别自作主张"。
+     */
+    private void applyUserPickedSubtitle(String path) {
+        if (!SubtitleHelper.isEnabled()) {
+            SubtitleHelper.setEnabled(true);
+            LOG.i("echo-subtitle-pick master switch was off, turned on");
+        }
+        setSubtitle(path);
+    }
+
     void setSubtitle(String path) {
         // 总开关关掉后不再加载任何字幕(设置页改动在非播放态,不必即时下发)
         if (!SubtitleHelper.isEnabled()) {
@@ -547,7 +562,7 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
                     LOG.i("echo-Local Subtitle Path: " + path);
                     // 本地文件在整部片里通用,记进片级记忆(文件被系统清掉时按失效回落)
                     TrackMemory.saveSubtitle(trackMemoryKey(), TrackMemory.subtitleLocal(path));
-                    setSubtitle(path);
+                    applyUserPickedSubtitle(path);
                 });
             } catch (Exception e) {
                 LOG.e("echo-Local Subtitle copy err: " + e);
@@ -588,6 +603,7 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
         }
         final String activeFileName = activeName;
         final String activeReleaseUrl = activeRelease;
+        LOG.i("echo-subtitle-pick open sheet active name=" + activeFileName + " release=" + activeReleaseUrl);
         uiState.setSubtitleSearchSheet(new SubtitleSearchSheetState(word == null ? "" : word, (subtitle, releaseUrl) -> {
             if (!isAttached()) return kotlin.Unit.INSTANCE;
             mActivity.runOnUiThread(() -> {
@@ -596,7 +612,9 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
                 // 只记发布页 + 文件名(直链只对当集有效):换集按集号回同一发布页取本集文件
                 TrackMemory.saveSubtitle(trackMemoryKey(),
                         TrackMemory.subtitleOnline(releaseUrl, subtitle.getName()));
-                setSubtitle(zimuUrl);
+                // 面板要用哪两个字段标"当前生效",下次日志直接能对上(发布页行 vs 文件行的名字不是一回事)
+                LOG.i("echo-subtitle-pick saved name=" + subtitle.getName() + " release=" + releaseUrl);
+                applyUserPickedSubtitle(zimuUrl);
             });
             return kotlin.Unit.INSTANCE;
         }, activeFileName, activeReleaseUrl));
@@ -640,6 +658,11 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
 
     void selectMyInternalSubtitle() {
         if (mVideoView == null) return;
+        // 与在线/本地同一处理:主动选内置字幕 = 要用字幕,总开关关着就顺手打开
+        if (!SubtitleHelper.isEnabled()) {
+            SubtitleHelper.setEnabled(true);
+            LOG.i("echo-subtitle-pick internal: master switch was off, turned on");
+        }
         AbstractPlayer mediaPlayer = mVideoView.getMediaPlayer();
         TrackInfo trackInfo = null;
         if (mediaPlayer instanceof ExoPlayer) {

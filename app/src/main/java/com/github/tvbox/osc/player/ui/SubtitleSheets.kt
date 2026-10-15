@@ -58,9 +58,6 @@ private fun formatSubtitleDelay(milliseconds: Int): String {
     return if (value.isEmpty() || value == "-0") "0" else value
 }
 
-/** 列表一行的身份:优先用地址(同名不同源的发布页不少),没有才退回文件名 */
-private fun rowKey(item: Subtitle): String = item.url?.takeIf { it.isNotEmpty() } ?: item.name ?: ""
-
 /**
  * 这一行是不是"当前生效的那条在线字幕"。
  *
@@ -335,8 +332,6 @@ fun SubtitleSearchSheet(sheet: SubtitleSearchSheetState, onDismiss: () -> Unit) 
     var items by remember { mutableStateOf(emptyList<Subtitle>()) }
     var loading by remember { mutableStateOf(false) }
     var mode by remember { mutableStateOf("search") } // search | zipfiles
-    /** 本次面板里点了哪条(直链解析是异步的,先亮起来才知道点的是哪一条) */
-    var picked by remember { mutableStateOf<String?>(null) }
     var page by remember { mutableIntStateOf(1) }
     var canLoadMore by remember { mutableStateOf(false) }
     val zipCache = remember { mutableListOf<Subtitle>() }
@@ -472,13 +467,12 @@ fun SubtitleSearchSheet(sheet: SubtitleSearchSheetState, onDismiss: () -> Unit) 
                             verticalArrangement = Arrangement.spacedBy(playerDim(R.dimen.vs_5)),
                         ) {
                             itemsIndexed(items) { _, item ->
-                                val key = rowKey(item)
                                 SheetButton(
                                     text = item.name + " (" + stringResource(
                                         if (item.isZip) R.string.subtitle_kind_zip else R.string.subtitle_kind_file,
                                     ) + ")",
-                                    // 选中态两路:本次会话里点了哪条;重开面板时按记忆里的"文件名 or 发布页地址"认
-                                    selected = key == picked || subtitleRowMatches(
+                                    // 选中态按记忆里的"文件名 or 发布页地址"认(搜索结果一行常是发布页,只比文件名标不出来)
+                                    selected = subtitleRowMatches(
                                         item.name, item.url, sheet.activeName, sheet.activeReleaseUrl,
                                     ),
                                     onClick = {
@@ -488,18 +482,15 @@ fun SubtitleSearchSheet(sheet: SubtitleSearchSheetState, onDismiss: () -> Unit) 
                                             loading = true
                                             viewModel.getSearchResultSubtitleUrls(item)
                                         } else {
-                                            // 旧行为:点完立刻收起面板 ⇒ 用户永远看不到"选中"长什么样。
-                                            // 现在先亮起来,等直链解析成功再收;解析失败就留着(亮着的那条即"没挂上")
-                                            picked = key
+                                            // 点了就收:直链是异步解析的,把面板扣在这儿等它 = 解析慢/失败时用户以为卡死。
+                                            // 挂上没有由画面自己回答(字幕出现/没出现),不靠面板里的标记。
                                             val releaseUrl = release?.url.orEmpty()
                                             viewModel.getSubtitleUrl(item) { subtitle ->
                                                 mainHandler.post {
-                                                    if (subtitle.url != null) {
-                                                        sheet.onLoadSubtitle(subtitle, releaseUrl)
-                                                        dismiss()
-                                                    }
+                                                    if (subtitle.url != null) sheet.onLoadSubtitle(subtitle, releaseUrl)
                                                 }
                                             }
+                                            dismiss()
                                         }
                                     },
                                 )
