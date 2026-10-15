@@ -145,11 +145,16 @@ public class LOG {
         }
         try {
             fileLogExecutor.execute(() -> {
-                // 每行独立开关文件:保证进程被杀时已写入的内容不丢(排查场景量小,开销可接受)
-                File current = new File(AppContextHolder.context().getFilesDir(), FILE_LOG_NAME);
-                rotateFileLog(current);
-                try (FileWriter writer = new FileWriter(current, true)) {
-                    writer.write(line + "\n");
+                // ⚠️ 取 context / 目录**必须在 try 里面**:启动早期 AppContextHolder 还没装配,
+                // `context().getFilesDir()` 会 NPE;这行一旦逃出线程池就是 FATAL EXCEPTION 直接闪退
+                // (v1.1.23 真机连崩 4 次:把取目录挪到 try 外面加的轮转,把"静默少一行日志"变成了"打不开")。
+                try {
+                    // 每行独立开关文件:保证进程被杀时已写入的内容不丢(排查场景量小,开销可接受)
+                    File current = new File(AppContextHolder.context().getFilesDir(), FILE_LOG_NAME);
+                    rotateFileLog(current);
+                    try (FileWriter writer = new FileWriter(current, true)) {
+                        writer.write(line + "\n");
+                    }
                 } catch (Throwable ignored) {
                     // 落盘失败即放弃:fileLog 自身兜底,不能再走 LOG 以免递归
                 }
