@@ -499,8 +499,8 @@
     <string name="settings_default_page">Default Start Page</string>
     <string name="settings_default_page_subtitle">Where the app opens on launch</string>
     <string name="settings_default_page_vod_only">VOD only</string>
-    <string name="settings_clear_cache">Clear Cache</string>
-    <string name="settings_clear_cache_subtitle">Clears playback cache, spider caches and search hits (keeps spider sign-in state)</string>
+    <string name="settings_repair_tools">Repair Tools</string>
+    <string name="settings_repair_tools_subtitle">Use when cached data misbehaves</string>
     <string name="settings_doh_subtitle">Secure DNS</string>
     <string name="settings_about">About</string>
     <string name="settings_about_subtitle">View details</string>

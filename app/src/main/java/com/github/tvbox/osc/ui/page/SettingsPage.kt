@@ -392,8 +392,8 @@ fun SettingsPage(
                 }
                 SettingsCard(SettingsCardPosition.LAST) {
                     SettingsRow(
-                        title = stringResource(R.string.settings_clear_cache),
-                        subtitle = stringResource(R.string.settings_clear_cache_subtitle),
+                        title = stringResource(R.string.settings_repair_tools),
+                        subtitle = stringResource(R.string.settings_repair_tools_subtitle),
                         iconRes = R.drawable.ic_delete,
                         valueText = state.cacheSizeText,
                         onClick = {

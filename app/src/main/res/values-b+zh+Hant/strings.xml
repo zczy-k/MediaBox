@@ -499,8 +499,8 @@
     <string name="settings_default_page">預設啟動頁</string>
     <string name="settings_default_page_subtitle">首次開啟應用程式時所在的位置</string>
     <string name="settings_default_page_vod_only">只看點播</string>
-    <string name="settings_clear_cache">清除快取</string>
-    <string name="settings_clear_cache_subtitle">清理播放快取、爬蟲快取與搜尋命中快取（保留爬蟲登入狀態）</string>
+    <string name="settings_repair_tools">修復工具</string>
+    <string name="settings_repair_tools_subtitle">快取出問題時點一下</string>
     <string name="settings_doh_subtitle">安全DNS</string>
     <string name="settings_about">關於</string>
     <string name="settings_about_subtitle">檢視詳細資訊</string>

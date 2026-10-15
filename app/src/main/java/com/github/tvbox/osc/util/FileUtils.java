@@ -466,7 +466,10 @@ public class FileUtils {
      */
     public static void clearRebuildableKvCaches() {
         int removed = 0;
-        for (String prefix : new String[]{"search_cache_", "jsRuntime_"}) {
+        // 删哪些前缀由 KvDataKind 的登记表决定(白名单):新加一份台账忘了登记,后果是"不会被清",
+        // 而不是"用户攒的资产被清掉"。拼音索引/线路健康也有登记,但它们的存储归各自类管,
+        // 由设置页调 TitleIndexMemory.clear() / LineHealthMemory.clear() 落地。
+        for (String prefix : KvDataKind.rebuildablePrefixes()) {
             try {
                 for (String key : KV.keys(prefix)) {
                     KV.delete(key);

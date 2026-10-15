@@ -16,8 +16,8 @@
     <string name="preload_play_cache">邊播邊緩存</string>
     <string name="preload_cache_size">緩存容量</string>
     <string name="toast_cache_size_restart">緩存容量將於下次啟動後生效</string>
-    <string name="settings_clear_cache">清除緩存</string>
-    <string name="settings_clear_cache_subtitle">清理播放緩存、爬蟲緩存與搜尋命中緩存（保留爬蟲登入狀態）</string>
+    <string name="settings_repair_tools">修復工具</string>
+    <string name="settings_repair_tools_subtitle">快取出問題時點一下</string>
     <string name="music_queue">播放隊列</string>
     <string name="music_mode_list">列表循環</string>
     <string name="settings_nav_live_hidden">導航欄隱藏直播</string>

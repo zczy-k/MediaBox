@@ -521,8 +521,8 @@
     <string name="settings_default_page">默认启动页</string>
     <string name="settings_default_page_subtitle">首次打开应用的所在位置</string>
     <string name="settings_default_page_vod_only">只看点播</string>
-    <string name="settings_clear_cache">清除缓存</string>
-    <string name="settings_clear_cache_subtitle">清理播放缓存、爬虫缓存与搜索命中缓存（保留爬虫登录状态）</string>
+    <string name="settings_repair_tools">修复工具</string>
+    <string name="settings_repair_tools_subtitle">缓存出问题时点一下</string>
     <string name="settings_doh_subtitle">安全DNS</string>
     <string name="settings_about">关于</string>
     <string name="settings_about_subtitle">查看详细信息</string>
