@@ -16,16 +16,24 @@ import xyz.doikki.videoplayer.player.VideoView
  * 用两个内核无关的事实,不用秒表猜:
  * <ul>
  *   <li>状态是 PREPARING/BUFFERING ⇒ 内核还在干活(不是错误、也不是闲在那儿);</li>
- *   <li>{@code bufferedPercent > 0} ⇒ **真的有字节进来并已被解析成缓冲** ——
- *       这条比状态更硬:一个永远连不上的地址会一直报 PREPARING 而缓冲百分比始终 0。</li>
+ *   <li>已缓冲百分比**在涨** ⇒ 数据真的在进来。⚠️ 这里要的是**增量**而不是"大于 0":
+ *       media3 的 bufferedPercentage 是"已缓冲占时长的百分比"、整数粒度,40 分钟的片子
+ *       1% 就是 24 秒缓冲,一个"活着但极慢"的加载可以连续几拍读回同一个数字。
+ *       真机就踩了这个(15:58:37 / :42 / :47 三拍都停在 14)—— 只问"大于 0"等于白等 15 秒。</li>
  * </ul>
- * 两者同时成立才宽限;任何一个取不到(含 -1/0、状态未知)一律**照旧立刻切** ——
- * 判据不确定时绝不比原来更宽容,否则就变成"死线也要等满 17 秒"那种更糟的体验。
+ * 读数不涨就是冻住 ⇒ 立刻换线,且**这算这条线的失败证据**(它十几秒没交付一个字节的增长,
+ * 与"高分辨率首帧本来就晚"是两回事)。取不到读数(-1)、恒 0(时长未知的直播)、状态未知
+ * 一律照旧立刻切 —— 判据不确定时绝不比原来更宽容,否则就变成"死线也要等满 17 秒"那种更糟的体验。
  *
  * <p>## 预算是封顶而不是许可
  * 宽限最多 [MAX_CHECKS] 次(7s + 2×5s = 17s)。超过这个还在推进的,不是"慢",
  * 是我们对这条线没办法了:让位换线,同时把证据记成"我没等到"而不是"它死了"
  * (见 [LineStartGraceDecision.gaveUpWhileProgressing])。
+ *
+ * <p>⚠️ 额度**只在真正的新一次播放时发**(`beginNewPlay`),不在每次 arm 时发:
+ * `startSwitchLinePlayTimeout` 会被多个入口重复调用(汇合点 `playUrl` 与页面桥各一次,
+ * 同址重播还会再来),在那里发额度等于**每次重播都续一次命** —— 17 秒的封顶就变成"最长不确定"。
+ * 预算花完之后的重播走原来的"7 秒到点就切",宁可少等不可无限等。
  */
 object LineStartGracePolicy {
 
@@ -38,16 +46,27 @@ object LineStartGracePolicy {
     /**
      * @param started 已经起播(调用方自己会取消等待,这里给 false)
      * @param state dkplayer 的播放状态(`VideoView.STATE_*`);取不到传 -1
-     * @param bufferedPercent 已缓冲百分比;取不到传 -1
+     * @param bufferedPercent 当前已缓冲百分比;取不到传 -1
+     * @param lastBufferedPercent 上一次检查时的同一读数;本轮还没有基线时传 -1
      * @param checksLeft 还剩几次宽限
      */
     @JvmStatic
-    fun decide(started: Boolean, state: Int, bufferedPercent: Int, checksLeft: Int): LineStartGraceDecision {
+    fun decide(
+        started: Boolean,
+        state: Int,
+        bufferedPercent: Int,
+        lastBufferedPercent: Int,
+        checksLeft: Int,
+    ): LineStartGraceDecision {
         if (started) return LineStartGraceDecision.STARTED
         if (state == VideoView.STATE_ERROR) return LineStartGraceDecision.SWITCH_NOW
-        val progressing = (state == VideoView.STATE_PREPARING || state == VideoView.STATE_BUFFERING) &&
+        val working = (state == VideoView.STATE_PREPARING || state == VideoView.STATE_BUFFERING) &&
             bufferedPercent > 0
-        if (!progressing) return LineStartGraceDecision.SWITCH_NOW
+        if (!working) return LineStartGraceDecision.SWITCH_NOW
+        // 第一拍只立基线:此刻没有可比的历史,把它当"在推进"是唯一不猜的选法
+        if (lastBufferedPercent < 0) return LineStartGraceDecision.WAIT_MORE
+        // 读数没涨(含恒 0 之外的整数粒度停滞)就是"冻住";冻住的线路不该继续花预算
+        if (bufferedPercent <= lastBufferedPercent) return LineStartGraceDecision.SWITCH_NOW
         return if (checksLeft > 0) LineStartGraceDecision.WAIT_MORE else LineStartGraceDecision.SWITCH_WAS_PROGRESSING
     }
 }

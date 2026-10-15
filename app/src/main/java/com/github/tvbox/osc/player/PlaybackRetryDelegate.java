@@ -829,16 +829,18 @@ final class PlaybackRetryDelegate {
         PlaybackAttemptState st = host.attemptState();
         PlaybackViewBridge view = host.view();
         int state = view == null ? -1 : view.currentPlayState();
-        // 宽限判据(2026-10-15):到点先问"这条线还在不在进数据",而不是直接换线。
+        // 宽限判据(2026-10-15):到点先问"这条线的缓冲还在不在长",而不是直接换线。
         // 高码率线路 prepare 到第一帧常要 8~15 秒,原来 7 秒秒表一响就当它死了 ——
         // 用户看到的"网速已经起来、正要播却被切走"就是这个。真死线不受影响:
         // 连不上的地址会一直报 PREPARING 而缓冲百分比始终 0,照样立刻切。
         int buffered = host.bufferedPercent();
         LineStartGraceDecision decision = LineStartGracePolicy.decide(
-                host.isPlaybackStarted(), state, buffered, st.switchLineGraceLeft);
+                host.isPlaybackStarted(), state, buffered, st.switchLineLastBuffered, st.switchLineGraceLeft);
         LOG.i("echo-switchLinePlay timeout state=" + state + " started=" + st.playbackStarted
-                + " buffered=" + buffered + " graceLeft=" + st.switchLineGraceLeft
-                + " decision=" + decision);
+                + " buffered=" + buffered + " last=" + st.switchLineLastBuffered
+                + " graceLeft=" + st.switchLineGraceLeft + " decision=" + decision);
+        // 记下这一拍的读数,下一拍比增量(必须先取到决策:决策用的是上一拍的值)
+        st.switchLineLastBuffered = buffered;
         if (decision == LineStartGraceDecision.STARTED) {
             host.cancelPlayTimeout();
             if (view != null) view.hideTipOnUiThread();

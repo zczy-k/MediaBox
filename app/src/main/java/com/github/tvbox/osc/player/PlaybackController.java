@@ -798,12 +798,9 @@ public class PlaybackController {
             return;
         }
         cancelPlayTimeout();
-        // 宽限额度在这里发(每次"把地址交给播放器"都是新的一轮):到点时若这条线还在进数据,
-        // 允许再复查 LineStartGracePolicy.MAX_CHECKS 次,而不是 7 秒一到就换线。
-        st.switchLineGraceLeft = LineStartGracePolicy.MAX_CHECKS;
-        st.switchLineGaveUpWhileProgressing = false;
+        // 额度不在这里发(见 PlaybackAttemptState.beginNewPlay 的注释:这里会被重复调用,发额度=续命)。
         st.playArmElapsed = android.os.SystemClock.elapsedRealtime();
-        LOG.i("echo-switchLinePlay start timeout grace=" + st.switchLineGraceLeft);
+        LOG.i("echo-switchLinePlay start timeout graceLeft=" + st.switchLineGraceLeft);
         timeouts.startSwitchLinePlayTimeout();
     }
 

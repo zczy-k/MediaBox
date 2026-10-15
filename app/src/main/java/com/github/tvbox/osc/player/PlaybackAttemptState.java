@@ -57,8 +57,8 @@ final class PlaybackAttemptState {
     long playArmElapsed = 0L;
 
     /**
-     * 换线后等起播的**剩余宽限次数**(见 {@link LineStartGracePolicy}):每次"还在进数据"的复查消耗一次,
-     * 由 {@code startSwitchLinePlayTimeout} 发满额度。
+     * 换线后等起播的**剩余宽限次数**(见 {@link LineStartGracePolicy}):每次"缓冲确实在长"的复查消耗一次。
+     * 额度在 {@code beginNewPlay} 发,不在每次 arm 发(理由见那里)。
      */
     int switchLineGraceLeft = 0;
 
@@ -201,6 +201,13 @@ final class PlaybackAttemptState {
      */
     boolean qualityRecorded;
 
+    /**
+     * 上一次检查时的已缓冲百分比读数(-1 = 本轮还没基线)。
+     * 宽限要的是**增量**:media3 的 bufferedPercentage 是整数粒度,40 分钟的片子 1% ≈ 24 秒缓冲,
+     * "活着但极慢"与"冻住"读回同一个数字(真机就停在 14 三拍)—— 只问"大于 0"就分不开这两种。
+     */
+    int switchLineLastBuffered = -1;
+
     /** 新一次播放的清场:重试阶梯 + 内核/解码自动态 + 起播标记 */
     void beginNewPlay() {
         playbackStarted = false;
@@ -209,6 +216,11 @@ final class PlaybackAttemptState {
         qualityRecorded = false;
         playTimeoutBasePosition = 0;
         switchLineGaveUpWhileProgressing = false;
+        // 宽限额度**只在这里发**,不在 startSwitchLinePlayTimeout 里发:那个函数会被多个入口
+        // 重复调用(汇合点 playUrl 与页面桥各一次,同址重播还再来),在那里发等于每次重播都续一次命,
+        // "17 秒封顶"就变成"最长不确定"。花完之后的重播走原来的"到点就切" —— 宁可少等不可无限等。
+        switchLineGraceLeft = LineStartGracePolicy.MAX_CHECKS;
+        switchLineLastBuffered = -1;
         resolveStartElapsed = 0L;
         allowSwitchPlayer = true;
         hasAutoSwitchedPlayer = false;
