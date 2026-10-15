@@ -57,10 +57,14 @@ final class PlaybackAttemptState {
     long playArmElapsed = 0L;
 
     /**
-     * 换线后等起播的**剩余宽限次数**(见 {@link LineStartGracePolicy}):每次"缓冲确实在长"的复查消耗一次。
-     * 额度在 {@code beginNewPlay} 发,不在每次 arm 发(理由见那里)。
+     * 本轮"等起播"的预算**截止时刻**(elapsedRealtime ms;0 = 本轮还没发预算)。
+     *
+     * <p>用绝对截止而不是"剩余次数":①预算可以按这条线路的历史首帧算出来(见
+     * {@code LineHealthPolicy.startBudgetMs});②重复 arm 不再续命 —— 只在第一次发到时算截止时刻,
+     * 之后谁再来 arm 都不覆盖。这正是原来用计数器时留下的漏洞:arm 有多个入口,每次发满额度
+     * 就等于每次重播都续一次命,"封顶"变成"最长不确定"。
      */
-    int switchLineGraceLeft = 0;
+    long switchLineDeadline = 0L;
 
     /**
      * 本次换线**没有线路本身的坏证据**(2026-10-15 分段归因)。两种来源:
@@ -240,10 +244,10 @@ final class PlaybackAttemptState {
         stageAnsweredAt = 0L;
         stagePurifyAt = 0L;
         stageKernelAt = 0L;
-        // 宽限额度**只在这里发**,不在 startSwitchLinePlayTimeout 里发:那个函数会被多个入口
-        // 重复调用(汇合点 playUrl 与页面桥各一次,同址重播还再来),在那里发等于每次重播都续一次命,
-        // "17 秒封顶"就变成"最长不确定"。花完之后的重播走原来的"到点就切" —— 宁可少等不可无限等。
-        switchLineGraceLeft = LineStartGracePolicy.MAX_CHECKS;
+        // 预算**不在这里发数字**,只作废:截止时刻由 startSwitchLinePlayTimeout 在本轮第一次 arm 时
+        // 按这条线路的历史首帧算一次,之后重复 arm 不覆盖(playUrl 与页面桥各调一次、同址重播还再来,
+        // 每次重发预算就等于每次续命 —— 那正是上一版用"剩余次数"时留下的漏洞)。
+        switchLineDeadline = 0L;
         switchLineLastBuffered = -1;
         resolveStartElapsed = 0L;
         allowSwitchPlayer = true;

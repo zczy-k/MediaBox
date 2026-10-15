@@ -65,7 +65,7 @@ final class PlaybackRetryDelegate {
         void cancelPlayTimeout();
 
         /** 宽限期复查(还在进数据时用它替掉"到点就换线") */
-        void startSwitchLineGraceTimeout();
+        void startSwitchLineGraceTimeout(long delayMs);
 
         /** 已缓冲百分比(内核无关口径;取不到返回 -1)——"这条线还在进数据"的唯一硬证据 */
         int bufferedPercent();
@@ -846,8 +846,12 @@ final class PlaybackRetryDelegate {
         // 用户看到的"网速已经起来、正要播却被切走"就是这个。真死线不受影响:
         // 连不上的地址会一直报 PREPARING 而缓冲百分比始终 0,照样立刻切。
         int buffered = host.bufferedPercent();
+        // 剩余预算(本轮第一次 arm 时按这条线路的历史首帧算好,重复 arm 不续命)
+        long remaining = st.switchLineDeadline <= 0L
+                ? 0L
+                : st.switchLineDeadline - android.os.SystemClock.elapsedRealtime();
         LineStartGraceDecision decision = LineStartGracePolicy.decide(
-                host.isPlaybackStarted(), state, buffered, st.switchLineLastBuffered, st.switchLineGraceLeft);
+                host.isPlaybackStarted(), state, buffered, st.switchLineLastBuffered, remaining);
         // 分段归因(2026-10-15):这个定时器是在 playUrl 入口 arm 的,而净化链(m3u8 要自己再拉
         // 1~2 次网络)发生在它之后 —— 所以"超时"完全可能是**我们还在拉播放列表**,而不是这条流不行。
         // 只有 stage=player-start(地址确实交给内核了)才有资格把账记到线路头上。
@@ -855,7 +859,7 @@ final class PlaybackRetryDelegate {
         LOG.i("echo-switchLinePlay timeout stage=" + stage.tag() + " stageWaited=" + host.stageElapsedMs()
                 + " state=" + state + " started=" + st.playbackStarted
                 + " buffered=" + buffered + " last=" + st.switchLineLastBuffered
-                + " graceLeft=" + st.switchLineGraceLeft + " decision=" + decision);
+                + " budgetLeft=" + remaining + " decision=" + decision);
         // 记下这一拍的读数,下一拍比增量(必须先取到决策:决策用的是上一拍的值)
         st.switchLineLastBuffered = buffered;
         if (decision == LineStartGraceDecision.STARTED) {
@@ -864,8 +868,8 @@ final class PlaybackRetryDelegate {
             return;
         }
         if (decision == LineStartGraceDecision.WAIT_MORE) {
-            st.switchLineGraceLeft--;
-            host.startSwitchLineGraceTimeout();
+            // WAIT_MORE 只在预算还有剩余时才可能返回(decide 里判的),所以这里一定有下一拍
+            host.startSwitchLineGraceTimeout(LineStartGracePolicy.nextCheckMs(remaining));
             return;
         }
         // 走到这里就是要换线。两种"不算线路失败":缓冲确实在长(我没等到)、

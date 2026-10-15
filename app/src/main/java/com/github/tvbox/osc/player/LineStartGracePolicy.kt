@@ -26,29 +26,28 @@ import xyz.doikki.videoplayer.player.VideoView
  * 一律照旧立刻切 —— 判据不确定时绝不比原来更宽容,否则就变成"死线也要等满 17 秒"那种更糟的体验。
  *
  * <p>## 预算是封顶而不是许可
- * 宽限最多 [MAX_CHECKS] 次(7s + 2×5s = 17s)。超过这个还在推进的,不是"慢",
+ * 总预算由 [LineHealthPolicy.startBudgetMs] 按**这条线路自己的历史首帧耗时**算出来
+ * (没有足够历史就是原来的 17 秒:7s 首查 + 2×5s 宽限)。超过预算还在推进的,不是"慢",
  * 是我们对这条线没办法了:让位换线,同时把证据记成"我没等到"而不是"它死了"
  * (见 [LineStartGraceDecision.gaveUpWhileProgressing])。
  *
- * <p>⚠️ 额度**只在真正的新一次播放时发**(`beginNewPlay`),不在每次 arm 时发:
- * `startSwitchLinePlayTimeout` 会被多个入口重复调用(汇合点 `playUrl` 与页面桥各一次,
- * 同址重播还会再来),在那里发额度等于**每次重播都续一次命** —— 17 秒的封顶就变成"最长不确定"。
- * 预算花完之后的重播走原来的"7 秒到点就切",宁可少等不可无限等。
+ * <p>⚠️ 预算换成**绝对截止时刻**而不是"剩余次数",有两个原因:
+ * ①`startSwitchLinePlayTimeout` 会被多个入口重复调用(汇合点 `playUrl` 与页面桥各一次,
+ * 同址重播还会再来),按次数发额度等于每次重播都续一次命 —— "封顶"就变成"最长不确定";
+ * ②预算要能随线路历史变长变短,次数表达不了 12 秒这种数值。
+ * 现在截止时刻只在本轮第一次 arm 时算一次,之后任何重复 arm 都不覆盖。
  */
 object LineStartGracePolicy {
 
     /** 宽限期的复查间隔:不是一把新秒表,只是"再问一次还在不在动" */
     const val CHECK_MS = 5_000L
 
-    /** 最多宽限几次(总预算 = 7s + CHECK_MS × 本值) */
-    const val MAX_CHECKS = 2
-
     /**
      * @param started 已经起播(调用方自己会取消等待,这里给 false)
      * @param state dkplayer 的播放状态(`VideoView.STATE_*`);取不到传 -1
      * @param bufferedPercent 当前已缓冲百分比;取不到传 -1
      * @param lastBufferedPercent 上一次检查时的同一读数;本轮还没有基线时传 -1
-     * @param checksLeft 还剩几次宽限
+     * @param remainingMs 本轮预算还剩多少(见 [LineHealthPolicy.startBudgetMs]);<=0 = 已经花完
      */
     @JvmStatic
     fun decide(
@@ -56,7 +55,7 @@ object LineStartGracePolicy {
         state: Int,
         bufferedPercent: Int,
         lastBufferedPercent: Int,
-        checksLeft: Int,
+        remainingMs: Long,
     ): LineStartGraceDecision {
         if (started) return LineStartGraceDecision.STARTED
         if (state == VideoView.STATE_ERROR) return LineStartGraceDecision.SWITCH_NOW
@@ -64,11 +63,22 @@ object LineStartGracePolicy {
             bufferedPercent > 0
         if (!working) return LineStartGraceDecision.SWITCH_NOW
         // 第一拍只立基线:此刻没有可比的历史,把它当"在推进"是唯一不猜的选法
-        if (lastBufferedPercent < 0) return LineStartGraceDecision.WAIT_MORE
+        if (lastBufferedPercent < 0) return waitOrGiveUp(remainingMs)
         // 读数没涨(含恒 0 之外的整数粒度停滞)就是"冻住";冻住的线路不该继续花预算
         if (bufferedPercent <= lastBufferedPercent) return LineStartGraceDecision.SWITCH_NOW
-        return if (checksLeft > 0) LineStartGraceDecision.WAIT_MORE else LineStartGraceDecision.SWITCH_WAS_PROGRESSING
+        return waitOrGiveUp(remainingMs)
     }
+
+    private fun waitOrGiveUp(remainingMs: Long): LineStartGraceDecision =
+        if (remainingMs > 0L) LineStartGraceDecision.WAIT_MORE else LineStartGraceDecision.SWITCH_WAS_PROGRESSING
+
+    /**
+     * 下一次复查隔多久:最多 [CHECK_MS],但**剩得不足一个周期就等到底** ——
+     * 不然会出现"预算 12 秒、实际等到 15 秒"那种越过上界的情况。
+     */
+    @JvmStatic
+    fun nextCheckMs(remainingMs: Long): Long =
+        if (remainingMs <= 0L) 0L else minOf(CHECK_MS, remainingMs)
 }
 
 enum class LineStartGraceDecision {

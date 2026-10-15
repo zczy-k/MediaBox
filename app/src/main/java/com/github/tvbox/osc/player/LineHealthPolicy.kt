@@ -67,6 +67,32 @@ object LineHealthPolicy {
     const val SCORE_PLAYED_WEEK = 40
     const val SCORE_PLAYED_STALE = 20
 
+    // —— 首帧耗时与"该给这条线多少等待"（2026-10-15 自适应）——
+    // 真机分段实测把主耗时定位在 **地址交给内核之后**（player 段 4.1~10.4 秒），
+    // 而不是取流那段（spider 段均值 1.5 秒，全部落在 6~9 秒窗口内）。
+    // 所以等待预算按**这条线路自己的历史首帧**给，而不是按线路标签猜谁"看起来是高分辨率"。
+    // 样本不足就用现在的固定值 ⇒ 新线路永远不会比改动前更宽容，也就不会因为"没数据"而多等。
+    /** 没有足够历史时的默认预算(ms) —— 就是改动前的 7s + 2×5s,行为不变 */
+    const val DEFAULT_START_BUDGET_MS = 17_000L
+
+    /** 预算下界:再快也不低于原来那把 7 秒秒表 */
+    const val MIN_START_BUDGET_MS = 7_000L
+
+    /** 预算上界:再慢也不许无限等(总要有换线的时候) */
+    const val MAX_START_BUDGET_MS = 25_000L
+
+    /** 平滑样本数封顶:再老的线路也只记最近这么几次,换 CDN 后能转回来 */
+    private const val EMA_SAMPLE_CAP = 8
+
+    /** 低于这个样本数就按"没历史"处理:一两次观测说明不了这条线的常态 */
+    const val MIN_BUDGET_SAMPLES = 2
+
+    /** 超过这个值判为异常样本(净化卡住、系统抖动),不污染平滑值 */
+    const val MAX_FIRST_FRAME_MS = 60_000L
+
+    /** 这条记忆多久没更新就不作数(ms):半年前能播多快,代表不了今天 */
+    const val BUDGET_STALE_MS = 30L * 24 * 60 * 60 * 1000
+
     /** 单条线路的健康状态(可序列化) */
     data class State(
         /** 连续失败次数;成功起播即归零 */
@@ -77,6 +103,12 @@ object LineHealthPolicy {
         val resolveMs: Long = 0L,
         /** 最近一次成功起播时刻(ms);0 = 没成功过 */
         val playedAt: Long = 0L,
+        /** 首帧耗时的平滑值(ms);0 = 没有样本 */
+        val firstFrameEmaMs: Long = 0L,
+        /** 参与平滑的样本数(封顶,保证它对最近几次仍然敏感) */
+        val firstFrameSamples: Int = 0,
+        /** 最后一次首帧样本的时刻(ms);用于判"这本历史还作不作数" */
+        val firstFrameAt: Long = 0L,
     )
 
     /**
@@ -99,6 +131,44 @@ object LineHealthPolicy {
     /** 记一次取流耗时;<=0 视为未知,不覆盖已有值 */
     fun recordResolveMs(state: State, resolveMs: Long): State =
         if (resolveMs <= 0) state else state.copy(resolveMs = resolveMs)
+
+    /**
+     * 记一次首帧耗时(地址交给内核 → 画面真的出来)。
+     *
+     * <p>异常样本直接丢:净化卡住之类的偶发慢会把平滑值抬到天花板,反而让以后每一次起播都多等,
+     * 那是"为一次事故给全部播放加罚"。平滑取 3/4 旧 + 1/4 新,样本数封顶 [EMA_SAMPLE_CAP],
+     * 保证它对最近几次仍然敏感(不然一条线换了 CDN 以后要几十次才转得过来)。
+     */
+    fun recordFirstFrame(state: State, ms: Long, now: Long): State {
+        if (ms <= 0L || ms > MAX_FIRST_FRAME_MS) return state
+        val blended = if (state.firstFrameSamples == 0 || state.firstFrameEmaMs <= 0L)
+            ms
+        else
+            (state.firstFrameEmaMs * 3L + ms) / 4L
+        return state.copy(
+            firstFrameEmaMs = blended,
+            firstFrameSamples = (state.firstFrameSamples + 1).coerceAtMost(EMA_SAMPLE_CAP),
+            firstFrameAt = now,
+        )
+    }
+
+    /**
+     * 这条线路的**等起播预算**(首查 7 秒之外,还允许再宽限多久)。
+     *
+     * <p>规则按"没有数据时不许比改动前更宽容"来定:样本不足、或者历史已经过期 ⇒
+     * 返回 [DEFAULT_START_BUDGET_MS](等于改动前的 7s + 2×5s),既不新增等待也不减少;
+     * 有历史 ⇒ 取 1.5 倍平滑值再加 2 秒余量,并夹在 [[MIN_START_BUDGET_MS], [MAX_START_BUDGET_MS]] 里
+     * —— 下界保证快线仍快,上界保证"再慢也要有个头",不做无限等待。
+     *
+     * @return 一次起播尝试的总预算(ms),从把地址交给播放器那一刻算起
+     */
+    fun startBudgetMs(state: State, now: Long): Long {
+        if (state.firstFrameSamples < MIN_BUDGET_SAMPLES) return DEFAULT_START_BUDGET_MS
+        if (state.firstFrameEmaMs <= 0L) return DEFAULT_START_BUDGET_MS
+        if (now - state.firstFrameAt > BUDGET_STALE_MS) return DEFAULT_START_BUDGET_MS
+        val wanted = state.firstFrameEmaMs + state.firstFrameEmaMs / 2L + 2_000L
+        return wanted.coerceIn(MIN_START_BUDGET_MS, MAX_START_BUDGET_MS)
+    }
 
     /**
      * 这条线路当前是否"可疑"(近期连续失败、且没成功过)。

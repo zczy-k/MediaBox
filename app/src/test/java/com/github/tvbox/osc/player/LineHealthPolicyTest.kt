@@ -298,4 +298,75 @@ class LineHealthPolicyTest {
         assertEquals("", LineHealthMemory.keyOf("源A", "片9", ""))
         assertEquals("", LineHealthMemory.keyOf(null, null, null))
     }
+
+    // ---------- 等起播预算(2026-10-15 自适应) ----------
+
+    /** 没有足够历史 ⇒ 必须等于改动前的 17 秒:自适应不许靠猜,没数据就按老行为 */
+    @Test
+    fun `预算在没有历史时就是原来的默认值`() {
+        assertEquals(
+            LineHealthPolicy.DEFAULT_START_BUDGET_MS,
+            LineHealthPolicy.startBudgetMs(LineHealthPolicy.State(), t0),
+        )
+        val one = LineHealthPolicy.recordFirstFrame(LineHealthPolicy.State(), 9_000L, t0)
+        assertEquals(
+            "一次观测说明不了这条线的常态",
+            LineHealthPolicy.DEFAULT_START_BUDGET_MS,
+            LineHealthPolicy.startBudgetMs(one, t0),
+        )
+    }
+
+    /** 平滑取 3/4 旧 + 1/4 新:一次偶然慢不能把预算抬上去 */
+    @Test
+    fun `首帧样本走平滑而不是直接覆盖`() {
+        var s = LineHealthPolicy.recordFirstFrame(LineHealthPolicy.State(), 10_000L, t0)
+        assertEquals(10_000L, s.firstFrameEmaMs)
+        s = LineHealthPolicy.recordFirstFrame(s, 2_000L, t0 + 60_000L)
+        assertEquals(8_000L, s.firstFrameEmaMs)
+        assertEquals(2, s.firstFrameSamples)
+    }
+
+    /** 异常样本(净化卡住之类)丢掉:否则一次事故会给以后每次起播加罚 */
+    @Test
+    fun `异常样本不进平滑`() {
+        val first = LineHealthPolicy.recordFirstFrame(LineHealthPolicy.State(), 5_000L, t0)
+        val junked = LineHealthPolicy.recordFirstFrame(
+            first,
+            LineHealthPolicy.MAX_FIRST_FRAME_MS + 1L,
+            t0 + 60_000L,
+        )
+        assertEquals(5_000L, junked.firstFrameEmaMs)
+        assertEquals(1, junked.firstFrameSamples)
+        val zero = LineHealthPolicy.recordFirstFrame(first, 0L, t0 + 60_000L)
+        assertEquals(1, zero.firstFrameSamples)
+    }
+
+    /** 预算 = 1.5 倍平滑 + 2 秒余量,并夹在上下界里 */
+    @Test
+    fun `预算按历史算并夹在上下界之间`() {
+        val slow = twoSamples(9_000L, 11_000L)     // ema=9500 ⇒ 9500+4750+2000
+        assertEquals(16_250L, LineHealthPolicy.startBudgetMs(slow, slow.firstFrameAt))
+        val fast = twoSamples(1_000L, 2_000L)       // 夹到下界:快线不该因为"会自适应"就多等
+        assertEquals(LineHealthPolicy.MIN_START_BUDGET_MS, LineHealthPolicy.startBudgetMs(fast, fast.firstFrameAt))
+        val verySlow = twoSamples(30_000L, 40_000L)  // 夹到上界:再慢也要有个头
+        assertEquals(LineHealthPolicy.MAX_START_BUDGET_MS, LineHealthPolicy.startBudgetMs(verySlow, verySlow.firstFrameAt))
+        assertEquals("下界就是原来那把秒表", 7_000L, LineHealthPolicy.MIN_START_BUDGET_MS)
+    }
+
+    /** 半年前的"能播多快"代表不了今天 ⇒ 过期就当没有历史 */
+    @Test
+    fun `历史过期就退回默认值`() {
+        val s = twoSamples(20_000L, 20_000L)
+        assertEquals(
+            LineHealthPolicy.DEFAULT_START_BUDGET_MS,
+            LineHealthPolicy.startBudgetMs(s, s.firstFrameAt + LineHealthPolicy.BUDGET_STALE_MS + 1L),
+        )
+    }
+
+    private fun twoSamples(firstMs: Long, secondMs: Long): LineHealthPolicy.State =
+        LineHealthPolicy.recordFirstFrame(
+            LineHealthPolicy.recordFirstFrame(LineHealthPolicy.State(), firstMs, t0),
+            secondMs,
+            t0 + 60_000L,
+        )
 }

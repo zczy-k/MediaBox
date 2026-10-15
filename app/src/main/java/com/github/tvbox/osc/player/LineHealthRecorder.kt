@@ -108,6 +108,20 @@ object LineHealthRecorder {
     }
 
     /**
+     * 上报一次首帧耗时(同样是纯观测值)。
+     *
+     * <p>它是等起播预算从"固定 17 秒"改成"按这条线的历史算"的唯一依据;
+     * 直播不记 —— 直播没有"这条线路起播要多久"的概念,频道地址也不是同一回事。
+     */
+    @JvmStatic
+    fun recordFirstFrame(sourceKey: String?, vodId: String?, flag: String?, firstFrameMs: Long) {
+        if (!LineHealthMemory.isEnabled()) return
+        if (firstFrameMs <= 0L) return
+        if (KV.get(HawkConfig.PLAYER_IS_LIVE, false)) return
+        LineHealthMemory.recordFirstFrame(sourceKey, vodId, flag, firstFrameMs)
+    }
+
+    /**
      * 上报一次成功起播：线路侧连续失败归零，并给**源级**记一次 `PLAY_SUCCESS`。
      *
      * <p>源级这一笔是 2026-10-15 补的：`PLAY_SUCCESS` 这个证据类型一直存在却没有任何调用点，

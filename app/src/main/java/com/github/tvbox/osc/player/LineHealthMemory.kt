@@ -174,6 +174,33 @@ object LineHealthMemory {
     }
 
     /**
+     * 记一次**首帧耗时**(地址交给内核 → 画面出来)。它是 [startBudgetMs] 的唯一输入:
+     * "这条线本来就要这么久"只能由它自己的历史说明,不按线路标签猜。
+     */
+    @Synchronized
+    fun recordFirstFrame(sourceKey: String?, vodId: String?, flag: String?, ms: Long, now: Long = System.currentTimeMillis()) {
+        if (ms <= 0) return
+        val k = keyOf(sourceKey, vodId, flag)
+        if (k.isEmpty()) return
+        mutate(k) { current, _ -> LineHealthPolicy.recordFirstFrame(current, ms, now) }
+    }
+
+    /**
+     * 这条线路本轮该给多少等起播预算。
+     *
+     * <p>开关关闭 / 读不到记忆一律返回 [LineHealthPolicy.DEFAULT_START_BUDGET_MS] ——
+     * 那正是加自适应**之前**的总等待(7s + 2×5s),所以"没有数据"永远不会变成多等。
+     */
+    @JvmStatic
+    @Synchronized
+    fun startBudgetMs(sourceKey: String?, vodId: String?, flag: String?, now: Long): Long = try {
+        if (!isEnabled()) LineHealthPolicy.DEFAULT_START_BUDGET_MS
+        else LineHealthPolicy.startBudgetMs(lookup(sourceKey, vodId, flag), now)
+    } catch (th: Throwable) {
+        LineHealthPolicy.DEFAULT_START_BUDGET_MS
+    }
+
+    /**
      * 批量读排序分:一次装载 + 一次解析,供 [LineHealthSelector] 重排候选。
      *
      * <p>⚠️ 刻意不缓存到内存:KV 读取本身是同步且廉价的(单键 JSON),
@@ -362,6 +389,9 @@ object LineHealthMemory {
         .put("fa", s.failAt)
         .put("rm", s.resolveMs)
         .put("pa", s.playedAt)
+        .put("fe", s.firstFrameEmaMs)
+        .put("fc", s.firstFrameSamples)
+        .put("ft", s.firstFrameAt)
 
     private fun decode(o: JSONObject?): LineHealthPolicy.State {
         if (o == null) return LineHealthPolicy.State()
@@ -371,6 +401,10 @@ object LineHealthMemory {
                 failAt = o.optLong("fa"),
                 resolveMs = o.optLong("rm"),
                 playedAt = o.optLong("pa"),
+                // 老盘上没有这三个字段:读成"没有样本"⇒ 预算退回默认值,行为与加自适应之前一致
+                firstFrameEmaMs = o.optLong("fe"),
+                firstFrameSamples = o.optInt("fc"),
+                firstFrameAt = o.optLong("ft"),
             )
         } catch (th: Throwable) {
             LineHealthPolicy.State()

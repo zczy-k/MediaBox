@@ -496,8 +496,8 @@ public class PlaybackController {
         }
 
         @Override
-        public void startSwitchLineGraceTimeout() {
-            PlaybackController.this.startSwitchLineGraceTimeout();
+        public void startSwitchLineGraceTimeout(long delayMs) {
+            PlaybackController.this.startSwitchLineGraceTimeout(delayMs);
         }
 
         @Override
@@ -722,6 +722,13 @@ public class PlaybackController {
             st.playArmElapsed = 0L;
             long now = android.os.SystemClock.elapsedRealtime();
             VodInfo startedVod = vod();
+            // 首帧耗时只记 **player 段**(地址交给内核 → 画面出来)。分段归因到这里才闭环:
+            // spider/purify 那些段慢的不是这条线,拿它们算预算会把死线也养成长等待。
+            long playerMs = st.stageKernelAt > 0L ? now - st.stageKernelAt : -1L;
+            if (playerMs > 0L && startedVod != null) {
+                LineHealthRecorder.INSTANCE.recordFirstFrame(
+                        startedVod.sourceKey, startedVod.id, startedVod.playFlag, playerMs);
+            }
             // 分段耗时(-1 = 这一段测不到,不是零):py 爬虫的 HTTP 发生在 Python 内部,
             // Java 只见进出,所以 spider 段是整块、不假装能拆出"发出去/等回包"。
             LOG.i("echo-firstframe ms=" + (now - armedAt)
@@ -819,15 +826,25 @@ public class PlaybackController {
             return;
         }
         cancelPlayTimeout();
-        // 额度不在这里发(见 PlaybackAttemptState.beginNewPlay 的注释:这里会被重复调用,发额度=续命)。
-        st.playArmElapsed = android.os.SystemClock.elapsedRealtime();
-        LOG.i("echo-switchLinePlay start timeout graceLeft=" + st.switchLineGraceLeft);
+        long now = android.os.SystemClock.elapsedRealtime();
+        // 预算只在**本轮第一次 arm** 时算一次,之后重复 arm 不覆盖:playUrl 与页面桥各调一次、
+        // 同址重播还会再来,每次重发预算等于每次重播都续一次命("封顶"就没了)。
+        // 数值取这条线路自己的历史首帧(样本不足就是原来的 17 秒)—— 高分辨率线路首帧实测
+        // 4~10 秒,固定预算要么误杀慢线、要么让死线多等,按历史算才有依据。
+        if (st.switchLineDeadline == 0L) {
+            VodInfo armed = vod();
+            long budget = armed == null ? LineHealthPolicy.DEFAULT_START_BUDGET_MS
+                    : LineHealthMemory.startBudgetMs(armed.sourceKey, armed.id, armed.playFlag, now);
+            st.switchLineDeadline = now + budget;
+            LOG.i("echo-switchLinePlay budget=" + budget + " line=" + (armed == null ? "?" : armed.playFlag));
+        }
+        st.playArmElapsed = now;
         timeouts.startSwitchLinePlayTimeout();
     }
 
-    /** 宽限期内的一次复查(判据仍在 handleSwitchLinePlayTimeout) */
-    void startSwitchLineGraceTimeout() {
-        timeouts.startSwitchLineGraceTimeout();
+    /** 宽限期复查:间隔由剩余预算决定(判据仍在 handleSwitchLinePlayTimeout) */
+    void startSwitchLineGraceTimeout(long delayMs) {
+        timeouts.startSwitchLineGraceTimeout(delayMs);
     }
 
     public void cancelSwitchLinePlayTimeout() {

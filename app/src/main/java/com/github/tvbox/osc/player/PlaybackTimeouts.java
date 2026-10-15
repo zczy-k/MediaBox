@@ -70,12 +70,16 @@ final class PlaybackTimeouts {
     }
 
     /**
-     * 宽限期复查(2026-10-15):到点时若"还在准备且缓冲真在长",不按失败处理,而是再问一次。
-     * 判据与封顶见 {@link LineStartGracePolicy} —— 这不是把秒表调长,是把"没起来"和"还没起来完"分开。
+     * 宽限期复查(2026-10-15):到点时若"缓冲确实在长",不按失败处理,而是再问一次。
+     * 判据见 {@link LineStartGracePolicy},预算见 {@link LineHealthPolicy#startBudgetMs} ——
+     * 这不是把秒表调长,是把"没起来"和"还没起来完"分开。
+     *
+     * @param delayMs 由 {@link LineStartGracePolicy#nextCheckMs} 算出(不会越过本轮预算的尾巴);
+     *                调用方只在预算还有剩余时才走到这里
      */
-    void startSwitchLineGraceTimeout() {
+    void startSwitchLineGraceTimeout(long delayMs) {
         cancelPlayTimeout();
-        handler.sendEmptyMessageDelayed(MSG_SWITCH_LINE_PLAY_TIMEOUT, LineStartGracePolicy.CHECK_MS);
+        handler.sendEmptyMessageDelayed(MSG_SWITCH_LINE_PLAY_TIMEOUT, Math.max(1L, delayMs));
     }
 
     void cancelPlayTimeout() {
