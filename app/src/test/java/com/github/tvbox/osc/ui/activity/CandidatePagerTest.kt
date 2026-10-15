@@ -112,4 +112,28 @@ class CandidatePagerTest {
     fun clampPage_negativeToZero() {
         assertEquals(0, CandidatePager.clampPage(-2, total = 12))
     }
+
+    /**
+     * 真机 v1.1.40:《狮子王》那一行只有 3 个源,却显示「下一页」而且点不动。
+     * 根因是分叉 —— 界面按**候选条目数**(25)算页数,chip 列表按**去重后的源**(3)渲染,
+     * 于是 25 条算出 5 页、3 个源只有 1 页:按钮出现了,点下去又被 clampPage 钳回第 0 页。
+     */
+    @Test
+    fun `分页总数必须是去重后的源数`() {
+        // 同一个源返回多张卡片(国语/粤语/不同 id),这是候选表里的常态
+        val entries = listOf("A", "A", "A", "B", "B", "C")
+        val pageable = CandidatePager.pageableSources(entries, currentSourceKey = "Z") { it }
+        assertEquals("条目 6 个但只有 3 个源", 3, pageable.size)
+        // 用错口径就会造出幽灵页
+        assertTrue("条目数会误判成有下一页", CandidatePager.hasNext(entries.size, page = 0))
+        assertFalse("去重后没有下一页", CandidatePager.hasNext(pageable.size, page = 0))
+    }
+
+    @Test
+    fun `当前源不参与分页而空源键保留`() {
+        val entries = listOf("A", "B", null, "B", "C")
+        val pageable = CandidatePager.pageableSources(entries, currentSourceKey = "A") { it }
+        // 排除当前源 A;B 去重留一条;null 只留第一条(与旧内联写法一致)
+        assertEquals(listOf("B", null, "C"), pageable)
+    }
 }

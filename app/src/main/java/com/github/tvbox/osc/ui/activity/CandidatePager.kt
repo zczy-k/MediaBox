@@ -51,6 +51,23 @@ object CandidatePager {
     /** 是否存在下一页(用于决定是否显示「下一页」按钮)。 */
     fun hasNext(total: Int, page: Int): Boolean = page.coerceAtLeast(0) < pageCount(total) - 1
 
+    /**
+     * 候选条目 → **真正参与分页的源序列**(排除当前源 + 按源去重)。
+     *
+     * <p>⚠️ 分页的总数必须**只**由本结果的 size 决定。真机 v1.1.40 抓到分叉:
+     * 界面用**未去重的条目数**算「有没有下一页」,而那一行 chip 是按**去重后的源**渲染的 ——
+     * 一部片在同一个源里返回多张卡片(国语/粤语/不同 id)时,条目 25 / 源 3,
+     * 于是"只有 3 个源却显示下一页",点下去又被 [clampPage] 钳回第一页 ⇒ 看着像按钮坏了。
+     *
+     * <p>与旧内联写法严格一致:`sourceKey` 为 null 的条目**保留**(它不等于当前源 key),
+     * 而 [distinctBy] 会把所有 null 归为同一组只留第一条 —— 改这里的语义会连带改变候选数量。
+     */
+    fun <T> pageableSources(candidates: List<T>, currentSourceKey: String?, keyOf: (T) -> String?): List<T> =
+        candidates.asSequence()
+            .filter { keyOf(it) != currentSourceKey }
+            .distinctBy { keyOf(it) }
+            .toList()
+
     /** 是否存在上一页(用于决定是否显示「上一页」按钮)。 */
     fun hasPrev(page: Int): Boolean = page > 0
 

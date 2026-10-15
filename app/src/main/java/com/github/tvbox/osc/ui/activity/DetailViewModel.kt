@@ -2384,9 +2384,10 @@ class DetailViewModel : ViewModel() {
         // 2026-10-14 反馈 #3 回退:曾尝试"当前源置顶+标当前源",但**前提是错的** ——
         // 候选列表里的源全是**其他源**(全站聚合搜出来的),与起播的当前源无关;
         // 把"源1"标成"当前源"会让用户误以为源1=正在播放的源。故回退为纯匿名序号。
-        val all = synchronized(fallbackCandidates) { fallbackCandidates.toList() }
-            .filter { it.sourceKey != sourceKey }
-            .distinctBy { it.sourceKey }
+        val all = CandidatePager.pageableSources(
+            synchronized(fallbackCandidates) { fallbackCandidates.toList() },
+            currentSourceKey = sourceKey,
+        ) { it.sourceKey }
         // 源评分(2026-10-14 出路 A):有历史数据的源显示评分,无数据的显式标"暂无评分"。
         // ⚠️ score() 对无数据也返回中性 60,所以这里必须**另行判断"是否真无数据"**并置 null ——
         // 直接把 60 显示成"60分"是误导(用户会以为"这源就 60 分",实际是"没有证据")。
@@ -2467,10 +2468,7 @@ class DetailViewModel : ViewModel() {
 
     /** 下一页(仅在有下一页时生效;钳制由 [CandidatePager.hasNext] 保证)。 */
     fun nextChipPage() {
-        val total = synchronized(fallbackCandidates) {
-            fallbackCandidates.count { it.sourceKey != sourceKey }
-        }
-        if (!CandidatePager.hasNext(total, chipPage.value)) return
+        if (!CandidatePager.hasNext(chipSourceTotal(), chipPage.value)) return
         chipPage.value += 1
         publishSourceChips()
         LOG.i("echo-source-switch next page=${chipPage.value}")
@@ -2484,10 +2482,19 @@ class DetailViewModel : ViewModel() {
         LOG.i("echo-source-switch prev page=${chipPage.value}")
     }
 
-    /** 候选源总数(全量,非当前页):供界面判断"是否有下一页"。 */
-    fun totalCandidateCount(): Int = synchronized(fallbackCandidates) {
-        fallbackCandidates.count { it.sourceKey != sourceKey }
-    }
+    /** 候选源总数(全量,非当前页):供界面判断"是否有下一页"。 
+     *
+     * <p>{5fc5}{987b}{4e0e} chip {90a3}{4e00}{884c}{7528}{7684}{540c}{4e00}{4efd}{53bb}{91cd}{53e3}{5f84}({89c1} CandidatePager.pageableSources) {2014}{2014} {771f}{673a}{51fa}{73b0}{8fc7}{300c}{53ea}{6709} 3 {4e2a}{6e90}{5374}{663e}{793a}{4e0b}{4e00}{9875}{3001}{70b9}{4e86}{4e0d}{52a8}{300d},
+     * {5c31}{662f}{56e4}{4e3a}{754c}{9762}{{}}{6761}{76ee}{6570}{3001}{5217}{8868}{6309}{53bb}{91cd}{6e90}{6570}{3002}{540c}{4e00}{6e90}{{}}{591a}{5f20}{5361}{7247}({56fd}{8bed}/{7ca4}{8bed}{{}}) {65f6}{{}}{53ef}{80fd}{{}} 25 {6761}{53ea}{5bf9}{5e94} 3 {4e2a}{6e90}{3002}
+     */
+    fun totalCandidateCount(): Int = chipSourceTotal()
+
+    /** {5206}{9875}{{}}{4e00}{771f}{503c}:{53c2}{4e0e}{5206}{9875}{7684}{6e90}{6570}({6392}{9664}{5f53}{524d}{6e90} + {6309}{6e90}{53bb}{91cd})。
+     *  UI {7684} hasNext3001{70b9}{{}}{4e0b}{4e00}{9875}{7684}{5224}{636e}3001publishSourceChips {7684}{5207}{9875}{53d6}{{}}{90fd}{53ea}{80fd}{{}}{{}}{4e2a}{3002} */
+    private fun chipSourceTotal(): Int = CandidatePager.pageableSources(
+        synchronized(fallbackCandidates) { fallbackCandidates.toList() },
+        currentSourceKey = sourceKey,
+    ) { it.sourceKey }.size
 
     /**
      * 候选源的**匿名**展示名。**必须**只依赖列表下标,不能碰 `ApiConfig.getSource(key).name` ——
