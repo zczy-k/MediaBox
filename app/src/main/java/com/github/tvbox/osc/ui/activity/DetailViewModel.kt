@@ -1844,7 +1844,8 @@ class DetailViewModel : ViewModel() {
         searchProgress.value = SearchProgress(
             searchedSourceKeys.size.coerceAtMost(effectiveTotal),
             effectiveTotal,
-            synchronized(fallbackCandidates) { fallbackCandidates.size },
+            // 与下面那一行同一口径（可见源数）；波次增量的判据仍用原始表长，两处不该混用
+            chipSourceTotal(),
         )
         // [临时诊断 2026-10-14 #1] 搜索启动时刻的 UI 状态快照(searchProgress 分母应为全量源数)。
         LOG.i(
@@ -2124,7 +2125,11 @@ class DetailViewModel : ViewModel() {
         val total = searchProgress.value?.total ?: 0
         if (total <= 0) return
         val searched = searchedSourceKeys.size
-        val candidates = synchronized(fallbackCandidates) { fallbackCandidates.size }
+        // 顶部"已找到 N 个来源"必须与下面那一行**同一个口径**(去重后的可见源数,排除正在播的那个)。
+        // 此前它用候选条目数:同一个源返回多张卡片(国语/粤语/不同 id)会算多条,而正在播的源
+        // 也在表里却被视图层排除 —— 真机 v1.1.45 就是顶部说"4 个"、下面只有 3 个,
+        // 用户据此判断"有一个源被吞了"。这是"三处同口径"的第四处,当时漏了。
+        val candidates = chipSourceTotal()
         searchProgress.value = SearchProgress(searched.coerceAtMost(total), total, candidates)
         // [临时诊断 2026-10-14 #1] 节流:每 25 个源打一次 + 首尾必打,避免刷屏又能看到进度在走。
         if (searched == 1 || searched == total || searched % 25 == 0) {
