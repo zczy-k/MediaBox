@@ -89,7 +89,6 @@
     <string name="settings_subtitle_enabled">Enable subtitles</string>
     <string name="settings_subtitle_enabled_subtitle">When off, subtitles are neither loaded nor shown</string>
     <string name="settings_subtitle_sources">Subtitle sources</string>
-    <string name="settings_subtitle_sources_subtitle">Pick which sources online subtitle search uses</string>
     <string name="settings_subtitle_custom">Custom subtitle sources</string>
     <string name="settings_subtitle_custom_subtitle">Any JSON API works: use {kw} in the URL, items need a url field</string>
     <string name="settings_subtitle_custom_add">Add custom source</string>

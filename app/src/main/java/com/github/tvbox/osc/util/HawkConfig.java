@@ -119,8 +119,6 @@ public class HawkConfig {
     public static final String SUBTITLE_EXO_POSITION = "subtitle_exo_position";
     /** 字幕总开关:关掉后不自动加载也不显示字幕 */
     public static final String SUBTITLE_ENABLED = "subtitle_enabled";
-    /** 内置字幕源启用状态(JSON:{源key:true/false}),缺省全部启用 */
-    public static final String SUBTITLE_SOURCES = "subtitle_sources";
     /** 自定义字幕源(JSON 数组:[{name,url}],url 里用 {kw} 占位) */
     public static final String SUBTITLE_CUSTOM_SOURCES = "subtitle_custom_sources";
     public static final String SOURCES_FOR_SEARCH = "checked_sources_for_search";

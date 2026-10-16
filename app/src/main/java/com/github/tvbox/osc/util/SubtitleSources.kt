@@ -4,7 +4,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * 字幕源注册表:内置源的启用开关 + 用户自定义源,两者都落在 KV。
+ * 字幕源注册表:内置源恒启用（不再摆在设置里）+ 用户自定义源（落在 KV）。
  *
  * <p>自定义源的约定:URL 模板里用 `{kw}` 占位(搜索时会替换为 URL 编码后的关键词),
  * 接口返回 JSON——可以是数组,也可以是 `{"list":[...]}`;每个元素至少要有
@@ -19,33 +19,20 @@ object SubtitleSources {
 
     const val KEY_XUNLEI = "xunlei"
 
-    data class BuiltIn(val key: String, val name: String)
-
     data class Custom(val name: String, val urlTemplate: String)
 
-    /** 内置源;顺序即搜索发起顺序 */
-    val builtIns: List<BuiltIn> = listOf(
-        BuiltIn(KEY_ASSRT, "Assrt"),
-        BuiltIn(KEY_SUBTITLECAT, "SubtitleCat"),
-        BuiltIn(KEY_XUNLEI, "迅雷字幕"),
-    )
-
-    /** 未登记过时视为启用,避免老用户升级后所有源都被判成关闭 */
-    fun isEnabled(key: String): Boolean {
-        val raw = KV.get(HawkConfig.SUBTITLE_SOURCES, "")
-        if (raw.isNullOrBlank()) return true
-        return try {
-            JSONObject(raw).optBoolean(key, true)
-        } catch (e: Exception) {
-            true
-        }
-    }
-
-    fun setEnabled(key: String, enabled: Boolean) {
-        val obj = readObject()
-        obj.put(key, enabled)
-        KV.put(HawkConfig.SUBTITLE_SOURCES, obj.toString())
-    }
+    /**
+     * 内置源**恒启用**（2026-10-16：设置页不再列内置源）。
+     *
+     * <p>为什么撤掉开关：这三个源能不能用是"今天这个站连不连得上"的问题，用户既没有信息判断，
+     * 也没有必要判断；摆出来只会变成"看着能选、选了也不知道会怎样"的一行。
+     *
+     * <p>⚠️ 撤 UI 必须同时把**旧的关闭值作废**：老用户 KV 里可能存着 `{"assrt":false}`，
+     * 若继续读它，就会出现"入口没了、源却被永久锁死、还没法恢复"——这正是"删行前先确认它是唯一入口"
+     * 那条口径要防的事。所以现在这里不读 KV，`SUBTITLE_SOURCES` 这个键连同注册一起撤掉
+     * （残留在 MMKV 里的老值没人读，无害）。
+     */
+    fun isEnabled(key: String): Boolean = true
 
     fun custom(): List<Custom> {
         val raw = KV.get(HawkConfig.SUBTITLE_CUSTOM_SOURCES, "")
@@ -84,14 +71,5 @@ object SubtitleSources {
             array.put(JSONObject().put("name", item.name).put("url", item.urlTemplate))
         }
         KV.put(HawkConfig.SUBTITLE_CUSTOM_SOURCES, array.toString())
-    }
-
-    private fun readObject(): JSONObject {
-        val raw = KV.get(HawkConfig.SUBTITLE_SOURCES, "")
-        return try {
-            if (raw.isNullOrBlank()) JSONObject() else JSONObject(raw)
-        } catch (e: Exception) {
-            JSONObject()
-        }
     }
 }

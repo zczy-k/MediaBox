@@ -116,7 +116,6 @@ public final class KVKeySpec implements KVDecoder.TypeRegistry {
         register(HawkConfig.HOME_COLUMNS, 0);
         register(HawkConfig.HOME_POSTER_RATIO_MODE, "");
         register(HawkConfig.SUBTITLE_ENABLED, false);
-        register(HawkConfig.SUBTITLE_SOURCES, "");
         register(HawkConfig.SUBTITLE_CUSTOM_SOURCES, "");
 
         // ---- boolean ----

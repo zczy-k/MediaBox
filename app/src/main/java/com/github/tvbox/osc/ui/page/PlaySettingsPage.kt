@@ -65,11 +65,9 @@ fun PlaySettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewM
     val context = LocalContext.current
     var showPrewarmWarning by remember { mutableStateOf(false) }
     var sliderCacheSize by remember(state.exoCacheSizeMb) { mutableStateOf(state.exoCacheSizeMb) }
-    // 字幕:总开关 + 内置源开关 + 自定义源,都直接读写 KV,不走 SettingsState(不必整页 refresh)
+    // 字幕:总开关 + 自定义源,都直接读写 KV,不走 SettingsState(不必整页 refresh)。
+    // 内置源(Assrt/SubtitleCat/迅雷字幕)2026-10-16 起**不在设置里出现** —— 见 SubtitleSources 的说明。
     var subtitleEnabled by remember { mutableStateOf(SubtitleHelper.isEnabled()) }
-    var sourceEnabled by remember {
-        mutableStateOf(SubtitleSources.builtIns.associate { it.key to SubtitleSources.isEnabled(it.key) })
-    }
     var customSources by remember { mutableStateOf(SubtitleSources.custom()) }
     var customSourceDialog by remember { mutableStateOf(false) }
     // 画质策略四档 + 画质上限:直接读写 KV,不走 SettingsState(同字幕区块的"不必整页 refresh"约定)。
@@ -250,22 +248,12 @@ fun PlaySettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewM
             Spacer(Modifier.height(24.dp))
 
             SettingsGroup(title = stringResource(R.string.settings_subtitle_sources)) {
-                val total = SubtitleSources.builtIns.size + customSources.size + 1
-                SubtitleSources.builtIns.forEachIndexed { index, source ->
-                    SettingsCard(cardPosition(index, total)) {
-                        SettingsSwitchRow(
-                            title = source.name,
-                            checked = sourceEnabled[source.key] ?: true,
-                            enabled = subtitleEnabled,
-                            onCheckedChange = { checked ->
-                                SubtitleSources.setEnabled(source.key, checked)
-                                sourceEnabled = sourceEnabled + (source.key to checked)
-                            },
-                        )
-                    }
-                }
+                // 只剩一个真意图:接入用户自己的字幕源。内置的三个源不再摆出来当选项 ——
+                // "这个站今天能不能连上、要不要用它"不是用户能判断的事,我们比他们更早知道结果;
+                // 它们现在恒参与搜索(见 SubtitleSources.isEnabled)。
+                val total = customSources.size + 1
                 customSources.forEachIndexed { index, item ->
-                    SettingsCard(cardPosition(SubtitleSources.builtIns.size + index, total)) {
+                    SettingsCard(cardPosition(index, total)) {
                         SettingsRow(
                             title = item.name,
                             subtitle = item.urlTemplate,

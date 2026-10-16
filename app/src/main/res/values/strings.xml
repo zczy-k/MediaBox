@@ -89,7 +89,6 @@
     <string name="settings_subtitle_enabled">启用字幕</string>
     <string name="settings_subtitle_enabled_subtitle">关闭后播放时不加载、不显示字幕</string>
     <string name="settings_subtitle_sources">字幕源</string>
-    <string name="settings_subtitle_sources_subtitle">选择在线搜索字幕时使用哪些源</string>
     <string name="settings_subtitle_custom">自定义字幕源</string>
     <string name="settings_subtitle_custom_subtitle">返回 JSON 的接口即可接入：URL 用 {kw} 占位，元素需含 url 字段</string>
     <string name="settings_subtitle_custom_add">添加自定义源</string>

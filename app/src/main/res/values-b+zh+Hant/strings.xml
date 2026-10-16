@@ -89,7 +89,6 @@
     <string name="settings_subtitle_enabled">啟用字幕</string>
     <string name="settings_subtitle_enabled_subtitle">關閉後播放時不載入、不顯示字幕</string>
     <string name="settings_subtitle_sources">字幕來源</string>
-    <string name="settings_subtitle_sources_subtitle">選擇線上搜尋字幕時使用哪些來源</string>
     <string name="settings_subtitle_custom">自訂字幕來源</string>
     <string name="settings_subtitle_custom_subtitle">回傳 JSON 的介面即可接入：URL 用 {kw} 佔位，元素需含 url 欄位</string>
     <string name="settings_subtitle_custom_add">新增自訂來源</string>
