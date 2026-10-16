@@ -77,6 +77,18 @@ public class RefreshEvent {
      * 再试一次"的明确信号(重置阶梯 + autoRetry)。
      */
     public static final int TYPE_NETWORK_RESTORED = 29;
+    /**
+     * 播放层确认「这一条内容真的出过画面」（或本条内容判不了画面，退给"连续推进够 60 秒"这条兜底）。
+     *
+     * <p>谁发：{@code PlaybackController.onPlaybackConfirmedRealPlay}（看门狗第四层的落点）。
+     * 谁收：详情页 —— 用它撤销换源板块这一场的 🟡/隐藏。
+     *
+     * <p>为什么不复用 {@link #TYPE_PLAYBACK_STARTED}：那个的语义是**"看过了 ⇒ 该落观看历史"**，
+     * 判据是播放头平滑推进 + "真看进去了"的进度阈值，**从头到尾不看画面**。把它顺手当
+     * "这源能放"的证据，就会出现真机那种"整段黑屏、只有声音在推进，源却把自己洗白了"。
+     * 撤销要的是画面凭据，所以这里给一条独立的、语义明确的事件（编号不复用 29 之前的空洞）。
+     */
+    public static final int TYPE_PLAYBACK_PICTURE_UP = 30;
     public int type;
     public Object obj;
 

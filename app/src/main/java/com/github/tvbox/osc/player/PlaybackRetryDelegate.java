@@ -399,7 +399,12 @@ final class PlaybackRetryDelegate {
     private boolean handOverToSourceFallback() {
         showStageTip(R.string.player_trying_other_source);
         PlaybackViewBridge view = host.view();
-        return view != null && view.onLinesExhausted();
+        boolean taken = view != null && view.onLinesExhausted();
+        // ⚠️ 这条是"换源到底接没接住"的唯一可观测点(2026-10-16 全方位审核 P1)。
+        // 之前这里、以及 reportExhausted 全都不打日志 ⇒ 真机"线路跑完却没有源接过去"时,
+        // 文件里只剩"超时/换线"那几行,分不清是**没候选**、**页面桥没接**、还是**VM 侧被闸拦住**。
+        LOG.i("echo-fallback handover taken=" + taken + " view=" + (view != null));
+        return taken;
     }
 
     /**
@@ -498,8 +503,13 @@ final class PlaybackRetryDelegate {
         PlaybackAttemptState st = host.attemptState();
         VodInfo vod = host.vod();
         if (vod == null || vod.seriesMap == null || vod.seriesMap.isEmpty()) {
+            // 本源压根没有线路表(单直链源、详情没给 seriesMap)⇒ "本源线路已轮完"这件事成立,
+            // 语义与下面"一条线试完"完全相同,**必须同样交棒给换源链**。
+            // 2026-10-16 全方位审核抓到的静默断点:这里原来是 linesExhausted() 后直接 return false,
+            // 上层只 reportExhausted ⇒ 单直链源失败后既不换线也不换源,用户看到的就是"卡住没反应"。
+            LOG.i("echo-fallback no-lines reason=empty-seriesMap flag=" + (vod == null ? "no-vod" : vod.playFlag));
             st.linesExhausted();
-            return false;
+            return handOverToSourceFallback();
         }
         String currentFlag = vod.playFlag;
         int currentIndex = Math.max(vod.playIndex, 0);
@@ -792,6 +802,9 @@ final class PlaybackRetryDelegate {
     private void reportExhausted() {
         host.stopMusicSessionForFailedPlayback();
         boolean network = host.attemptState().lastFailureNetwork;
+        // 无路可走的终态也要留一行:否则用户只看到弹了个 toast,而日志里查不到"是哪一类收口"
+        // (网络类 / 片源类),下一次再报"卡死无举动"时还是只能猜。
+        LOG.i("echo-fallback exhausted network=" + network);
         showErrorTip(PlaybackController.str(
                 network ? R.string.toast_network_error : R.string.player_play_failed_all));
     }

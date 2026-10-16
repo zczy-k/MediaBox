@@ -631,7 +631,6 @@
     <string name="danmu_search_failed">弹幕搜索失败</string>
     <string name="toast_jar_load_failed">JAR加载失败</string>
     <string name="toast_network_error">网络错误</string>
-    <string name="toast_ads_removed">已移除视频广告 %1$d 条</string>
     <string name="cast_device_offline">设备离线</string>
     <string name="toast_local_config_read_failed">读取本地配置失败</string>
     <string name="toast_local_missing_files_hint">还有 %1$d 个同目录文件没搬过来,请选择该配置所在的文件夹</string>

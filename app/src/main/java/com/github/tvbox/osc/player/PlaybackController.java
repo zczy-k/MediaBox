@@ -689,6 +689,29 @@ public class PlaybackController {
             String key = vod == null ? null : vod.sourceKey;
             if (TextUtils.isEmpty(key)) return;
             LineHealthRecorder.INSTANCE.recordSourcePlaySuccess(key);
+            // 面板撤销走**画面凭据**,不再借用"看过 ⇒ 落历史"那个信号(2026-10-16 全方位审核 S1):
+            // 整段黑屏、只有声音在推进的源,过去靠 TYPE_PLAYBACK_STARTED 一次就把自己洗白。
+            // 判不了画面(非 media3 内核 / 拿不到播放器)时**不否决**,退给本条信号本身当兜底 ——
+            // "判不了就不判"在这里的落法是:宁可不撤销也不误撤销,但也不能让撤销永远等不到证据。
+            if (pictureEvidenceOrUnprovable()) {
+                EventBus.getDefault().post(new RefreshEvent(RefreshEvent.TYPE_PLAYBACK_PICTURE_UP));
+            } else {
+                LOG.i("echo-play-verify layer=source-board action=skip-revoke reason=no-frame-evidence");
+            }
+        }
+
+        /**
+         * 撤销换源板块标记所需的画面凭据:本条内容**真的渲染出过一帧**。
+         *
+         * <p>{@code firstRenderedAtMs} 在每次 {@code prepareAsync()} 归零,所以"渲染过"始终指的是
+         * **当前这一集/这一条线路**,不会拿上一集的画面上屏来给这一条洗白。
+         */
+        private boolean pictureEvidenceOrUnprovable() {
+            PlaybackViewBridge v = view;
+            if (v == null) return true;
+            AbstractPlayer p = v.mediaPlayer();
+            if (!(p instanceof ExoPlayer)) return true;
+            return ((ExoPlayer) p).firstRenderedAtMs() > 0L;
         }
 
         @Override
@@ -1477,11 +1500,16 @@ public class PlaybackController {
             public void run() {
                 if (st.switchStopPending) {
                     // 换源点击即停后,已排队的取流结果(含嗅探/解析回调)不得再拉起播放
+                    // ⚠️ 必须把"地址已交给内核"这一刻撤掉:它在 runOnUi 之前就置了,而这个地址
+                    // 根本没进内核。留着会让 playStage() 报 player-start,于是
+                    // "慢的不算线路账"那条保护在这里失效(2026-10-16 全方位审核)。
+                    st.stageKernelAt = 0L;
                     LOG.i("echo-ignore goPlayUrl while source switching");
                     return;
                 }
                 if (playUrlGeneration != resolver.currentGen()) {
                     // 上一轮的产物(排队期已切集/换线/换源/重播)⇒ 丢弃,并撤掉旧链超时(否则到期会触发一次换线)
+                    st.stageKernelAt = 0L;   // 同上:地址没交给内核,段别不能算走过
                     LOG.i("echo-ignore goPlayUrl of stale parse result");
                     resolver.cancelParseTimeout();
                     return;

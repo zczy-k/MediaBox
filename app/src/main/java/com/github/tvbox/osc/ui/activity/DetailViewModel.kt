@@ -2571,9 +2571,12 @@ class DetailViewModel : ViewModel() {
         // 2026-10-14 反馈 #3 回退:曾尝试"当前源置顶+标当前源",但**前提是错的** ——
         // 候选列表里的源全是**其他源**(全站聚合搜出来的),与起播的当前源无关;
         // 把"源1"标成"当前源"会让用户误以为源1=正在播放的源。故回退为纯匿名序号。
-        // 2026-10-16 再加一条排除：**这一场两条不同来源都失败过**的源（自动链替他试过 +
-        // 他本人又手动切过去再失败）不再出现在这一行。注意隐藏只发生在视图层 ——
-        // 候选表本身一条都不删，撤销状态后原样回来、号也还是原来那个号。
+        // 2026-10-16 口径纠正:隐藏判据是**纯计数** —— 这一场该源失败满两次就隐藏
+        //   (见 SourceBoardLedger.failsToHide)。以前这里写的"两条**不同来源**都失败过"是
+        //   把我举的例子当成了合取条件,那个条件真机上几乎永远凑不齐(同一个起点源重播三次
+        //   全落在同一侧),结果就是"说了两次就隐藏,却一直没隐藏"。
+        //   撤销侧另有一条更严的凭据:画面真的上过屏(见 [revokeBoardMarkWithPicture])。
+        //   隐藏只发生在视图层 —— 候选表本身一条都不删,撤销状态后原样回来、号也还是原来那个号。
         val all = CandidatePager.pageableSources(
             synchronized(fallbackCandidates) { fallbackCandidates.toList() },
             currentSourceKey = sourceKey,
@@ -3180,6 +3183,7 @@ class DetailViewModel : ViewModel() {
                 onChain = fallbackActive,
             )
         ) {
+            LOG.i("echo-fallback no-start reason=entry-blocked changeable=" + (currentSource?.isChangeable() ?: true) + " indexLike=" + (currentSource?.isIndexSource() == true || DetailNoListMemory.isIndexLike(sourceKey)) + " onChain=" + fallbackActive)
             return false
         }
         // 已在换源链上又收到"线路耗尽" ⇒ 刚切换过去那个候选站也挂了,必须继续往下取候选。
@@ -3190,7 +3194,10 @@ class DetailViewModel : ViewModel() {
             return loadNextFallbackCandidate()
         }
         val title = (if (vodInfo?.name.isNullOrEmpty()) vodName else vodInfo?.name).orEmpty().trim()
-        if (title.isEmpty()) return false
+        if (title.isEmpty()) {
+            LOG.i("echo-fallback no-start reason=empty-title key=$sourceKey id=$vodId")
+            return false
+        }
         fallbackKeepCurrentDetail = fromLinesExhausted && vodInfo != null && !vodInfo?.seriesMap.isNullOrEmpty()
         captureFallbackEpisode()
         searchTitle = title
@@ -3390,9 +3397,15 @@ class DetailViewModel : ViewModel() {
             return false
         }
         if (!sourcesSearching.value) {
+            // 候选遍历完 + 全站搜索也已经停了 ⇒ 真没路了。这条与上面"全候选本场都失败过"
+            // 是两种不同终态,日志必须分开写,否则复盘时分不清是哪一种收口。
+            LOG.i("echo-fallback end reason=search-stopped candidates=" + liveCandidateKeys.size)
             finishFallbackWithoutResult()
             return false
         }
+        // 说"已接管"其实是"等下一批候选回来":搜索还在跑 ⇒ 不换源、也不报终态。
+        // 没有这行日志,外面看到"线路耗尽之后什么都没发生"时无法区分"在等"与"卡死"。
+        LOG.i("echo-fallback keep reason=search-running candidates=" + liveCandidateKeys.size)
         return true
     }
 
@@ -4114,6 +4127,10 @@ class DetailViewModel : ViewModel() {
             onPlaybackStarted()
             return
         }
+        if (event.type == RefreshEvent.TYPE_PLAYBACK_PICTURE_UP) {
+            revokeBoardMarkWithPicture()
+            return
+        }
         // 实测画质写进记忆了:重算一次「线路N · 1080P」。不发这个事件的话,
         // 标签本次会话永远刷不出来 —— 探测跑在独立作用域上,这是它唯一的回传途径。
         if (event.type == RefreshEvent.TYPE_LINE_QUALITY_MEASURED) {
@@ -4147,6 +4164,29 @@ class DetailViewModel : ViewModel() {
     }
 
     /** 播放器真的播起来才落库;校验在播内容与本页一致(含集/线路:音乐页接管后改的是同一份 session) */
+    /**
+     * 用**画面凭据**撤销这一场该源的 🟡/隐藏（2026-10-16 全方位审核 S1）。
+     *
+     * <p>为什么值得单独一条通路：换源板块标记回答的是"这个源现在能不能放"，
+     * 而它以前挂在 `TYPE_PLAYBACK_STARTED` 上 —— 那是"看过了 ⇒ 落历史"的信号，不看画面。
+     * 现在凭据来自播放层的"本条内容真的渲染出一帧"（判不了画面的内核不否决，退给连续推进 60 秒兜底），
+     * 于是"有声无画"的源不会自己洗白，而正常出画的源几秒内就放回面板。
+     *
+     * <p>一致性守卫沿用 [onPlaybackStarted] 那一套四元组(内容 id + 源 + 线路 + 集)：
+     * 换源/切集交错的瞬间，迟到的确认属于**上一内容**，不许给当前这一行改状态。
+     * `recordSuccess` 自身只在"确实有标记可清"时返回 true，重复信号不会连发刷新。
+     */
+    private fun revokeBoardMarkWithPicture() {
+        val info = vodInfo ?: return
+        val playing = App.getInstance().vodInfo ?: return
+        if (playing.id != info.id || playing.sourceKey != info.sourceKey) return
+        if (playing.playFlag != info.playFlag || playing.playIndex != info.playIndex) return
+        if (sourceBoard.recordSuccess(sourceKey)) {
+            LOG.i("echo-source-board ord=" + sourceBoard.ordinalOf(sourceKey) + " mark=NONE by=picture-ok")
+            publishSourceChips()
+        }
+    }
+
     private fun onPlaybackStarted() {
         val info = vodInfo ?: return
         val playing = App.getInstance().vodInfo ?: return
@@ -4160,11 +4200,11 @@ class DetailViewModel : ViewModel() {
         // 它由 PlaybackProgress 每集发一次的 TYPE_PLAYBACK_STARTED 触发,节流在 30 秒级,
         // 所以绝不能当成主路径:1.0.43 实测正是"分辨率 2 秒测到、标签 32 秒才更新"。
         publishLineQualityHeights()
-        // 播通一次 ⇒ 撤销这个源这一场的失败标记（隐藏必须先撤销，否则一次成功也救不回来）
-        if (sourceBoard.recordSuccess(sourceKey)) {
-            LOG.i("echo-source-board ord=" + sourceBoard.ordinalOf(sourceKey) + " mark=NONE by=played-ok")
-            publishSourceChips()
-        }
+        // ⚠️ 这里**不再**撤销这一场的 🟡/隐藏(2026-10-16 全方位审核 S1)。
+        // TYPE_PLAYBACK_STARTED 的语义是"看过了 ⇒ 该落观看历史",判据是播放头推进 + 进度阈值,
+        // **一次都不看画面**;把它当"这源能放"的证据 ⇒ 真机那种整段黑屏只有声音的源,
+        // 一次就把自己洗白,而源加分却要真播 60 秒(隐藏严、撤销松,状态被抖来抖去)。
+        // 撤销现在只走 [revokeBoardMarkWithPicture] —— 凭据是画面真的上过屏。
         // 首帧已出 ⇒ 允许"打开线路面板时按需探爬虫型线路"这类后置探测
         playbackStartedHere = true
         // 起播成功后启动"源内有界扫描"(见《选线机制设计》附录 G)。**放在这里而非起播前**,

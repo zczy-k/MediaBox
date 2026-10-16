@@ -392,6 +392,20 @@
     <string name="detail_order_asc">正序</string>
     <string name="detail_order_desc">倒序</string>
     <string name="detail_switch_source">換源</string>
+    <!-- 换源板块的状态措辞与按钮字样(2026-10-16 补译;以前只在 values/ 里有,繁体界面回落简体)。
+         口径:开放式发现只报「问到几个 / 找到几个」,不写 x/总数 —— 那个分母兑现不了。 -->
+    <string name="detail_source_score">%1$d分</string>
+    <string name="detail_source_no_score">暫無評分</string>
+    <string name="detail_source_switch_action">換源</string>
+    <string name="detail_source_search_action">搜源</string>
+    <string name="detail_source_switch_hint">點擊搜尋其他片源</string>
+    <string name="detail_source_searching_start">正在找源…</string>
+    <string name="detail_source_searching_none">正在找源 · 已問過 %1$d 個</string>
+    <string name="detail_source_searching_found">正在找源 · 已問過 %1$d 個 · 已找到 %2$d 個來源</string>
+    <string name="detail_source_found">已找到 %1$d 個來源</string>
+    <string name="detail_source_none_found">暫時沒找到其他源</string>
+    <string name="detail_source_prev_page">上一頁</string>
+    <string name="detail_source_next_page">下一頁</string>
     <string name="detail_finding_source">尋找片源中…</string>
     <string name="detail_cross_hint">%1$s 上次觀看實測為 %2$s</string>
     <string name="detail_cross_hint_go">去看看</string>
@@ -601,7 +615,6 @@
     <string name="danmu_search_failed">彈幕搜尋失敗</string>
     <string name="toast_jar_load_failed">JAR 載入失敗</string>
     <string name="toast_network_error">網路錯誤</string>
-    <string name="toast_ads_removed">已移除影片廣告 %1$d 則</string>
     <string name="cast_device_offline">裝置離線</string>
     <string name="toast_local_config_read_failed">讀取本機設定失敗</string>
     <string name="toast_local_missing_files_hint">還有 %1$d 個同目錄檔案沒搬過來，請選擇該設定所在的資料夾</string>

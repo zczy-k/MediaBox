@@ -180,9 +180,12 @@ public class HawkConfig {
     // 搜索线程数(2026-09-12,设置页滑块 16/32/48/64 四档):全站搜索源并发信号量许可数
     public static final String SEARCH_THREADS = "search_threads";
     public static final int SEARCH_THREADS_DEFAULT = 32;
-    // 长按倍速(2026-09-12,设置页滑块 2x~10x 步长 1):长按画面临时提速的倍率
+    // 长按倍速:设置页是档位菜单 2x/4x/8x(见 PreferenceSettingsPage 的 speedTiers),
+    // 长按画面临时提速的倍率。⚠️ 默认值必须落在档位表里 —— 以前是 3,而档位表没有 3,
+    // nearestTier 平手贴低 ⇒ 没动过设置的用户在设置页看到"长按 2 倍速"、实跑 3×
+    // (2026-10-16 全方位审核抓到:出厂显示与出厂行为不一致,每个用户每次长按都读到错的那一个)。
     public static final String LONG_PRESS_SPEED = "long_press_speed";
-    public static final int LONG_PRESS_SPEED_DEFAULT = 3;
+    public static final int LONG_PRESS_SPEED_DEFAULT = 2;
     // 缓冲倍数(2026-09-12,设置页滑块 1x~10x 步长 1,默认 3x,照搬 fongmi 方案):
     // Exo 蓄水目标 = 官方默认 50s × N;起播/再缓冲阈值不乘,保证秒开
     public static final String BUFFER_TIMES = "buffer_times";

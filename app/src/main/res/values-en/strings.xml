@@ -392,6 +392,21 @@
     <string name="detail_order_asc">Ascending</string>
     <string name="detail_order_desc">Descending</string>
     <string name="detail_switch_source">Switch source</string>
+    <!-- 换源板块的状态措辞与按钮字样(判据见 SourceSearchStatus)。
+         ⚠️ 2026-10-16 全方位审核补译:这一族以前只在 values/ 里有,英文/繁体界面整块回落简体。
+         措辞口径与中文一致 —— 开放式发现只报"问到几个/找到几个",不写 x/总数(兑现不了的分母)。 -->
+    <string name="detail_source_score">Rated %1$d</string>
+    <string name="detail_source_no_score">No score</string>
+    <string name="detail_source_switch_action">Switch source</string>
+    <string name="detail_source_search_action">Search sources</string>
+    <string name="detail_source_switch_hint">Tap to search other sources</string>
+    <string name="detail_source_searching_start">Searching sources…</string>
+    <string name="detail_source_searching_none">Searching sources · asked %1$d</string>
+    <string name="detail_source_searching_found">Searching sources · asked %1$d · found %2$d sources</string>
+    <string name="detail_source_found">Found %1$d sources</string>
+    <string name="detail_source_none_found">No other sources found yet</string>
+    <string name="detail_source_prev_page">Previous page</string>
+    <string name="detail_source_next_page">Next page</string>
     <string name="detail_finding_source">Finding sources…</string>
     <string name="detail_cross_hint">%1$s measured %2$s when you last watched</string>
     <string name="detail_cross_hint_go">Go</string>
@@ -601,7 +616,6 @@
     <string name="danmu_search_failed">Danmaku search failed</string>
     <string name="toast_jar_load_failed">Failed to load JAR</string>
     <string name="toast_network_error">Network error</string>
-    <string name="toast_ads_removed">Removed %1$d video ads</string>
     <string name="cast_device_offline">Device offline</string>
     <string name="toast_local_config_read_failed">Failed to read the local config</string>
     <string name="toast_local_missing_files_hint">%1$d files in the same folder have not been copied. Select the folder containing this config</string>

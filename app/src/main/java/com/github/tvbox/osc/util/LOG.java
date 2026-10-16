@@ -49,9 +49,21 @@ public class LOG {
      * </ul>
      */
     private static final String[] FILE_LOG_PREFIXES = FILE_LOG
-            ? new String[]{"echo-preload", "echo-setDataSource", "echo-play-cache", "echo-kv", "echo-progress", "echo-exo", "echo-music", "echo-lyric", "echo-sub", "echo-danmu", "echo-p2", "echo-p3", "echo-p4", "echo-p5", "clearCache", "echo--jar", "echo-local-src", "echo-setTrack", "echo-autoRetry", "echo-player", "echo-switch", "echo-goPlayUrl", "echo-history", "echo-render", "echo-picture", "echo-anime4k", "echo--list", "echo--getList", "echo--parse", "echo--getSort", "echo--sort", "echo-proxy",
+            // ↓ 2026-10-16:**判法换掉 —— 用 "echo-" 一条兜底,不再逐条登记**。
+            //   本机扫描实测:代码里 180 个 echo-* 头部、约 500 条消息**从未落过盘**
+            //   (弹幕 25、字幕记忆 18、直播/EPG/回看一族、爬虫与 jar 加载、嗅探拦截、投屏、修复工具…)。
+            //   本类注释已经为这件事记过五次坑,每一次的症状都一样:"代码在跑、日志被过滤",
+            //   而我们把它读成"功能没执行" —— 逐条补是**一定还会漏**的那种修法(下一版新前缀照样忘登记)。
+            //   现在改成:凡 echo- 开头即落盘。铁律从"记得登记"变成"起个 echo- 开头的名字"。
+            //   ⚠️ 代价要说清:文件更满 ⇒ 4MB 轮转更频繁(轮转保留一份 .1,"事故前最后几秒"仍查得到);
+            //   真机读日志一律按行号基线取增量,别把上一轮的噪声当这一轮的证据。
+            //   下面原有的逐条项现在都被兜底覆盖,保留只为可读性,**不必再往里加新条目**。
+            ? new String[]{"echo-",
+            // 非 echo 前缀的三个家族(它们的名字是历史决定的,兜底覆盖不到)
+            "dlna-cast", "boot-guard", "native-lib-repair",
+            "echo-preload", "echo-setDataSource", "echo-play-cache", "echo-kv", "echo-progress", "echo-exo", "echo-music", "echo-lyric", "echo-sub", "echo-danmu", "echo-p2", "echo-p3", "echo-p4", "echo-p5", "clearCache", "echo--jar", "echo-local-src", "echo-setTrack", "echo-autoRetry", "echo-player", "echo-switch", "echo-goPlayUrl", "echo-history", "echo-render", "echo-picture", "echo-anime4k", "echo--list", "echo--getList", "echo--parse", "echo--getSort", "echo--sort", "echo-proxy",
             // ↓ 诊断包(v1.0.24 起):画质优选 / 详情看门狗 / 换源预热 / 缓存裁剪
-            "echo-quality", "echo-detail", "echo-source", "source-prewarm", "SubtitleCacheJanitor", "echo-cacheTrim",
+            "echo-quality", "echo-detail", "echo-source", "source-prewarm", "SubtitleCacheJanitor",
             // ↓ v1.0.26:线路实测画质探测(诊断「线路N」后面一直不显示分辨率)
             // ↓ v1.0.30:echo-line-heights 是**读取侧**,与写入侧的 echo-quality write-key 配对,
             //   两侧同看才能判断"记忆写进去了却读不回来"这类键不匹配问题。
@@ -101,11 +113,12 @@ public class LOG {
             //   **LOG.i 的新前缀必须同步登记本数组,提交前 grep 复核**。
             //   echo-weight:连续权重台账(record/floor/clear) —— 回答"权重模型是否生效、
             //     保底配额捞了哪几个源";echo-recover:四层恢复(L1 网络平反 / L2 探活) ——
-            //     回答"误封的源何时被放回";echo-xsource:跨源升清决策(decide/skip) ——
-            //     回答"为什么跨源切/没切"。
+            //     回答"误封的源何时被放回"。
             //   ⚠️ 2026-10-13 **第五次**踩坑:新增 echo-fallback(换源链跳过已失败源 / 全候选失败终态)
-            //     时又忘了登记 —— 提交前 grep 复核白名单,这条铁律要刻进流程。
-            "echo-weight", "echo-recover", "echo-xsource", "echo-fallback",
+            //     时又忘了登记 —— 这条坑在 2026-10-16 已由 "echo-" 兜底前缀根除(见本数组开头)。
+            //   (原 echo-xsource 跨源升清决策的**生产者已在 7f39333 删除**,条目一并撤掉 ——
+            //     留着它只会让人以为还有这条链在跑。)
+            "echo-weight", "echo-recover", "echo-fallback",
             // ↓ 2026-10-16:**「这是不是这部片 / 真的在播吗」四层成功判据**。
             //   真机 v1.1.49:《希望》被切成《希望一次过》(另一部片)后详情、首帧、错误回调
             //   全部"正常",旧判据把它记成播成功并给源加分、撤销 🟡 —— 没有这条埋点就无从复盘
