@@ -387,6 +387,14 @@ class DetailViewModel : ViewModel() {
      * 清表只有 [resetEngineState] 的换片分支 —— 别处不许自己动,否则号与表会分叉。
      */
     private val sourceBoard = SourceBoardLedger()
+    /**
+     * 这块面板**代表哪部片**——只为诊断日志留着出场片名用。
+     *
+     * <p>为什么不让日志现场取 searchTitle:换片时 [resetContentState] 先把 searchTitle/vodName 清空了,
+     * `cleared` 那条打出来的永远是空串(真机 v1.1.47 四条全是 `(pre-title)`),
+     * 于是"同一部片有没有被重复清表"这个唯一要回答的问题仍然答不上来。
+     */
+    private var boardTitle = ""
     private val triedKeys = HashSet<String>()
     private val usedSourceKeys = HashSet<String>()
 
@@ -811,10 +819,12 @@ class DetailViewModel : ViewModel() {
                 " lines=" + siteOrder.size + " mode=" + mode.name +
                 " remembered=" + remembered.size + " missing=" + missing.size +
                 " direct=" + targets.size + " idx=" + index +
-                // 走得到这一行却 targets 为空,唯一可能就是 no-direct-url ——
-                // 其余分支(lines<=1 / mode-off / all-remembered)都在本行**之前**已经 return。
-                // 旧文案把四个原因并列打印,读日志的人无法对号入座(2026-10-10 修正)。
-                " (empty ⇒ reason=no-direct-url)"
+                // ⚠️ 这句只能**在 targets 真的为空时**说:它原先是无条件拼在行尾的,于是真机里
+                // 出现过 `direct=2 ... (empty ⇒ reason=no-direct-url)` 这种自相矛盾的行
+                // (v1.1.47 虎牙两条线路都是直连型、探测照样跑),读日志的人会当成"没目标"而误判方向。
+                // 走得到这一行却为空,唯一可能就是 no-direct-url —— 其余分支(lines<=1 / mode-off /
+                // all-remembered)都在本行**之前**已经 return(2026-10-10 修正并列文案的初衷不变)。
+                if (targets.isEmpty()) " (empty ⇒ reason=no-direct-url)" else ""
         )
         if (targets.isEmpty()) {
             // 全是爬虫型线路:本管线永远探不了(解析要走 getPlay,1~3s/条且 Spider 不能并发)。
@@ -3086,6 +3096,12 @@ class DetailViewModel : ViewModel() {
      */
     private fun markCurrentSourceGaveNothing(reason: String) {
         if (!SourceHealthMemory.isNetworkAvailable()) return
+        // 索引型源(indexs=1、或实测回包缺 list)与已不在订阅的源**不给详情是我们自己的路由**
+        // (见 [loadDetail] 的 isUnloadableTarget 早退),不是"这个源放不出这部片"的证据。
+        // 真机 v1.1.47:每次从豆瓣卡片进详情页都会记一条 `ord=0 mark=SUSPECT by=user-pick
+        // detail-unavailable` —— 豆瓣本来就没有正片,而它连号都没分到(不在表里),这条 🟡 纯脏账。
+        val bean = ApiConfig.get().getSource(sourceKey)
+        if (bean == null || bean.isIndexSource() || DetailNoListMemory.isIndexLike(sourceKey)) return
         recordBoardFailure(fallbackAutoSwitch, reason)
     }
 
@@ -3486,15 +3502,17 @@ class DetailViewModel : ViewModel() {
             chipPage.value = 0
             // 换片 ⇒ 整场作废:候选表、去重集、匿名号一起清(号从 1 重新开始)。
             // 这条日志是"源是不是又没了"的唯一可核对点:同一个片名**重复**出现这行就是 bug,
-            // 因为表只允许在换片时清。片名还没定(刚进页面)时打 `(pre-title)` ——
-            // 真机 v1.1.44 三条 cleared 全是空串,等于回答不了"是不是同一片被重复清"。
+            // 因为表只允许在换片时清。片名取 boardTitle(面板自己记得它是哪部片的表)——
+            // 现场取 searchTitle 会是空串,因为 resetContentState 先把它清了(v1.1.47 真机四条全空)。
+            // `(empty-board)` = 这块表从来没进过源,清它本来就无话可说。
             LOG.i(
                 "echo-source-board cleared title=" +
-                    (searchTitle.ifEmpty { vodName }.ifEmpty { "(pre-title)" }) +
+                    (boardTitle.ifEmpty { searchTitle }.ifEmpty { vodName }.ifEmpty { "(empty-board)" }) +
                     " dropped=" + synchronized(fallbackCandidates) { fallbackCandidates.size } +
                     " ordinals=" + sourceBoard.size()
             )
             sourceBoard.clear()
+            boardTitle = ""
         }
         // 换源/重扫:新源尚未有收敛结论,跨源提示也必须先撤下,否则会拿着上一个源的结论弹提示
         sourceConverged = false
@@ -3568,6 +3586,8 @@ class DetailViewModel : ViewModel() {
             for (v in videos) {
                 if (!candidateKeys.add(candidateKey(v))) continue
                 sourceBoard.assign(v.sourceKey)
+                // 这块面板从有了第一个源起就属于某一部片了:记下出场片名(诊断用,见 boardTitle KDoc)
+                if (boardTitle.isEmpty()) boardTitle = searchTitle.ifEmpty { vodName }
                 fallbackCandidates.add(v)
                 added.add(v)
             }
