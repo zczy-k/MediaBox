@@ -118,7 +118,16 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int) {
                 onClick = { vm.onSwitchSourceClick() },
                 enabled = !vm.manualSwitching.collectAsStateWithLifecycle().value,
             ) {
-                Text(stringResource(R.string.detail_source_switch_action))
+                // 2026-10-16 用户指出:下面那行有源显示时,这颗按钮**从不"换"什么** ——
+                // 换是点芯片做的,它只做一件事:发起/续跑全站搜源。名字要跟动作一致。
+                // 判据刻意取"这一行有没有源"而不是"搜索在不在跑":后者每轮跑完都会把字样翻回去,
+                // 同一颗按钮在手指底下来回改名比名字不准更扰人;按前者一部片只变一次名。
+                Text(
+                    stringResource(
+                        if (sourceChips.isEmpty()) R.string.detail_source_switch_action
+                        else R.string.detail_source_search_action
+                    )
+                )
             }
             Text(
                 // 2026-10-14 #1 修正:进度显示**以 searchProgress 为准**(与 sourcesSearching 解耦)。

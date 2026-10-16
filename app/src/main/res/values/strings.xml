@@ -411,6 +411,8 @@
     <string name="detail_source_score">%1$d分</string>
     <string name="detail_source_no_score">暂无评分</string>
     <string name="detail_source_switch_action">换源</string>
+    <!-- 下面那行已经有源可点时,这颗按钮的本职只剩"再搜一批进来"(换是点芯片换的) -->
+    <string name="detail_source_search_action">搜源</string>
     <string name="detail_source_switch_hint">点击搜索其他片源</string>
     <string name="detail_source_switching">搜索进度(%1$d/%2$d)</string>
 
