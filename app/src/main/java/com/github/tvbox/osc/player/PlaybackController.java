@@ -1337,24 +1337,15 @@ public class PlaybackController {
             }
             return;
         }
-        // p2p 取流是异步回调(可能数十秒):同样带发起时的代际,切集后旧地址不得起播
-        final int thunderGen = resolver.currentGen();
-        if (Thunder.play(vs.url, new Thunder.ThunderCallback() {
-            @Override
-            public void status(int code, String info) {
-                if (view != null) view.showTip(info, code >= 0, code < 0);
-            }
-
-            @Override
-            public void list(Map<Integer, String> urlMap) {
-            }
-
-            @Override
-            public void play(String url) {
-                playUrl(thunderGen, url, null);
-            }
-        })) {
+        // 磁力/种子通路已整条停用(判据与理由见 PushDetailResolver.checkThunder)。
+        // 详情侧已经把磁力条目摘掉了,还能走到这里说明是别的路径递进来的(历史遗留线路表、
+        // 推送一条裸 magnet、缓存里的旧详情)—— 一律按"这条线路不可播"收口:走既有
+        // 失败链(降档→换线→换源),绝不给迅雷起下载任务,也不让它把地址交给内核。
+        if (vs.url != null && (Thunder.isSupportUrl(vs.url)
+                || vs.url.startsWith("tvbox-torrent:") || vs.url.startsWith("tvbox-oth:"))) {
+            LOG.i("echo-thunder disabled reason=play-attempt");
             if (view != null) view.showParse(false);
+            handleResolvePlayUrlFailed(str(R.string.thunder_error_invalid_url));
             return;
         }
 
