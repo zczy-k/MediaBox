@@ -9,10 +9,15 @@ package com.github.tvbox.osc.ui.activity
  * **同一个源每轮都可能换个数字**。所以号在第一次进表时定下、之后不变、也不回收
  * （隐藏会留下跳号，这是刻意接受的代价：跳号只是看着别扭，找不到源是致命的）。
  *
- * <p>## 状态：为什么"隐藏"要两条不同来源的证据
- * 用户 2026-10-16 定的形态：自动换源链替他试过、放不出来 ⇒ 标 🟡；**他本人又手动切过去、再失败** ⇒ 隐藏。
- * 刻意用两个独立布尔而不是"失败计数"：同一次故障可能被多条路径各报一次
- * （线路耗尽 + 详情超时 + 质量看门狗），计数会把一次抖动凑成"两次证据"而误隐藏一个源。
+ * <p>## 状态：为什么"隐藏"看的是**两次独立尝试**
+ * 用户口径：放不出来先标 🟡，再失败就不该继续挡在列表里。
+ * 早先的实现要求"两条**不同来源**的证据"（自动链替他试过 + 他本人又手动切过去再失败）才隐藏，
+ * 真机当天就撞空（v1.1.49 11:15:41 / 11:16:21 / 11:17:27，同一个起点源三次放不出来）：
+ * 三次全落在"他自己点过去"这一侧，另一个布尔永远填不上 ⇒ 一直 🟡、永远不隐藏,
+ * 他看到的现象就是"说过次数的判据没生效"。
+ * 换成计数后,原来那条"别把一次抖动算成两条证据"的保护并没有丢 —— **一次起播尝试只贡献一条事实**
+ * 由调用侧的闩保证（`DetailViewModel.failureCountedForAttempt`，随 resetEngineState 与链上换候选复位）：
+ * 线路耗尽、详情超时、质量看门狗在同一次尝试里各报几次,都只加一格。
  *
  * <p>## 为什么这里自己记状态，不复用短期失败记忆
  * [com.github.tvbox.osc.player.PlaybackFailureMemory] 的 TTL 是 5 分钟，而且那 5 分钟是刻意的
@@ -30,16 +35,18 @@ class SourceBoardLedger {
         /** 正常：没试过，或试过且播通过 */
         NONE,
 
-        /** 🟡：自动链或用户其中一路试过、放不出来（还留着给他切） */
+        /** 🟡：独立尝试失败过一次（还留着给他切） */
         SUSPECT,
 
-        /** 两条不同来源都失败过 ⇒ 这一场不再显示（表里仍在，随时可回） */
+        /** 失败次数到线 ⇒ 这一场不再显示（表里仍在，随时可回） */
         HIDDEN,
     }
 
+    /** 隐藏门槛：**两次**独立尝试放不出来。一次只是观察，两次才算"这一场真不行" */
+    val failsToHide = 2
+
     private val ordinals = LinkedHashMap<String, Int>()
-    private val autoFailed = HashSet<String>()
-    private val userFailed = HashSet<String>()
+    private val failures = HashMap<String, Int>()
 
     /** 这个源的号（从 1 起）；没进过表返回 0 —— 调用方据此不渲染这一行，而不是显示"源0" */
     fun ordinalOf(sourceKey: String?): Int =
@@ -60,34 +67,34 @@ class SourceBoardLedger {
     }
 
     /**
-     * 记一次"这个源放不出来"。`fromAutoChain` 区分证据来自哪条路：
-     * 自动换源链替他试的 / 他亲自点过去试的 —— **两条都到齐才隐藏**。
+     * 记一次"这个源这一场放不出来"。**调用方负责一次尝试只调一次**（判据见类注释）。
      *
-     * @return 状态是否发生变化（没变就不用重刷列表）
+     * @return 状态是否发生变化（没变就不用重刷列表；但次数仍然加了，日志要把次数报出来）
      */
-    fun recordFailure(sourceKey: String?, fromAutoChain: Boolean): Boolean {
+    fun recordFailure(sourceKey: String?): Boolean {
         if (sourceKey.isNullOrEmpty()) return false
         val before = markOf(sourceKey)
-        if (fromAutoChain) autoFailed.add(sourceKey) else userFailed.add(sourceKey)
+        failures[sourceKey] = (failures[sourceKey] ?: 0) + 1
         return markOf(sourceKey) != before
     }
+
+    /** 这个源这一场失败过几次（诊断用：状态没变时，日志也得说清这是第几次） */
+    fun failCount(sourceKey: String?): Int =
+        if (sourceKey.isNullOrEmpty()) 0 else failures[sourceKey] ?: 0
 
     /** 这个源播通了 ⇒ 状态清零（🟡 必须可逆：抖动过一次不代表这一场都不行） */
     fun recordSuccess(sourceKey: String?): Boolean {
         if (sourceKey.isNullOrEmpty()) return false
         val before = markOf(sourceKey)
-        autoFailed.remove(sourceKey)
-        userFailed.remove(sourceKey)
+        failures.remove(sourceKey)
         return markOf(sourceKey) != before
     }
 
     fun markOf(sourceKey: String?): Mark {
         if (sourceKey.isNullOrEmpty()) return Mark.NONE
-        val a = autoFailed.contains(sourceKey)
-        val u = userFailed.contains(sourceKey)
         return when {
-            a && u -> Mark.HIDDEN
-            a || u -> Mark.SUSPECT
+            failCount(sourceKey) >= failsToHide -> Mark.HIDDEN
+            failCount(sourceKey) == 1 -> Mark.SUSPECT
             else -> Mark.NONE
         }
     }
@@ -96,8 +103,7 @@ class SourceBoardLedger {
     fun isVisible(sourceKey: String?): Boolean = markOf(sourceKey) != Mark.HIDDEN
 
     /** 当前处于隐藏态的源（列表渲染入口要整体排除它们） */
-    fun hiddenKeys(): Set<String> = if (autoFailed.isEmpty() || userFailed.isEmpty()) emptySet()
-    else autoFailed.intersect(userFailed)
+    fun hiddenKeys(): Set<String> = failures.filterValues { it >= failsToHide }.keys.toSet()
 
     /** 已登记的源数（诊断用：与候选表条数同量级，不等就说明有源没被登记） */
     fun size(): Int = ordinals.size
@@ -105,7 +111,6 @@ class SourceBoardLedger {
     /** 换片：整场作废，号从 1 重新开始、状态清零。换源**不**清 —— 他还在看同一部片，号必须延续 */
     fun clear() {
         ordinals.clear()
-        autoFailed.clear()
-        userFailed.clear()
+        failures.clear()
     }
 }

@@ -3081,18 +3081,20 @@ class DetailViewModel : ViewModel() {
     private fun recordBoardFailure(fromAutoChain: Boolean, reason: String) {
         if (failureCountedForAttempt) return
         failureCountedForAttempt = true
+        if (sourceKey.isNullOrEmpty()) return
         // 面板状态(🟡 / 隐藏)记在**这块面板自己的台账**上,不借用短期失败记忆那条 5 分钟账 ——
         // 那个 TTL 是给机器节流用的,给人看的状态要是跟着它过期,🟡 会自己变回无色、
         // 隐藏的源会自己冒回来,用户看到的就又是"列表在乱动"。
-        if (sourceBoard.recordFailure(sourceKey, fromAutoChain)) {
-            LOG.i(
-                "echo-source-board ord=" + sourceBoard.ordinalOf(sourceKey) +
-                    " mark=" + sourceBoard.markOf(sourceKey) +
-                    " by=" + (if (fromAutoChain) "auto-chain" else "user-pick") +
-                    " " + reason
-            )
-            publishSourceChips()
-        }
+        val changed = sourceBoard.recordFailure(sourceKey)
+        // ⚠️ 状态没变也要留一行:v1.1.49 真机同一个源连失败三次,只有第一条进了日志,
+        // 于是"为什么还不隐藏"根本无从判断(那时判据是"两条不同来源",第二侧永远等不来)。
+        LOG.i(
+            "echo-source-board ord=" + sourceBoard.ordinalOf(sourceKey) +
+                " fails=" + sourceBoard.failCount(sourceKey) +
+                " mark=" + sourceBoard.markOf(sourceKey) +
+                " by=" + (if (fromAutoChain) "auto-chain" else "user-pick") + " " + reason
+        )
+        if (changed) publishSourceChips()
     }
 
     /**
