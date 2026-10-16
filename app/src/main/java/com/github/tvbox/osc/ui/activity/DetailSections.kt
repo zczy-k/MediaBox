@@ -59,6 +59,26 @@ internal fun SectionTitleIcon(imageVector: ImageVector) {
 }
 
 /**
+ * 换源搜索状态的**一句话措辞**。判据是纯函数 [SourceSearchStatus.line],这里只做枚举→文案的映射。
+ *
+ * <p>详情页有两处会讲同一场搜索:等待区那行大字(见 DetailScreen)和换源行旁边这行小字。
+ * 两处必须走同一条判据 —— 以前一个写"正在搜索片源 124/323 · 已找到 3 个来源"、
+ * 另一个写"搜索进度(124/323)",同一件事两种话,用户会以为是两件不同的事。
+ */
+@Composable
+internal fun sourceStatusText(searchedOnce: Boolean, searching: Boolean, asked: Int, found: Int): String =
+    when (SourceSearchStatus.line(searchedOnce, searching, asked, found)) {
+        SourceSearchStatus.Line.NOT_SEARCHED -> stringResource(R.string.detail_source_switch_hint)
+        SourceSearchStatus.Line.SEARCHING_START -> stringResource(R.string.detail_source_searching_start)
+        SourceSearchStatus.Line.SEARCHING_NONE ->
+            stringResource(R.string.detail_source_searching_none, asked)
+        SourceSearchStatus.Line.SEARCHING_FOUND ->
+            stringResource(R.string.detail_source_searching_found, found)
+        SourceSearchStatus.Line.FOUND -> stringResource(R.string.detail_source_found, found)
+        SourceSearchStatus.Line.NONE_FOUND -> stringResource(R.string.detail_source_none_found)
+    }
+
+/**
  * 详情页的换源分区。
  *
  * <p>⚠️ **这里绝不显示任何真实站名**。产品要求:任何情况下用户都不能看到 App 有哪些源。
@@ -79,6 +99,7 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int) {
     val searchProgress by vm.searchProgress.collectAsStateWithLifecycle()
     val crossHint by vm.crossSourceHint.collectAsStateWithLifecycle()
     val chipPage by vm.chipPage.collectAsStateWithLifecycle()
+    val searchedOnce by vm.sourceSearchStarted.collectAsStateWithLifecycle()
     // [临时诊断 2026-10-14 #1] 观察 UI 实际收到的 sourcesSearching / searchProgress ——
     // 仅在值变化时打点(Compose 会重组很多次,LaunchedEffect 的 key 变了才重跑),
     // 用来判定"搜索在途时 UI 到底拿到的是 true 还是 false"。定位后移除。
@@ -118,29 +139,29 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int) {
                 onClick = { vm.onSwitchSourceClick() },
                 enabled = !vm.manualSwitching.collectAsStateWithLifecycle().value,
             ) {
-                // 2026-10-16 用户指出:下面那行有源显示时,这颗按钮**从不"换"什么** ——
-                // 换是点芯片做的,它只做一件事:发起/续跑全站搜源。名字要跟动作一致。
-                // 判据刻意取"这一行有没有源"而不是"搜索在不在跑":后者每轮跑完都会把字样翻回去,
-                // 同一颗按钮在手指底下来回改名比名字不准更扰人;按前者一部片只变一次名。
+                // 按钮**从不"换"**什么:换是点下面芯片做的,它只发起/续跑搜源。
+                // 判据见 [SourceSearchStatus.useSearchVerb] —— 有源可点(用户 2026-10-16 的原始判据)
+                // 或这一场已经搜过一遍,都写「搜源」;两者都不满足才保留「换源」(那是第一步)。
                 Text(
                     stringResource(
-                        if (sourceChips.isEmpty()) R.string.detail_source_switch_action
-                        else R.string.detail_source_search_action
+                        if (SourceSearchStatus.useSearchVerb(searchedOnce, totalCandidates)) {
+                            R.string.detail_source_search_action
+                        } else {
+                            R.string.detail_source_switch_action
+                        }
                     )
                 )
             }
             Text(
-                // 2026-10-14 #1 修正:进度显示**以 searchProgress 为准**(与 sourcesSearching 解耦)。
-                // 原来用 `if (sourcesSearching)` 判断,一旦 resetEngineState 把 progress 清 null
-                // 而 searching 仍为 true,就永远落到提示分支(真机 bug)。现在只要有进度有值就显示进度。
-                text = run {
-                    val p = searchProgress
-                    if (p != null && p.total > 0) {
-                        stringResource(R.string.detail_source_switching, p.done, p.total)
-                    } else {
-                        stringResource(R.string.detail_source_switch_hint)
-                    }
-                },
+                // 措辞判据在 [SourceSearchStatus]:报"问到第几个 / 找到几个",**不报 x/总数** ——
+                // 自动那轮只问权重最高的 1/3、命中就收口,写全池 323 就是兑现不了的承诺
+                // (真机 v1.1.47 停在 `108/323`,用户读成"还剩 215 个没搜却停了")。
+                text = sourceStatusText(
+                    searchedOnce = searchedOnce,
+                    searching = sourcesSearching,
+                    asked = searchProgress?.done ?: 0,
+                    found = totalCandidates,
+                ),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier

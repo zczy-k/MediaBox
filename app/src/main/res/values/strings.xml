@@ -392,8 +392,6 @@
     <string name="detail_fullscreen_play">全屏播放</string>
     <string name="detail_empty_source">暂无片源,可尝试换源或搜索</string>
     <string name="detail_load_timeout">加载超时,可尝试换源或搜索</string>
-    <string name="detail_search_progress">正在搜索片源 %1$d/%2$d…</string>
-    <string name="detail_search_progress_found">正在搜索片源 %1$d/%2$d · 已找到 %3$d 个来源</string>
     <string name="detail_music_player">进入音乐播放器</string>
     <string name="detail_uncollect">取消收藏</string>
     <string name="detail_collect">加入收藏</string>
@@ -414,7 +412,13 @@
     <!-- 下面那行已经有源可点时,这颗按钮的本职只剩"再搜一批进来"(换是点芯片换的) -->
     <string name="detail_source_search_action">搜源</string>
     <string name="detail_source_switch_hint">点击搜索其他片源</string>
-    <string name="detail_source_switching">搜索进度(%1$d/%2$d)</string>
+    <!-- 换源那一行的措辞(判据见 SourceSearchStatus):开放式发现只报"问到第几个 / 找到几个",
+         不写 x/总数 —— 自动那轮只问权重最高的 1/3、命中就收口,写全池数就是兑现不了的承诺 -->
+    <string name="detail_source_searching_start">正在找源…</string>
+    <string name="detail_source_searching_none">正在找源 · 已问过 %1$d 个</string>
+    <string name="detail_source_searching_found">正在找源 · 已找到 %1$d 个来源</string>
+    <string name="detail_source_found">已找到 %1$d 个来源</string>
+    <string name="detail_source_none_found">暂时没找到其他源</string>
 
     <string name="detail_source_prev_page">上一页</string>
     <string name="detail_source_next_page">下一页</string>

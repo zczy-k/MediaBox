@@ -241,14 +241,15 @@ fun DetailScreen(activity: DetailActivity, vm: DetailViewModel) {
                         searchProgress?.let { p ->
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                text = if (p.candidates > 0) {
-                                    stringResource(
-                                        R.string.detail_search_progress_found,
-                                        p.done, p.total, p.candidates,
-                                    )
-                                } else {
-                                    stringResource(R.string.detail_search_progress, p.done, p.total)
-                                },
+                                // 与换源行旁边那行小字**同一条判据**(sourceStatusText):
+                                // 同一场搜索在两处说两种话,用户会以为是两件不同的事。
+                                // 也不再写 x/总数:自动那轮只问 1/3 的池子、命中就收口。
+                                text = sourceStatusText(
+                                    searchedOnce = true,
+                                    searching = true,
+                                    asked = p.done,
+                                    found = vm.totalCandidateCount(),
+                                ),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                                 textAlign = TextAlign.Center,

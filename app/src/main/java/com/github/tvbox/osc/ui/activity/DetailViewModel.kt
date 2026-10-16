@@ -176,12 +176,24 @@ class DetailViewModel : ViewModel() {
     private var manualSwitchActive = false
 
     /**
-     * 聚合搜索进度(S6 分批递进,2026-10-09):详情页 Loading 态据实显示"正在搜索片源 N/M"。
+     * 聚合搜索进度(S6 分批递进,2026-10-09):只带"已问到第几个 / 本轮范围内共多少个"。
      * 修复前无候选时用户对着转圈最长 ~59s 零反馈(120 源 × 单源 8s 超时 ÷ 并发 12),
      * 搜索本身不变,只是把"系统在动"这件事告诉用户;搜索结束/换代/链收口时置 null。
+     *
+     * <p>**发现数不在这里带**:它必须与下面那一行源列表同一个口径,而列表在视图层还会
+     * 滤掉正在播的源和隐藏的源。以前把它塞进进度对象、再由进度对象喂 UI,两处口径就分过叉
+     * (真机 v1.1.45 顶部说"4 个"、下面只有 3 个)。现在 UI 直接问 [totalCandidateCount]。
      */
-    data class SearchProgress(val done: Int, val total: Int, val candidates: Int)
+    data class SearchProgress(val done: Int, val total: Int)
     val searchProgress = MutableStateFlow<SearchProgress?>(null)
+    /**
+     * 这一场是否**已为这部片发起过**聚合搜索。措辞判据要用它区分"还没搜"与"搜过了、确实没有"
+     * (见 [SourceSearchStatus.line])—— 两者都表现为"列表为空、不在搜",不给这个位,
+     * 搜完 0 个的那一行会一直催用户"点击搜索其他片源",让他一遍遍点。
+     *
+     * <p>只随换片复位(换源不复位:他还在同一部片里,搜过就是搜过)。
+     */
+    val sourceSearchStarted = MutableStateFlow(false)
     val relatedVideos = MutableStateFlow<List<Movie.Video>>(emptyList())
     val episodeSheet = MutableStateFlow(false)
     val toastEvent = MutableStateFlow<String?>(null)
@@ -1835,6 +1847,10 @@ class DetailViewModel : ViewModel() {
                 " weight-known=" + weightScores.size + " token=$myToken" +
                 " manual=$manualSwitchActive"
         )
+        // 措辞判据:从这一刻起,这一场"搜过"了 —— 搜完仍 0 个时那一行要说"暂时没找到其他源",
+        // 不能再退回"点击搜索其他片源"(那条只属于还没搜过的时候)。放在空转防护之前置位:
+        // 走到那个分支说明上一轮真的搜过,更该算"搜过"。
+        sourceSearchStarted.value = true
         // 「换源」空转防护(2026-10-14):同一部片已把搜索范围内的源投过一遍 ⇒ 不再"假启动"一轮。
         // 旧实现会置 sourcesSearching=true + 进度 (0,total),波次循环发现没有新源可投立刻 break 收口,
         // 于是用户看到"进度条一闪就没了、列表一条没多" —— 分不清"已经搜完"还是"点坏了"。
@@ -1864,16 +1880,13 @@ class DetailViewModel : ViewModel() {
         searchJob?.cancel()
         sourcesSearching.value = sources.isNotEmpty()
         relatedVideos.value = emptyList()
-        // 进度分母用**本轮真正要问的源数**(askablePool.size),不是首轮宽度 sources.size ——
-        // 用户要看到的是"共 322 个源、已搜 xx 个"的真实进度,而首轮只投 1/3(108)。
-        // 若分母写首轮宽度,进度条一到 108/108 就"满"了,后面扩池的 214 个源无从体现。
-        // ⚠️ 分子用**已投源数**而不是 0(2026-10-14):searchedSourceKeys 是同片跨轮累计的,
-        // 写 0 会让第二轮起搜时进度从 108/322 掉回 0、下一次上报又跳到 109,看着像倒退。
+        // 进度只带"已问到第几个 / 一共多少个"。**分母刻意不再进 UI**(措辞判据见 SourceSearchStatus):
+        // 自动那轮只投 1/3 池、命中即 all-done,写 `108/323` 是个不打算兑现的承诺,用户读成"卡住了"。
+        // 分子用**已投源数**而不是 0(2026-10-14):searchedSourceKeys 是同片跨轮累计的,
+        // 写 0 会让第二轮起搜时进度掉回 0、下一次上报又跳到 109,看着像倒退。
         searchProgress.value = SearchProgress(
             searchedSourceKeys.size.coerceAtMost(effectiveTotal),
             effectiveTotal,
-            // 与下面那一行同一口径（可见源数）；波次增量的判据仍用原始表长，两处不该混用
-            chipSourceTotal(),
         )
         // [临时诊断 2026-10-14 #1] 搜索启动时刻的 UI 状态快照(searchProgress 分母应为全量源数)。
         LOG.i(
@@ -2153,12 +2166,10 @@ class DetailViewModel : ViewModel() {
         val total = searchProgress.value?.total ?: 0
         if (total <= 0) return
         val searched = searchedSourceKeys.size
-        // 顶部"已找到 N 个来源"必须与下面那一行**同一个口径**(去重后的可见源数,排除正在播的那个)。
-        // 此前它用候选条目数:同一个源返回多张卡片(国语/粤语/不同 id)会算多条,而正在播的源
-        // 也在表里却被视图层排除 —— 真机 v1.1.45 就是顶部说"4 个"、下面只有 3 个,
-        // 用户据此判断"有一个源被吞了"。这是"三处同口径"的第四处,当时漏了。
-        val candidates = chipSourceTotal()
-        searchProgress.value = SearchProgress(searched.coerceAtMost(total), total, candidates)
+        // 只发"问到第几个 / 共多少个"。发现数不再随进度走:它得与下面那行源列表同口径,
+        // 而列表在视图层还会滤掉正在播的源与隐藏的源 —— 以前在这里替它算一次、UI 再算一次,
+        // 真机 v1.1.45 就分叉过(顶部"4 个"、下面 3 个)。现在 UI 自己问 totalCandidateCount()。
+        searchProgress.value = SearchProgress(searched.coerceAtMost(total), total)
         // [临时诊断 2026-10-14 #1] 节流:每 25 个源打一次 + 首尾必打,避免刷屏又能看到进度在走。
         if (searched == 1 || searched == total || searched % 25 == 0) {
             LOG.i(
@@ -3513,6 +3524,8 @@ class DetailViewModel : ViewModel() {
             )
             sourceBoard.clear()
             boardTitle = ""
+            // 新片=新的一场:措辞回到"还没搜过",否则一进来就显示"暂时没找到其他源"
+            sourceSearchStarted.value = false
         }
         // 换源/重扫:新源尚未有收敛结论,跨源提示也必须先撤下,否则会拿着上一个源的结论弹提示
         sourceConverged = false
