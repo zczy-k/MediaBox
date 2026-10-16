@@ -109,8 +109,16 @@ class DetailViewModel : ViewModel() {
      * @param score 源级评分([SourceQualityScore.score],0..100);**null = 无历史数据**。
      *              仅用于**展示**(界面显"源N · 75分"或"源N · 暂无评分"),**不**参与排序键之外的决策。
      *              见 source-line-scoring-design-2026-10-14.md 出路 A。
+     * @param suspect 这一场是否已被试过又放不出来（true ⇒ 标签前挂 🟡）。
+     *              隐藏态不会出现在这里（视图层已在 [publishSourceChips] 的出口滤掉）。
+     *              号（"源N"）刻意**不放进这个数据类**：它只由 [sourceLabelFor] 从台账按 key 取，
+     *              两处各存一份就会有一天不一致。
      */
-    data class SourceChip(val key: String, val score: Double? = null)
+    data class SourceChip(
+        val key: String,
+        val score: Double? = null,
+        val suspect: Boolean = false,
+    )
 
     /**
      * 详情加载期间就能展示的已知信息(片名 / 海报)。
@@ -322,6 +330,12 @@ class DetailViewModel : ViewModel() {
     private var qualityProbeJob: Job? = null
     /** 面板按需探测的独立 Job：面板一关就撤，不留在后台跑网络 */
     private var panelProbeJob: Job? = null
+    /**
+     * 一次起播尝试只贡献**一条**失败事实：线路耗尽、详情超时、质量看门狗可能都指向同一次失败，
+     * 记两条就会把一次抖动凑成"两条不同来源的证据"而误隐藏一个源。随 resetEngineState 复位。
+     */
+    private var failureCountedForAttempt = false
+
     /** 这一场里面板已经试过的线路（含失败的）。爬虫每条 1~3 秒，反复开面板不该反复重烧 */
     private val panelProbedFlags = HashSet<String>()
     /**
@@ -1452,6 +1466,7 @@ class DetailViewModel : ViewModel() {
     private fun onDetailLoadTimedOut() {
         // 同上:看门狗超时 = 当前源这次没给出内容,置位让换源接管能继续往下走。
         currentSourceConfirmedEmpty = true
+        markCurrentSourceGaveNothing("detail-timeout")
         if (fallbackActive) {
             fallbackLoadingCandidate = false
             loadNextFallbackCandidate()
@@ -1478,6 +1493,7 @@ class DetailViewModel : ViewModel() {
     private fun onDetailUnavailable() {
         // 同 handleEmptyDetail:当前源不可播/不在订阅,也是"当前源没内容"的确认信号。
         currentSourceConfirmedEmpty = true
+        markCurrentSourceGaveNothing("detail-unavailable")
         if (fallbackActive) {
             fallbackLoadingCandidate = false
             loadNextFallbackCandidate()
@@ -1683,6 +1699,8 @@ class DetailViewModel : ViewModel() {
             finishEvent.value = true
             return
         }
+        // 空详情(非站点报错)= 这个源这一场没交付出内容,与超时/不可播同一条事实口径。
+        markCurrentSourceGaveNothing("detail-empty")
         if (fallbackActive) {
             fallbackLoadingCandidate = false
             loadNextFallbackCandidate()
@@ -2494,9 +2512,13 @@ class DetailViewModel : ViewModel() {
         // 2026-10-14 反馈 #3 回退:曾尝试"当前源置顶+标当前源",但**前提是错的** ——
         // 候选列表里的源全是**其他源**(全站聚合搜出来的),与起播的当前源无关;
         // 把"源1"标成"当前源"会让用户误以为源1=正在播放的源。故回退为纯匿名序号。
+        // 2026-10-16 再加一条排除：**这一场两条不同来源都失败过**的源（自动链替他试过 +
+        // 他本人又手动切过去再失败）不再出现在这一行。注意隐藏只发生在视图层 ——
+        // 候选表本身一条都不删，撤销状态后原样回来、号也还是原来那个号。
         val all = CandidatePager.pageableSources(
             synchronized(fallbackCandidates) { fallbackCandidates.toList() },
             currentSourceKey = sourceKey,
+            hiddenSourceKeys = sourceBoard.hiddenKeys(),
         ) { it.sourceKey }
         // 源评分(2026-10-14 出路 A):有历史数据的源显示评分,无数据的显式标"暂无评分"。
         // ⚠️ score() 对无数据也返回中性 60,所以这里必须**另行判断"是否真无数据"**并置 null ——
@@ -2532,7 +2554,7 @@ class DetailViewModel : ViewModel() {
             } else {
                 null
             }
-            SourceChip(key, score)
+            SourceChip(key, score, suspect = sourceBoard.markOf(key) == SourceBoardLedger.Mark.SUSPECT)
         }
         // 页号钳制:列表可能因换片/翻页后变短,越界会显示空白(用户以为"没有源")
         chipPage.value = CandidatePager.clampPage(chipPage.value, full.size)
@@ -2605,6 +2627,7 @@ class DetailViewModel : ViewModel() {
     private fun chipSourceTotal(): Int = CandidatePager.pageableSources(
         synchronized(fallbackCandidates) { fallbackCandidates.toList() },
         currentSourceKey = sourceKey,
+        hiddenSourceKeys = sourceBoard.hiddenKeys(),
     ) { it.sourceKey }.size
 
     /**
@@ -3021,6 +3044,49 @@ class DetailViewModel : ViewModel() {
         // 那条刻意不记播放失败以免误封;这条只影响"本轮换源链别原地打转")。
         // 换源链在 loadNextFallbackCandidate 里据此跳过本会话已放不出来的源,根治死循环。
         PlaybackFailureMemory.recordFailure(sourceKey)
+        recordBoardFailure(fallbackAutoSwitch, "play-failed")
+    }
+
+    /**
+     * 往**面板台账**记一条"这个源这一场没交付出内容"（🟡 与两次失败后隐藏的状态来源）。
+     *
+     * <p>一次起播尝试只允许贡献**一条**事实：线路耗尽、详情超时、质量看门狗往往指向同一次失败，
+     * 记两条就会把一次抖动凑成"两条不同来源的证据"而误隐藏一个源。闩随 resetEngineState 复位。
+     *
+     * @param fromAutoChain true=自动链/引擎自己发现的失败；false=用户手动切过去之后才失败
+     *                      （只有后者叠加前者才会隐藏）
+     * @param reason        日志尾缀，用于区分是哪条路径记的这条事实
+     */
+    private fun recordBoardFailure(fromAutoChain: Boolean, reason: String) {
+        if (failureCountedForAttempt) return
+        failureCountedForAttempt = true
+        // 面板状态(🟡 / 隐藏)记在**这块面板自己的台账**上,不借用短期失败记忆那条 5 分钟账 ——
+        // 那个 TTL 是给机器节流用的,给人看的状态要是跟着它过期,🟡 会自己变回无色、
+        // 隐藏的源会自己冒回来,用户看到的就又是"列表在乱动"。
+        if (sourceBoard.recordFailure(sourceKey, fromAutoChain)) {
+            LOG.i(
+                "echo-source-board ord=" + sourceBoard.ordinalOf(sourceKey) +
+                    " mark=" + sourceBoard.markOf(sourceKey) +
+                    " by=" + (if (fromAutoChain) "auto-chain" else "user-pick") +
+                    " " + reason
+            )
+            publishSourceChips()
+        }
+    }
+
+    /**
+     * "当前源这次没给出内容"（详情超时 / 不可播 / 空详情）⇒ 记一条与播放失败同口径的事实。
+     *
+     * <p>归属沿用 [recordSourcePlayFailure] 的判据：`fallbackAutoSwitch` 为真说明这个站是**自动链
+     * 替他试的**，为假说明这一站是**他自己选进来的**（点卡片进来的起点源、或手动切的芯片）。
+     * 硬写 true 会让"手动切过去却空详情"永远记不到 user 侧，🟡 就再也变不成隐藏。
+     *
+     * <p>⚠️ 断网闸门是必须的：设备没网时**全池**都会同时超时，那是网络的错不是源的错。
+     * 不加这道闸，一次断网就能把整页候选都标成 🟡，回到有网后用户看到的是"源莫名其妙变黄/消失"。
+     */
+    private fun markCurrentSourceGaveNothing(reason: String) {
+        if (!SourceHealthMemory.isNetworkAvailable()) return
+        recordBoardFailure(fallbackAutoSwitch, reason)
     }
 
     private fun startFallbackIfNeeded(auto: Boolean, fromLinesExhausted: Boolean = false): Boolean {
@@ -3200,7 +3266,8 @@ class DetailViewModel : ViewModel() {
             // 表只增不减;隐藏当前源是视图层([CandidatePager.pageableSources])的事。
             val video = synchronized(fallbackCandidates) {
                 fallbackCandidates.firstOrNull { v ->
-                    !usedSourceKeys.contains(v.sourceKey) && !triedKeys.contains(candidateKey(v))
+                    !usedSourceKeys.contains(v.sourceKey) && !triedKeys.contains(candidateKey(v)) &&
+                        sourceBoard.isVisible(v.sourceKey)
                 }
             } ?: break
             val cKey = candidateKey(video)
@@ -3220,6 +3287,9 @@ class DetailViewModel : ViewModel() {
             fallbackLoadingCandidate = true
             fallbackActive = true
             fallbackAutoSwitch = true
+            // 换源链**不走 resetEngineState**(它不清 triedKeys/候选表)，所以"这一次尝试只记一条事实"
+            // 的闩要在这里自己复位 —— 否则第一个候选记完，后面 B/C/D 全都标不上 🟡。
+            failureCountedForAttempt = false
             usedSourceKeys.add(video.sourceKey.orEmpty())
             vodName = video.name ?: vodName
             vodPicture = video.pic ?: vodPicture
@@ -3441,6 +3511,7 @@ class DetailViewModel : ViewModel() {
         // 换源也算：不同站的同名 flag 是完全不同的线路(日志里 aidan 与虎牙都有 xzm3u8),
         // 沿用上一源的"试过了"会让新源的线路永远拿不到标签。
         playbackStartedHere = false
+        failureCountedForAttempt = false
         panelProbeJob?.cancel()
         panelProbeJob = null
         panelProbedFlags.clear()
@@ -4001,6 +4072,11 @@ class DetailViewModel : ViewModel() {
         // 它由 PlaybackProgress 每集发一次的 TYPE_PLAYBACK_STARTED 触发,节流在 30 秒级,
         // 所以绝不能当成主路径:1.0.43 实测正是"分辨率 2 秒测到、标签 32 秒才更新"。
         publishLineQualityHeights()
+        // 播通一次 ⇒ 撤销这个源这一场的失败标记（隐藏必须先撤销，否则一次成功也救不回来）
+        if (sourceBoard.recordSuccess(sourceKey)) {
+            LOG.i("echo-source-board ord=" + sourceBoard.ordinalOf(sourceKey) + " mark=NONE by=played-ok")
+            publishSourceChips()
+        }
         // 首帧已出 ⇒ 允许"打开线路面板时按需探爬虫型线路"这类后置探测
         playbackStartedHere = true
         // 起播成功后启动"源内有界扫描"(见《选线机制设计》附录 G)。**放在这里而非起播前**,

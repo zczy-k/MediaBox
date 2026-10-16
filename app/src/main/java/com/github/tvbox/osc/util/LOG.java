@@ -111,7 +111,11 @@ public class LOG {
             //     回答"为什么跨源切/没切"。
             //   ⚠️ 2026-10-13 **第五次**踩坑:新增 echo-fallback(换源链跳过已失败源 / 全候选失败终态)
             //     时又忘了登记 —— 提交前 grep 复核白名单,这条铁律要刻进流程。
-            "echo-weight", "echo-recover", "echo-xsource", "echo-fallback"}
+            "echo-weight", "echo-recover", "echo-xsource", "echo-fallback",
+            // ↓ 2026-10-16:**换源面板状态台账**(🟡 存疑 / 两场不同来源失败后隐藏 / 换片清零)。
+            //   它今天恰好能被 "echo-source" 前缀命中而落盘,但那是**巧合**而不是设计 ——
+            //   一旦有人收紧 echo-source,这行就静默消失。按铁律单独登记。
+            "echo-source-board"}
             // ⚠️ FILE_LOG=false(正式包)时折成空数组,让这批前缀**字面量也从 dex 里消失**。
             //
             // 背景:release 靠 proguard 的 -assumenosideeffects 已经把**调用点**全删了

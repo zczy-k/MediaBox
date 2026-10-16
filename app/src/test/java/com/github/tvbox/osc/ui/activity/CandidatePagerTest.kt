@@ -136,4 +136,17 @@ class CandidatePagerTest {
         // 排除当前源 A;B 去重留一条;null 只留第一条(与旧内联写法一致)
         assertEquals(listOf("B", null, "C"), pageable)
     }
+
+    /**
+     * 隐藏只发生在视图层：条目仍在候选表里，只是不参与分页与计数。
+     * 分页总数必须一起排除它们，否则又会出现"下一页点过去是空的"。
+     */
+    @Test
+    fun `隐藏的源从分页与总数里一起消失`() {
+        val entries = listOf("A", "B", "C", "D")
+        assertEquals(3, CandidatePager.pageableSources(entries, "A") { it }.size)
+        val hidden = CandidatePager.pageableSources(entries, "A", hiddenSourceKeys = setOf("C")) { it }
+        assertEquals(listOf("B", "D"), hidden)
+        assertFalse("总数跟着变小，不会有幽灵页", CandidatePager.hasNext(hidden.size, page = 0))
+    }
 }

@@ -52,19 +52,30 @@ object CandidatePager {
     fun hasNext(total: Int, page: Int): Boolean = page.coerceAtLeast(0) < pageCount(total) - 1
 
     /**
-     * 候选条目 → **真正参与分页的源序列**(排除当前源 + 按源去重)。
+     * 候选条目 → **真正参与分页的源序列**(排除当前源 + 按源去重 + 排除本场已隐藏的源)。
      *
      * <p>⚠️ 分页的总数必须**只**由本结果的 size 决定。真机 v1.1.40 抓到分叉:
      * 界面用**未去重的条目数**算「有没有下一页」,而那一行 chip 是按**去重后的源**渲染的 ——
      * 一部片在同一个源里返回多张卡片(国语/粤语/不同 id)时,条目 25 / 源 3,
      * 于是"只有 3 个源却显示下一页",点下去又被 [clampPage] 钳回第一页 ⇒ 看着像按钮坏了。
+     * v1.1.45 又抓到同一族的第四处(顶部"已找到 N 个来源"用条目数)——
+     * **任何"个数"都只能问这一个出口要**,以后再加过滤条件也一样。
      *
      * <p>与旧内联写法严格一致:`sourceKey` 为 null 的条目**保留**(它不等于当前源 key),
      * 而 [distinctBy] 会把所有 null 归为同一组只留第一条 —— 改这里的语义会连带改变候选数量。
+     *
+     * <p>隐藏(自动链与用户手动各失败一次)只发生在这里,也就是**视图层**:
+     * 候选表本身从不因状态删条目,所以撤销状态后那个源原样回来、号也还是原来那个号。
      */
-    fun <T> pageableSources(candidates: List<T>, currentSourceKey: String?, keyOf: (T) -> String?): List<T> =
+    fun <T> pageableSources(
+        candidates: List<T>,
+        currentSourceKey: String?,
+        hiddenSourceKeys: Set<String> = emptySet(),
+        keyOf: (T) -> String?,
+    ): List<T> =
         candidates.asSequence()
             .filter { keyOf(it) != currentSourceKey }
+            .filterNot { hiddenSourceKeys.contains(keyOf(it)) }
             .distinctBy { keyOf(it) }
             .toList()
 

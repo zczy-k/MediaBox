@@ -1,6 +1,7 @@
 package com.github.tvbox.osc.ui.activity
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -55,12 +56,75 @@ class SourceBoardLedgerTest {
         assertEquals("下一场观看是新的身份台账", 1, board.assign("A"))
     }
 
-    /** 号从 1 起、不跳不重（隐藏/移除都不会回收号）。 */
+    // ---------- 🟡 与隐藏的状态机 ----------
+
+    /**
+     * 用户定的形态：自动链替他试过 → 标 🟡 但仍留着让他自己再试；
+     * 他亲手切过去又失败 → 才从这一场里隐掉。
+     */
+    @Test
+    fun `隐藏需要两条不同来源的失败证据`() {
+        val board = SourceBoardLedger()
+        board.assign("A")
+        assertTrue(board.recordFailure("A", fromAutoChain = true))
+        assertEquals("自动链试过 ⇒ 只标黄", SourceBoardLedger.Mark.SUSPECT, board.markOf("A"))
+        assertTrue("标黄时仍然可见", board.isVisible("A"))
+
+        assertTrue(board.recordFailure("A", fromAutoChain = false))
+        assertEquals("用户又亲手试过一次 ⇒ 隐藏", SourceBoardLedger.Mark.HIDDEN, board.markOf("A"))
+        assertFalse(board.isVisible("A"))
+        assertEquals(setOf("A"), board.hiddenKeys())
+    }
+
+    /**
+     * 为什么不用"失败两次"计数：同一次故障会被多条路径各报一次
+     * （线路耗尽 + 详情超时 + 质量看门狗），计数就会把一次抖动当成两条证据。
+     */
+    @Test
+    fun `同一条路的重复失败不会凑成隐藏`() {
+        val board = SourceBoardLedger()
+        board.assign("A")
+        assertTrue(board.recordFailure("A", fromAutoChain = true))
+        assertFalse("第二次同路：状态没变", board.recordFailure("A", fromAutoChain = true))
+        assertFalse("第三次也是", board.recordFailure("A", fromAutoChain = true))
+        assertEquals(SourceBoardLedger.Mark.SUSPECT, board.markOf("A"))
+        assertTrue("仍然看得见", board.isVisible("A"))
+    }
+
+    /** 🟡 必须可逆：抖过一次不该被这一场判死。 */
+    @Test
+    fun `播通一次就把状态撤销`() {
+        val board = SourceBoardLedger()
+        board.assign("A")
+        board.recordFailure("A", fromAutoChain = true)
+        board.recordFailure("A", fromAutoChain = false)
+        assertEquals(SourceBoardLedger.Mark.HIDDEN, board.markOf("A"))
+        assertTrue(board.recordSuccess("A"))
+        assertEquals(SourceBoardLedger.Mark.NONE, board.markOf("A"))
+        assertTrue("隐藏的源播通后原样回来", board.isVisible("A"))
+        assertEquals("号不回收", 1, board.ordinalOf("A"))
+        assertFalse("本来就没状态时不算变化", board.recordSuccess("A"))
+    }
+
+    @Test
+    fun `脏 key 不参与状态`() {
+        val board = SourceBoardLedger()
+        assertFalse(board.recordFailure(null, fromAutoChain = true))
+        assertFalse(board.recordFailure("", fromAutoChain = false))
+        assertFalse(board.recordSuccess(null))
+        assertEquals(SourceBoardLedger.Mark.NONE, board.markOf(null))
+        assertTrue(board.isVisible(null))
+    }
+
+    /** 号绑身份之后，隐藏会留下跳号 —— 这是刻意接受的代价，钉住别"顺手改成连续"。 */
     @Test
     fun `号连续分配且永不回收`() {
         val board = SourceBoardLedger()
         val assigned = (1..5).map { board.assign("s$it") }
         assertEquals(listOf(1, 2, 3, 4, 5), assigned)
-        assertTrue(board.ordinalOf("s3") > 0)
+        board.recordFailure("s3", fromAutoChain = true)
+        board.recordFailure("s3", fromAutoChain = false)
+        assertFalse(board.isVisible("s3"))
+        assertEquals("隐藏不腾号", 3, board.ordinalOf("s3"))
     }
 }

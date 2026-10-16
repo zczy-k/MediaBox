@@ -201,7 +201,9 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int) {
                     FilterChip(
                         selected = false,
                         onClick = { vm.candidateForKey(chip.key)?.let { vm.switchSource(it) } },
-                        label = { Text("$label · $scoreText") },
+                        // 🟡 = 这一场已经试过它、放不出来（自动链替他试的，或他手动切过去试的）。
+                        // 刻意只给一个符号不给文字：状态要看得懂，又不想把那一行变成说明书。
+                        label = { Text(if (chip.suspect) "\uD83D\uDFE1 $label · $scoreText" else "$label · $scoreText") },
                         shape = RoundedCornerShape(20.dp),
                         colors = MaterialTheme.colorScheme.filterChipColors(
                             containerColor = MaterialTheme.colorScheme.surfaceContainer,
