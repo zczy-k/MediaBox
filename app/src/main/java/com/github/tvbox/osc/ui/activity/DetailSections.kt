@@ -140,7 +140,8 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int) {
             )
         }
         crossHint?.let { hint ->
-            // 只说"对端实测画质"这一事实,不带站名;匿名序号由 sourceLabelFor 按 chip 下标给出
+            // 只说"对端实测画质"这一事实,不带站名;序号按**那个源的身份**取(与 chips 同一口径),
+            // 而 hintIndex 只用来判断"它此刻在不在可见列表里"—— 两者不能再混着当一件事。
             val hintIndex = sourceChips.indexOfFirst { it.key == hint.sourceKey }
             if (hintIndex >= 0) {
                 Row(
@@ -152,7 +153,7 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int) {
                     Text(
                         text = stringResource(
                             R.string.detail_cross_hint,
-                            vm.sourceLabelFor(hintIndex),
+                            vm.sourceLabelFor(hint.sourceKey),
                             hint.label,
                         ),
                         style = MaterialTheme.typography.bodySmall,
@@ -188,11 +189,11 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int) {
                         }
                     }
                 }
-                // 标签只由**全局下标**生成(源 1 / 源 2 …),跨页连续、**不含真实站名**。
-                // 全局下标 = 页号*每页数 + 页内下标,让用户翻页时序号连续(源6、源7…)。
-                itemsIndexed(sourceChips, key = { _, c -> c.key }) { index, chip ->
-                    val globalIndex = chipPage * CandidatePager.PAGE_SIZE + index
-                    val label = vm.sourceLabelFor(globalIndex)
+                // 标签由**这个源自己的匿名号**生成(源 1 / 源 2 …),不含真实站名。
+                // 2026-10-15:号不再按"页号*每页数+页内下标"现算 —— 那样同一个源每次回包重排都会换号,
+                // 而"切回刚才那个源"全靠这个数字认人。号改由台账按 key 绑定(见 SourceBoardLedger)。
+                itemsIndexed(sourceChips, key = { _, c -> c.key }) { _, chip ->
+                    val label = vm.sourceLabelFor(chip.key)
                     if (label.isEmpty()) return@itemsIndexed
                     val scoreText = chip.score?.let {
                         stringResource(R.string.detail_source_score, Math.round(it).toInt())

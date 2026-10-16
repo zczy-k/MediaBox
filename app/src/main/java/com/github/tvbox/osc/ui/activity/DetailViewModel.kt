@@ -357,6 +357,11 @@ class DetailViewModel : ViewModel() {
     /** 播放中纠偏每部片只触发一次,防止候选事件反复引发切换 */
     private var completenessCorrected = false
     private val candidateKeys = HashSet<String>()
+    /**
+     * 换源列表的**身份台账**(号绑源、不绑位置)。追加口只有 [appendCandidates],
+     * 清表只有 [resetEngineState] 的换片分支 —— 别处不许自己动,否则号与表会分叉。
+     */
+    private val sourceBoard = SourceBoardLedger()
     private val triedKeys = HashSet<String>()
     private val usedSourceKeys = HashSet<String>()
 
@@ -2114,15 +2119,18 @@ class DetailViewModel : ViewModel() {
             val candidates = videos.filter {
                 !it.id.isNullOrEmpty()
                     && CandidateMatchPolicy.verdictOf(candidateRelevance(it)) == CandidateMatchPolicy.Verdict.CANDIDATE
-            }.filter { candidateKeys.add(candidateKey(it)) }
+            }
             if (candidates.isNotEmpty()) {
                 data.sourceKey?.let { sourcesWithHit.add(it) }
-                synchronized(fallbackCandidates) { fallbackCandidates.addAll(candidates) }
-                sortFallbackCandidatesByCompleteness()
-                maybeCorrectCompleteness()
-                publishSourceChips()
-                refreshCrossSourceHint()
-                if (shouldAutoTakeOver()) loadNextFallbackCandidate()
+                // 追加走唯一出口(去重 + 定号);重复回包(变体补发会再来一次)不会再占新号
+                val added = appendCandidates(candidates)
+                if (added.isNotEmpty()) {
+                    sortFallbackCandidatesByCompleteness()
+                    maybeCorrectCompleteness()
+                    publishSourceChips()
+                    refreshCrossSourceHint()
+                    if (shouldAutoTakeOver()) loadNextFallbackCandidate()
+                }
             }
             val related = videos.filter {
                 !it.id.isNullOrEmpty()
@@ -2311,15 +2319,14 @@ class DetailViewModel : ViewModel() {
                 // 2026-10-15:这里**不再**按"当前源/已用过的源"筛掉条目(与 onSearchResultEvent 同口径)。
                 // 灌种的是"上次这部片由哪些源收录"这个事实,把它丢掉就等于把可切回的源抹掉;
                 // 当前源不该出现在那一行,由 [CandidatePager.pageableSources] 在视图层排除。
-                if (!candidateKeys.add(candidateKey(v))) continue
                 fresh.add(v)
             }
         }
-        if (fresh.isEmpty()) return
-        synchronized(fallbackCandidates) { fallbackCandidates.addAll(fresh) }
+        val seeded = appendCandidates(fresh)
+        if (seeded.isEmpty()) return
         sortFallbackCandidatesByCompleteness()
         publishSourceChips()
-        LOG.i("echo-source-search cache-seed title=" + title + " n=" + fresh.size)
+        LOG.i("echo-source-search cache-seed title=" + title + " n=" + seeded.size)
     }
 
     /**
@@ -2492,26 +2499,34 @@ class DetailViewModel : ViewModel() {
         LOG.i("echo-source-switch prev page=${chipPage.value}")
     }
 
-    /** 候选源总数(全量,非当前页):供界面判断"是否有下一页"。 
+    /** 候选源总数（全量，非当前页）：供界面判断"是否有下一页"。
      *
-     * <p>{5fc5}{987b}{4e0e} chip {90a3}{4e00}{884c}{7528}{7684}{540c}{4e00}{4efd}{53bb}{91cd}{53e3}{5f84}({89c1} CandidatePager.pageableSources) {2014}{2014} {771f}{673a}{51fa}{73b0}{8fc7}{300c}{53ea}{6709} 3 {4e2a}{6e90}{5374}{663e}{793a}{4e0b}{4e00}{9875}{3001}{70b9}{4e86}{4e0d}{52a8}{300d},
-     * {5c31}{662f}{56e4}{4e3a}{754c}{9762}{{}}{6761}{76ee}{6570}{3001}{5217}{8868}{6309}{53bb}{91cd}{6e90}{6570}{3002}{540c}{4e00}{6e90}{{}}{591a}{5f20}{5361}{7247}({56fd}{8bed}/{7ca4}{8bed}{{}}) {65f6}{{}}{53ef}{80fd}{{}} 25 {6761}{53ea}{5bf9}{5e94} 3 {4e2a}{6e90}{3002}
+     * <p>必须与 chip 那一行用的同一份去重口径（见 CandidatePager.pageableSources）—— 真机出现过
+     * 「只有 3 个源却显示下一页、点了不动」，就是因为界面按条目数、列表按去重后的源数：
+     * 同一个源返回多张卡片（国语/粤语）时，25 条可能只对应 3 个源。
      */
     fun totalCandidateCount(): Int = chipSourceTotal()
 
-    /** {5206}{9875}{{}}{4e00}{771f}{503c}:{53c2}{4e0e}{5206}{9875}{7684}{6e90}{6570}({6392}{9664}{5f53}{524d}{6e90} + {6309}{6e90}{53bb}{91cd})。
-     *  UI {7684} hasNext3001{70b9}{{}}{4e0b}{4e00}{9875}{7684}{5224}{636e}3001publishSourceChips {7684}{5207}{9875}{53d6}{{}}{90fd}{53ea}{80fd}{{}}{{}}{4e2a}{3002} */
+    /** 分页唯一真值：参与分页的源数（排除当前源 + 按源去重）。
+     *  UI 的 hasNext、点「下一页」的判据、publishSourceChips 的切片取数都只能走这一个。 */
     private fun chipSourceTotal(): Int = CandidatePager.pageableSources(
         synchronized(fallbackCandidates) { fallbackCandidates.toList() },
         currentSourceKey = sourceKey,
     ) { it.sourceKey }.size
 
     /**
-     * 候选源的**匿名**展示名。**必须**只依赖列表下标,不能碰 `ApiConfig.getSource(key).name` ——
+     * 候选源的**匿名**展示名。只依赖这个源的匿名号,绝不碰 `ApiConfig.getSource(key).name` ——
      * 那个名字就是要藏起来的身份信息。返回空串表示"这一行什么都不用显示"(调用方跳过该 chip)。
+     *
+     * <p>2026-10-15：号从**渲染位置**改成**绑源身份**（见 [SourceBoardLedger]）。
+     * 位置会随每次回包重排而漂，而"切回刚才那个源"这件事全靠这个数字认人；
+     * 代价是列表里会出现跳号/号与顺序不一致，那是可接受的 —— 找不到源才是致命的。
      */
-    fun sourceLabelFor(index: Int): String =
-        SourceIdentityMask.anonymousLabel(index, str(R.string.common_source_anonymous_prefix))
+    fun sourceLabelFor(sourceKey: String?): String =
+        SourceIdentityMask.anonymousLabel(
+            sourceBoard.ordinalOf(sourceKey) - 1,
+            str(R.string.common_source_anonymous_prefix),
+        )
 
     /** 详情页候选源那一行的分区标题。同样不能带任何源身份信息。 */
     fun sourceSectionTitle(): String = str(R.string.detail_switch_source)
@@ -3306,6 +3321,15 @@ class DetailViewModel : ViewModel() {
         if (!keepChips) {
             manualSwitchActive = false
             chipPage.value = 0
+            // 换片 ⇒ 整场作废:候选表、去重集、匿名号一起清(号从 1 重新开始)。
+            // 这条日志是"源是不是又没了"的唯一可核对点:同一片名**重复**出现这行就是 bug,
+            // 因为表只允许在换片时清。
+            LOG.i(
+                "echo-source-board cleared title=" + searchTitle.ifEmpty { vodName } +
+                    " dropped=" + synchronized(fallbackCandidates) { fallbackCandidates.size } +
+                    " ordinals=" + sourceBoard.size()
+            )
+            sourceBoard.clear()
         }
         // 换源/重扫:新源尚未有收敛结论,跨源提示也必须先撤下,否则会拿着上一个源的结论弹提示
         sourceConverged = false
@@ -3357,6 +3381,28 @@ class DetailViewModel : ViewModel() {
     private fun candidateKey(key: String, id: String): String = "$key|$id"
 
     /**
+     * 候选表的**唯一追加口**：去重（同一 `源|id` 只留一条）→ 定号（源第一次进表才占号）→ 落表。
+     * 返回**真正新增**的条目，调用方据此决定要不要重排 / 发布 / 自动接管。
+     *
+     * <p>为什么要有这一个出口：此前有三处各自 `fallbackCandidates.add(...)` + 各自一份
+     * `candidateKeys` 去重，而号（给用户的"源N"）从来没跟身份绑过 —— 于是加一处漏一处，
+     * 标签与表内容迟早分叉。追加只走这里，清表只走换片那一条，二者对称。
+     */
+    private fun appendCandidates(videos: List<Movie.Video>): List<Movie.Video> {
+        if (videos.isEmpty()) return emptyList()
+        val added = ArrayList<Movie.Video>(videos.size)
+        synchronized(fallbackCandidates) {
+            for (v in videos) {
+                if (!candidateKeys.add(candidateKey(v))) continue
+                sourceBoard.assign(v.sourceKey)
+                fallbackCandidates.add(v)
+                added.add(v)
+            }
+        }
+        return added
+    }
+
+    /**
      * 把**当前这个源自己**补进换源候选表(2026-10-15 用户指出的缺口)。
      *
      * <p>## 补的是什么空白
@@ -3373,9 +3419,11 @@ class DetailViewModel : ViewModel() {
         val key = video.sourceKey.orEmpty()
         val id = video.id.orEmpty()
         if (key.isEmpty() || id.isEmpty()) return
-        if (!candidateKeys.add(candidateKey(key, id))) return
-        synchronized(fallbackCandidates) { fallbackCandidates.add(video) }
-        LOG.i("echo-source-switch anchor-seeded id=" + id)
+        if (appendCandidates(listOf(video)).isEmpty()) return
+        LOG.i(
+            "echo-source-switch anchor-seeded ord=" + sourceBoard.ordinalOf(key) +
+                " board=" + sourceBoard.size()
+        )
     }
 
     fun onEpisodeClick(position: Int) {
