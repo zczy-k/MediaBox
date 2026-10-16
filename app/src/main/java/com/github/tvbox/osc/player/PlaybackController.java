@@ -978,6 +978,31 @@ public class PlaybackController {
         return from <= 0L ? -1L : Math.max(-1L, to - from);
     }
 
+    /**
+     * 把净化在飞行中吃掉的那段时间**还给这条线路的起播预算**(2026-10-16 止血)。
+     *
+     * <p>为什么这是"重复 arm 不续命"那条规矩的**例外**而不是破例:
+     * 还的额度不是重新发一份预算,而是**实测到的净化耗时**,并且一轮只兑一次
+     * ({@code purifyCredited})。净化没跑、跑得快、跑得慢,还回去的量都不一样 ——
+     * 慢在我们自己,凭什么让线路的 4~17 秒预算替它买单;但也不能因为"怕被续命"
+     * 就连自己欠的那几秒都不还。封顶 3500ms 是因为净化链自己有 3 秒死线,
+     * 正常不可能更久;封顶只是防住一个逻辑外的迟到值。
+     */
+    private void creditPurifyWait() {
+        if (st.stagePurifyAt == 0L || st.purifyCredited) return;
+        st.purifyCredited = true;
+        long waited = span(st.stagePurifyAt, android.os.SystemClock.elapsedRealtime());
+        // 预算没发过(禁自动换线时 switchLineDeadline 恒为 0)⇒ 没有可还的东西
+        if (waited < 0L || st.switchLineDeadline <= 0L) return;
+        long credit = Math.min(waited, 3500L);
+        st.switchLineDeadline += credit;
+        long left = st.switchLineDeadline - android.os.SystemClock.elapsedRealtime();
+        // 按新的截止重投定时消息。用的就是宽限复查那条通道,语义是"到截止那一拍再问一次",
+        // 判据不变(仍是 handleSwitchLinePlayTimeout 里的分段归因),所以不是新加了一条判定。
+        timeouts.startSwitchLineGraceTimeout(Math.max(250L, left));
+        LOG.i("echo-m3u8-purify deadline credit=" + credit + "ms waited=" + waited + "ms left=" + left + "ms");
+    }
+
     private long stageMarkFor(PlayStage stage) {
         switch (stage) {
             case SPIDER_WAIT:
@@ -1514,6 +1539,7 @@ public class PlaybackController {
         // 地址定稿、即将交给内核 —— 从这里往后的等待才真的只可能是"这条流出不出画面"。
         // 净化链完成后也是回到这里,所以这一刻同时意味着净化已经回来。
         st.stageKernelAt = android.os.SystemClock.elapsedRealtime();
+        creditPurifyWait();
         // 调用方与解析回调同帧或同线程 ⇒ 本地址归属当前轮,在排队前签发代际(见 playUrlGeneration 注释)
         playUrlGeneration = resolver.currentGen();
         final String finalUrl = url;

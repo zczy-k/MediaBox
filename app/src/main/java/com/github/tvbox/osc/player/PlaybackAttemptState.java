@@ -232,6 +232,16 @@ final class PlaybackAttemptState {
     long stagePurifyAt = 0L;
     long stageKernelAt = 0L;
 
+    /**
+     * 本次净化的等待时间**已经还给起播预算**了(一次性)。
+     *
+     * <p>为什么要有这个标记:预算的规矩是"本轮第一次 arm 时算好,之后重复 arm 不许覆盖",
+     * 但净化发生在 arm **之后** —— 它那 1~3 秒是从同一条预算里扣的,等于让线路为
+     * "我们自己在拉播放列表"买单。还预算不是续命:还的额度**恰好是实测到的净化耗时**,
+     * 且一轮只允许还一次,重复走 goPlayUrl 不会二次兑现。
+     */
+    boolean purifyCredited;
+
     /** 新一次播放的清场:重试阶梯 + 内核/解码自动态 + 起播标记 */
     void beginNewPlay() {
         playbackStarted = false;
@@ -244,6 +254,7 @@ final class PlaybackAttemptState {
         stageAnsweredAt = 0L;
         stagePurifyAt = 0L;
         stageKernelAt = 0L;
+        purifyCredited = false;
         // 预算**不在这里发数字**,只作废:截止时刻由 startSwitchLinePlayTimeout 在本轮第一次 arm 时
         // 按这条线路的历史首帧算一次,之后重复 arm 不覆盖(playUrl 与页面桥各调一次、同址重播还再来,
         // 每次重发预算就等于每次续命 —— 那正是上一版用"剩余次数"时留下的漏洞)。
