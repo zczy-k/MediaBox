@@ -171,6 +171,33 @@ class ProbeStrategyTest {
         assertEquals("什么都没给时不留空行", "-", ProbeStrategy.denySummary("", ""))
     }
 
+    /**
+     * 真机 v1.1.44 的第二课：404 那页没有原因词，第一版把 CSS 当摘要打了出来
+     * （`deny=404 body { margin: 0; padding: 0; background-color: #111`）。
+     * 噪声占住诊断位比空白更坏 —— 读日志的人会以为那就是原因。
+     */
+    @Test
+    fun `HTML 里没有原因句时老实说 none，不拿 CSS 充数`() {
+        // 有可见文字但都是导航/无关文案：不能当成"原因"打出去
+        val navPage = "<html><body><div>首页 频道 搜索</div><script>var a=1;</script></body></html>"
+        assertEquals("<none>", ProbeStrategy.denySummary(navPage, ""))
+        // 整页除了标签与样式什么都没剩：走"没有可读内容"那条分支
+        val cssOnly = "<!DOCTYPE html><html><head><style>body { margin: 0; }</style></head><body></body></html>"
+        assertEquals("-", ProbeStrategy.denySummary(cssOnly, ""))
+        // 真机 v1.1.44 那个现场：**读满 600 字节时 </style> 被截掉**，样式残渣就成了"可见文字"
+        val truncated = "<html><head><title>404</title><style>body { margin: 0; padding: 0; background-color: #111; co"
+        assertEquals("<none>", ProbeStrategy.denySummary(truncated, ""))
+        // 纯文本错误体即使没有关键词也照给（它本来就短，不是页面残渣）
+        assertEquals("stream unavailable", ProbeStrategy.denySummary("stream unavailable", ""))
+    }
+
+    @Test
+    fun `404 类自述也认`() {
+        val page = "<html><body><h1>404 Not Found</h1><p>The requested resource does not exist</p></body></html>"
+        val hint = ProbeStrategy.denySummary(page, null)
+        assertTrue("该抓到 Not Found: $hint", hint.contains("Not Found"))
+    }
+
     @Test
     fun `中文拒绝页也能定位`() {
         val page = "<html><body><div>导航 首页 频道</div><span>您访问的地址已被禁止,请勿频繁请求</span></body></html>"

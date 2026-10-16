@@ -199,11 +199,16 @@ fun DetailScreen(activity: DetailActivity, vm: DetailViewModel) {
         if (!fullBox) {
             when (val state = pageState) {
                 is DetailViewModel.PageState.Loading -> {
-                    // 点击卡片时 Intent 已带片名/海报,而取详情要等网络:先渲染已知信息,
-                    // 等待期间就不是一片空白(纯感知提速,不改变任何取数时机)
+                    // 2026-10-16 用户真机指出：**换源那一行不该随页面状态消失**。
+                    // 切源会让页面回到 Loading 等对端详情(2~4 秒),此前整行不渲染,
+                    // 用户看到的就是"列表被重新加载了一遍"—— 而候选表其实一直都在
+                    // (日志里那段时间没有任何 cleared 记录)。
+                    // 上面那块(海报/片名/进度)该跟着状态走,下面这块不该。
+                    // 结构与 Empty 分支一致,不另造一套布局。
+                    Column(modifier = Modifier.fillMaxSize()) {
                     Column(
                         modifier = Modifier
-                            .fillMaxSize()
+                            .weight(1f)
                             .padding(horizontal = 24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
@@ -249,6 +254,9 @@ fun DetailScreen(activity: DetailActivity, vm: DetailViewModel) {
                                 textAlign = TextAlign.Center,
                             )
                         }
+                    }
+                    // 换源板块常驻:等待期间照常显示已发现的源(为空时它自己整块不渲染)
+                    SourceSection(vm, revision = revision)
                     }
                 }
 

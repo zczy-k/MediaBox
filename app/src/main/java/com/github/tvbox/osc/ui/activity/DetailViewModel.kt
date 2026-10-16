@@ -320,6 +320,17 @@ class DetailViewModel : ViewModel() {
     private var searchJob: Job? = null
     /** 异步补齐其余线路画质的小任务;换片/重开面板时取消,避免上一部的探测结果串到新内容 */
     private var qualityProbeJob: Job? = null
+    /** 面板按需探测的独立 Job：面板一关就撤，不留在后台跑网络 */
+    private var panelProbeJob: Job? = null
+    /** 这一场里面板已经试过的线路（含失败的）。爬虫每条 1~3 秒，反复开面板不该反复重烧 */
+    private val panelProbedFlags = HashSet<String>()
+    /**
+     * 本场是否已出过首帧 —— 面板探测**只在首帧之后**跑。
+     *
+     * <p>它必须串行(同类 Spider 不能并发)、每条 1~3 秒，放在起播在途时跑就是拿用户的
+     * 首帧时长去换几个标签，与本仓"起播快第一优先"直接冲突。
+     */
+    private var playbackStartedHere = false
     private var detailBuildToken = 0
 
     /**
@@ -881,6 +892,77 @@ class DetailViewModel : ViewModel() {
      * 下一轮继续）。条数由预算自然决定，不再写死。实测深探失败是**毫秒级立即返回**，
      * 只有真正慢的解析才吃时间，所以放开条数并不会真把预算烧满。
      */
+    /**
+     * **打开线路面板时**按需探测面板上那些线路的实测画质（2026-10-16 用户定案）。
+     *
+     * <p>## 补的是什么洞
+     * 真机《镖人》：一个源 9 条线路，**只有正在播的那条有清晰度**。原因是其余线路的
+     * `series.url` 不是播放地址（要爬虫现算），而面板/线路行的轻探只走直链这条路 ——
+     * 日志里那句 `direct=3`（9 条里只有 3 条有直链可探）就是它。
+     * 想给爬虫型线路也拿到真实分辨率，唯一办法是让探测走播放同一条解析路（`playerContent`），
+     * 代价是**每条 1~3 秒、同类 Spider 不能并发** —— 与"起播快第一优先"直接冲突。
+     * 所以用户拍板：这个钱只在**他打开线路面板、正盯着这些线路看**的时刻花。
+     *
+     * <p>## 四条把成本按住的边界（缺一条就会变成"后台偷偷狂解析"）
+     * ① **首帧之后**才跑（[playbackStartedHere]）；② 只在这一次面板打开时触发，
+     * 关掉就 cancel（见 [dismissEpisodeSheet]）；③ 一次最多 [PANEL_PROBE_LINES] 条、**串行**；
+     * ④ 每条线路**这一场只试一次**（[panelProbedFlags]），失败也不重开 —— 与源级"只观测不重罚"同一口径。
+     *
+     * <p>解析走 [resolveTargetForProbe]：**与播放同一条路**，探到的地址就是播的地址
+     * （否则又是"探测打 A 站、播放打 B 站"那种假失败）。
+     */
+    private fun probeCrawlerLinesForLinePanel() {
+        val info = vodInfo ?: return
+        if (!playbackStartedHere) return            // 起播在途：一律不抢这份带宽
+        val siteOrder = info.seriesMap?.keys?.toList().orEmpty()
+        if (siteOrder.size <= 1) return             // 单线路没有可切换对象
+        if (!DeviceCapability.effectiveMode().shouldProbeOnFirstWatch) return
+        val remembered = VideoQualityMemory.lookupAll(sourceKey, vodId, siteOrder)
+        val targets = ArrayList<String>()
+        for (flag in siteOrder) {
+            if (targets.size >= PANEL_PROBE_LINES) break
+            if (remembered.any { it.flag == flag }) continue
+            if (probeNegativeCooldownActive(flag, System.currentTimeMillis())) continue
+            if (!panelProbedFlags.add(flag)) continue
+            targets.add(flag)
+        }
+        if (targets.isEmpty()) return
+        LOG.i(
+            "echo-line-probe panel start site=" + sourceKey + " vod=" + vodId +
+                " lines=" + targets.size + " of=" + siteOrder.size +
+                " remembered=" + remembered.size
+        )
+        panelProbeJob?.cancel()
+        val siteKey = sourceKey
+        val vod = vodId
+        panelProbeJob = viewModelScope.launch(Dispatchers.IO) {
+            val probe = VideoQualityProbe()
+            val headers = probeHeaders(siteKey)
+            for (flag in targets) {
+                if (!isActive) return@launch
+                val (target, reason) = resolveTargetForProbe(flag)
+                if (target == null) {
+                    // 解析给不出地址：与"探不到分辨率"是两件事，分开记（否则下次排查会以为探测失败）
+                    LOG.i("echo-line-probe panel no-url flag=" + flag + " reason=" + reason)
+                    continue
+                }
+                val via = withTimeoutOrNull(SourceSweepBudget.deepProbeTimeoutMs) {
+                    probe.probe(target.url, mergeProbeHeaders(headers, target.headers))
+                }
+                if (via != null && via.known) {
+                    VideoQualityMemory.record(siteKey, vod, via.copy(flag = flag))
+                    LOG.i(
+                        "echo-line-probe panel ok flag=" + flag +
+                            " size=" + via.width + "x" + via.height + " via=" + target.via
+                    )
+                    launch(Dispatchers.Main) { publishLineQualityHeights() }
+                } else {
+                    LOG.i("echo-line-probe panel miss flag=" + flag + " via=" + target.via)
+                }
+            }
+        }
+    }
+
     private object SourceSweepBudget {
         /** 唯一预算：本轮扫描的总时长（后台串行，不占前台） */
         const val totalMs = 45_000L
@@ -1164,12 +1246,18 @@ class DetailViewModel : ViewModel() {
         publishLineQualityHeights()
         // 面板是用户真正会盯着看的地方,在这里补齐其余线路画质(异步,只补没测过的)
         probeMissingLineQualities()
+        // 爬虫型线路只能在这里补(见函数注释):直连轻探拿不到它们的地址,而面板是
+        // 唯一"用户已经在看这些线路"的时刻
+        probeCrawlerLinesForLinePanel()
         episodeSheet.value = true
         sendCommand(PlaybackCommand.SetEpisodeSheetOpen(true))
     }
 
     fun dismissEpisodeSheet() {
         episodeSheet.value = false
+        // 面板关了就没人在看这些标签了,继续探只是白占带宽
+        panelProbeJob?.cancel()
+        panelProbeJob = null
         sendCommand(PlaybackCommand.SetEpisodeSheetOpen(false))
     }
 
@@ -3322,10 +3410,12 @@ class DetailViewModel : ViewModel() {
             manualSwitchActive = false
             chipPage.value = 0
             // 换片 ⇒ 整场作废:候选表、去重集、匿名号一起清(号从 1 重新开始)。
-            // 这条日志是"源是不是又没了"的唯一可核对点:同一片名**重复**出现这行就是 bug,
-            // 因为表只允许在换片时清。
+            // 这条日志是"源是不是又没了"的唯一可核对点:同一个片名**重复**出现这行就是 bug,
+            // 因为表只允许在换片时清。片名还没定(刚进页面)时打 `(pre-title)` ——
+            // 真机 v1.1.44 三条 cleared 全是空串,等于回答不了"是不是同一片被重复清"。
             LOG.i(
-                "echo-source-board cleared title=" + searchTitle.ifEmpty { vodName } +
+                "echo-source-board cleared title=" +
+                    (searchTitle.ifEmpty { vodName }.ifEmpty { "(pre-title)" }) +
                     " dropped=" + synchronized(fallbackCandidates) { fallbackCandidates.size } +
                     " ordinals=" + sourceBoard.size()
             )
@@ -3342,6 +3432,13 @@ class DetailViewModel : ViewModel() {
         PlaybackFailureMemory.beginContent(searchTitle.ifEmpty { vodName })
         cancelDetailTimeout()
         triedKeys.clear()
+        // 新的等待开始 ⇒ 面板按需探测的资格与"已试过哪些线路"一起复位。
+        // 换源也算：不同站的同名 flag 是完全不同的线路(日志里 aidan 与虎牙都有 xzm3u8),
+        // 沿用上一源的"试过了"会让新源的线路永远拿不到标签。
+        playbackStartedHere = false
+        panelProbeJob?.cancel()
+        panelProbeJob = null
+        panelProbedFlags.clear()
         if (!keepChips) {
             synchronized(fallbackCandidates) { fallbackCandidates.clear() }
             candidateKeys.clear()
@@ -3899,6 +3996,8 @@ class DetailViewModel : ViewModel() {
         // 它由 PlaybackProgress 每集发一次的 TYPE_PLAYBACK_STARTED 触发,节流在 30 秒级,
         // 所以绝不能当成主路径:1.0.43 实测正是"分辨率 2 秒测到、标签 32 秒才更新"。
         publishLineQualityHeights()
+        // 首帧已出 ⇒ 允许"打开线路面板时按需探爬虫型线路"这类后置探测
+        playbackStartedHere = true
         // 起播成功后启动"源内有界扫描"(见《选线机制设计》附录 G)。**放在这里而非起播前**,
         // 是为了不占用首帧:起播前只做 ≤1~2s 的直链轻探,重活(全源扫描 + 爬虫深探)全部后置。
         // 每片每会话只跑一次(内部有闩),幂等且自带取消域。
@@ -4056,6 +4155,11 @@ class DetailViewModel : ViewModel() {
         private const val FIRST_WATCH_PROBE_BUDGET_MS = 700L
         /** 探测线路数上限:每条一次 ≤256KB 请求,3 条最坏 768KB */
         private const val FIRST_WATCH_PROBE_LINES = 3
+        /**
+         * 打开线路面板时按需探测的条数上限（爬虫型线路，每条解析 1~3 秒、串行）。
+         * 面板一屏能看到的线路本就有限，再多探的只是"看不到的那几条"，没有收益却持续占带宽。
+         */
+        private const val PANEL_PROBE_LINES = 6
         /** 单个候选站的同名搜索超时。原 30s:聚合订阅动辄数百站,单站卡住会拖垮整轮候选收集 */
         private const val SOURCE_SEARCH_TIMEOUT_MS = 8_000L
 

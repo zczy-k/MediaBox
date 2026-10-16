@@ -82,7 +82,7 @@ object ProbeStrategy {
 
     /** CDN 自述拒绝原因时最常见的词(中英都收;只为把原话定位到,不做翻译不做判断) */
     private val DENY_REASON = Regex(
-        "denied|forbidden|unauthoriz|not allowed|blocked?|banned|expire|expired|invalid token|token|referer|referrer" +
+        "denied|forbidden|unauthoriz|not allowed|not found|not exist|no such|blocked?|banned|expire|expired|invalid token|token|referer|referrer" +
             "|禁止|拒绝|无权|过期|到期|频繁|限制|防盗",
         RegexOption.IGNORE_CASE,
     )
@@ -162,7 +162,8 @@ object ProbeStrategy {
      */
     @JvmStatic
     fun denySummary(body: String?, headerHints: String? = null): String {
-        val stripped = body.orEmpty()
+        val raw = body.orEmpty().trim()
+        val stripped = raw
             .replace(Regex("(?is)<(script|style)[^>]*>.*?</\\1>"), " ")
             .replace(Regex("(?s)<[^>]*>"), " ")
             .replace(Regex("&[a-z]+;|&#\\d+;"), " ")
@@ -170,13 +171,16 @@ object ProbeStrategy {
             .trim()
         if (stripped.isEmpty()) return headerHints.orEmpty().ifBlank { "-" }.take(90)
         val hit = DENY_REASON.find(stripped)?.value
-        val text = if (hit != null) {
+        if (hit != null) {
             // 取关键词所在的那一小段(前后各留一点),而不是从页头截起 —— 前面往往是导航文案
             val at = stripped.indexOf(hit).coerceAtLeast(0)
-            stripped.substring(maxOf(0, at - 30), minOf(stripped.length, at + hit.length + 55))
-        } else {
-            stripped.take(60)
+            return stripped.substring(maxOf(0, at - 30), minOf(stripped.length, at + hit.length + 55))
+                .replace('\n', ' ').replace('"', '\'')
         }
-        return text.replace('\n', ' ').replace('"', '\'')
+        // 没命中原因词时:HTML 页(原始体以 `<` 开头)的前 60 字必然是导航或样式残渣 ——
+        // 真机 v1.1.44 打回的就是 `404 body { margin: 0; padding: 0; background-color: #111`,
+        // 那不是原因,是噪声。宁可老实说"它没说原因",也别拿 CSS 冒充诊断信息。
+        if (raw.startsWith("<")) return "<none>"
+        return stripped.replace('\n', ' ').replace('"', '\'').take(60)
     }
 }
