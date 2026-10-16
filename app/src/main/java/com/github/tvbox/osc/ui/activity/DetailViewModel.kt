@@ -1614,7 +1614,12 @@ class DetailViewModel : ViewModel() {
             if (PlayTitleMatch.isDifferentFilm(mVideo.name, entryTitle)) {
                 LOG.i(
                     "echo-play-verify layer=title other-film key=$sourceKey id=$vodId" +
-                        " got=\"" + mVideo.name.orEmpty().take(30) + "\" want=\"" + entryTitle.take(30) + "\""
+                        // ⚠️ 别把两边都截成 30 字就完事 —— 真机就是这么被我读错过的:
+                        // 一对只差结尾几个字的名字截断后**逐字相同**,却报 other-film,
+                        // 看起来像"判据在瞎判"。带上长度与片号才分得清"截断"还是"真不同"。
+                        " got=\"" + mVideo.name.orEmpty().take(30) + "\"(len=" + mVideo.name.orEmpty().length + ")" +
+                        " want=\"" + entryTitle.take(30) + "\"(len=" + entryTitle.length + ")" +
+                        " code=" + PlayTitleMatch.codePair(mVideo.name, entryTitle)
                 )
                 currentSourceConfirmedEmpty = true
                 markCurrentSourceGaveNothing("other-film")

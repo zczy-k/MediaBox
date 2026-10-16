@@ -44,6 +44,27 @@ object PlayTitleMatch {
         VERSION_WORDS.replace(SearchSettings.coreTitle(title), "").trim()
 
     /**
+     * 片号（作品编号）：`MFYD-197`、`EYAN-227`、`CARIBBEANCOM-101626-001`、`SSNI-001`…
+     * 形状 = 2~14 个字母 + 接 2 位以上数字（可再带一段编号）。只在前 24 个字符里找、
+     * 且必须出现在开头附近 —— 否则会把"片名后半段的年份/集数"误当片号。
+     */
+    private val CODE = Regex("([A-Za-z]{2,14})[-_ ]?(\\d{1,8})(?:[-_. ](\\d{1,8}))?")
+
+    /**
+     * 提出可比较的片号；提不出来返回空串（= 这一维不参与判断，绝不能反过来当"不同"的证据）。
+     * 归一化：字母转大写、丢掉分隔符与前导零，所以 `ABC-001` 与 `abc1`、`ABC_1` 是同一个号。
+     */
+    private fun codeOf(title: String?): String {
+        val raw = title ?: return ""
+        val head = if (raw.length > 24) raw.substring(0, 24) else raw
+        val m = CODE.find(head) ?: return ""
+        if (m.range.first > 8) return ""
+        val num = m.groupValues[2].trimStart('0')
+        val third = m.groupValues.getOrNull(3).orEmpty().trimStart('0')
+        return m.groupValues[1].uppercase() + num + if (third.isEmpty()) "" else "-" + third
+    }
+
+    /**
      * @param playingTitle 当前这条内容自己的标题(候选卡片名 / 详情回包的 name)
      * @param filmTitle 用户点进来的那部片的标题(整场固定,见 `DetailViewModel.entryTitle`)
      */
@@ -56,10 +77,28 @@ object PlayTitleMatch {
         val corePlaying = coreOf(playingTitle)
         val coreFilm = coreOf(filmTitle)
         if (corePlaying.isNotEmpty() && corePlaying == coreFilm) return Verdict.SAME
+        // ⚠️ 片号这一维必须在前缀判定**之前**（2026-10-16 真机回归）。
+        // 现象：同一个爬虫源里,详情回包的标题与入口标题只差"谁被截短了结尾几个字",
+        // 于是 `MFYD-197 …幼儿园` 与 `MFYD-197 …幼儿园老师` 互为一方的前缀 ⇒ 被判"另一部片"
+        // ⇒ 记一次源失败、进换源链、候选 0、收口成「此影片暂无法播放」,而画面其实一直在正常播。
+        // 同片号必然是同一部作品(编号就是发行方的唯一身份),所以先判 SAME;
+        // 两边都有片号却不相等则相反 —— 那是"一定不是同一部"的确凿证据(《SSNI-123》≠《SSNI-456》)。
+        // 只有一边提得出片号时**这一维不作数**,退回原有形状,避免"提不到号"被当成"号不同"。
+        val codePlaying = codeOf(playingTitle)
+        val codeFilm = codeOf(filmTitle)
+        if (codePlaying.isNotEmpty() && codeFilm.isNotEmpty()) {
+            if (codePlaying == codeFilm) return Verdict.SAME
+            return Verdict.DIFFERENT
+        }
         // 不是前缀关系(译名/别名/系列名/繁简差异)⇒ 判不了,放行
         if (!(playing.startsWith(film) || film.startsWith(playing))) return Verdict.UNKNOWN
         return Verdict.DIFFERENT
     }
+
+    /** 诊断用:把两边提出来的片号打出来(判错时一眼能看出是"没截断却判同号"还是"截断方向反了") */
+    @JvmStatic
+    fun codePair(playingTitle: String?, filmTitle: String?): String =
+        codeOf(playingTitle) + "/" + codeOf(filmTitle)
 
     /** 只在"明确是另一部片"时才动手;UNKNOWN/SAME 都算可以播 */
     fun isDifferentFilm(playingTitle: String?, filmTitle: String?): Boolean =

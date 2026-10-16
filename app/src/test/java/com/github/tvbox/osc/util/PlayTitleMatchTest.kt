@@ -53,4 +53,46 @@ class PlayTitleMatchTest {
         assertEquals(Verdict.UNKNOWN, PlayTitleMatch.verdict("希望", ""))
         assertEquals(Verdict.UNKNOWN, PlayTitleMatch.verdict(null, null))
     }
+
+    /**
+     * 真机 v1.1.58 回归(必须钉住):同一个爬虫源里,详情回包的标题与入口标题只差"谁被截短了尾巴",
+     * 前缀规则会把它判成另一部片 ⇒ 记一次源失败 → 换源链候选 0 → 详情收口「此影片暂无法播放」,
+     * 而画面其实一直在正常播。同片号 = 发行方的唯一身份 ⇒ 先判同一部。
+     */
+    @Test
+    fun `同片号就是同一部,哪怕一方被截短`() {
+        assertEquals(
+            Verdict.SAME,
+            PlayTitleMatch.verdict(
+                "MFYD-197 “把老师的尿都喝光！”一位母爱泛滥的幼儿园",
+                "MFYD-197 “把老师的尿都喝光！”一位母爱泛滥的幼儿园老师"
+            )
+        )
+        assertEquals(Verdict.SAME, PlayTitleMatch.verdict("DVMM-457 我在妓院里", "DVMM-457 我在妓院里偶遇了班上最受欢迎的女生"))
+        assertEquals(
+            "多段编号也要认(CARIBBEANCOM-101626-001)",
+            Verdict.SAME,
+            PlayTitleMatch.verdict("CARIBBEANCOM-101626-001 我未婚夫的朋", "CARIBBEANCOM-101626-001 我未婚夫的朋友")
+        )
+        assertEquals("大小写与前导零不参与片号比较", Verdict.SAME, PlayTitleMatch.verdict("ssni-001 标题", "SSNI-1 标题的尾巴"))
+    }
+
+    @Test
+    fun `两边都有片号却不相等就是另一部片`() {
+        assertEquals(Verdict.DIFFERENT, PlayTitleMatch.verdict("SSNI-456 同一个系列标题", "SSNI-123 同一个系列标题"))
+    }
+
+    /** 只有一边提得出片号 ⇒ 这一维不作数,退回原有形状;绝不能把"提不到号"当成"号不同" */
+    @Test
+    fun `单边有片号时不参与比较`() {
+        assertEquals(Verdict.UNKNOWN, PlayTitleMatch.verdict("ABC-123 一个英文标题", "希望"))
+        assertEquals(Verdict.UNKNOWN, PlayTitleMatch.verdict("希望", "ABC-123 一个英文标题"))
+    }
+
+    /** 年份/集数不是片号(它们前面没有字母段),别把《希望 2023》判成另一部 */
+    @Test
+    fun `年份与集数不会被误当成片号`() {
+        assertEquals(Verdict.SAME, PlayTitleMatch.verdict("希望 2023", "希望"))
+        assertEquals(Verdict.SAME, PlayTitleMatch.verdict("希望 第2集", "希望"))
+    }
 }
