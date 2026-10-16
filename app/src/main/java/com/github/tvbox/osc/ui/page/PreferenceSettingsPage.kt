@@ -180,14 +180,6 @@ fun PreferenceSettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel =
                     }
                 }
                 SettingsCard(SettingsCardPosition.MIDDLE) {
-                    SettingsSwitchRow(
-                        title = stringResource(R.string.settings_m3u8_purify),
-                        leadingIconRes = R.drawable.ic_pref_m3u8_purify,
-                        checked = state.m3u8Purify,
-                        onCheckedChange = { vm.put(HawkConfig.M3U8_PURIFY, it) },
-                    )
-                }
-                SettingsCard(SettingsCardPosition.MIDDLE) {
                     SettingsSliderRow(
                         title = stringResource(R.string.settings_buffer_time),
                         leadingIconRes = R.drawable.ic_pref_buffer_time,

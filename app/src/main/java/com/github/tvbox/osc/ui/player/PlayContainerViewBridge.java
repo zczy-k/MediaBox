@@ -189,20 +189,6 @@ final class PlayContainerViewBridge implements PlaybackViewBridge {
     }
 
     @Override
-    public void playM3u8(String url, HashMap<String, String> headers) {
-        if (container.mController != null) container.mController.playM3u8(url, headers);
-    }
-
-    @Override
-    public void playM3u8(String url, HashMap<String, String> headers, int gen) {
-        if (!container.scheduler.isParseResultCurrent(gen)) {
-            LOG.i("echo-ignore stale m3u8 result");
-            return;
-        }
-        playM3u8(url, headers);
-    }
-
-    @Override
     public void startVideoPlayback(String url, HashMap<String, String> headers, boolean forceExoPlayer) {
         if (container.mVideoView == null) return;
         container.mController.hidePauseRoot();

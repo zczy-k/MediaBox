@@ -87,7 +87,6 @@ data class SettingsState(
     val autoBlockBadSources: Boolean,
     /** 当前被屏蔽的源数量(设置页展示 + "全部解除"入口的可见性) */
     val blockedSourceCount: Int,
-    val m3u8Purify: Boolean,
     val incognito: Boolean,
     val gestureControlDisabled: Boolean,
     val navLiveHidden: Boolean,
@@ -193,7 +192,6 @@ class SettingsViewModel : ViewModel() {
         // 台账查询会顺带做到点自动解封(见 SourceHealthMemory.blockedKeys),所以这里读到的
         // 一定是"此刻仍有效"的数量,不会把已解封的算进去
         blockedSourceCount = SourceHealthMemory.blockedCount(),
-        m3u8Purify = KV.get(HawkConfig.M3U8_PURIFY, false),
         incognito = KV.get(HawkConfig.INCOGNITO, false),
         gestureControlDisabled = KV.get(HawkConfig.GESTURE_CONTROL_DISABLED, false),
         navLiveHidden = KV.get(HawkConfig.NAV_LIVE_HIDDEN, false),

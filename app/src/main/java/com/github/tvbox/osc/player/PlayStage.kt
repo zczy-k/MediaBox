@@ -15,23 +15,23 @@ package com.github.tvbox.osc.player
  *       JS 只有走内置 `req` 才看得见网络层。所以这里只报"等了多久",不报"发出去没有、
  *       回包没有" —— 填一个看不见的数字比不填更坏。</li>
  *   <li>{@link #LOCAL_HANDOFF}:爬虫答了,地址还在本地链路(解析、抽取、跨源判断)。</li>
- *   <li>{@link #PURIFY_IN_FLIGHT}:m3u8 净化正在**自己拉播放列表**(master 列表会拉两次),
- *       它没有自己的超时,原本被算进"这条线起播失败"。</li>
  *   <li>{@link #PLAYER_START}:地址已经交给内核,只剩"这个流能不能出画面" ——
  *       唯一能真正证明线路本身有问题的一段。</li>
  * </ul>
+ *
+ * <p>曾经的第四段 {@code PURIFY_IN_FLIGHT}(m3u8 去广告自己在拉播放列表)随净化链整条撤除:
+ * 它没有可靠证据分级、拉回来概率近零,却会把起播预算吃掉 —— 一段测不到东西的段不值得留着。
  */
 enum class PlayStage {
     SPIDER_WAIT,
     LOCAL_HANDOFF,
-    PURIFY_IN_FLIGHT,
     PLAYER_START;
 
     /**
      * 这一段的延迟能不能算到**线路**头上。
      *
      * <p>只有地址交给内核之后(PLAYER_START),不出现画面才是这条流的问题。
-     * 前三段慢的是站点、是本地链路、是我们自己的净化请求 —— 把它们记成"线路失败",
+     * 前面两段慢的是站点、是本地链路 —— 把它们记成"线路失败",
      * 会让一条本来好好的线因为"这个站今天很慢"被越排越后,再也轮不到。
      */
     fun blamesTheLine(): Boolean = this == PLAYER_START
@@ -40,7 +40,6 @@ enum class PlayStage {
     fun tag(): String = when (this) {
         SPIDER_WAIT -> "spider-wait"
         LOCAL_HANDOFF -> "local-handoff"
-        PURIFY_IN_FLIGHT -> "purify-in-flight"
         PLAYER_START -> "player-start"
     }
 }
@@ -50,16 +49,13 @@ object PlayStages {
 
     /**
      * @param resolvePending 取流请求还悬着(没被接受)⇒ 爬虫还没答话
-     * @param purifyStarted 净化链已开始(m3u8 要自己再拉一次网络)
      * @param kernelGotUrl 地址已定稿并排队交给内核
      */
     @JvmStatic
-    fun of(resolvePending: Boolean, purifyStarted: Boolean, kernelGotUrl: Boolean): PlayStage = when {
+    fun of(resolvePending: Boolean, kernelGotUrl: Boolean): PlayStage = when {
         // 爬虫没答话时后面一切都没开始,优先判它
         resolvePending -> PlayStage.SPIDER_WAIT
-        // 净化完成后的回调正是 goPlayUrl ⇒ 地址定稿就说明净化已经回来
         kernelGotUrl -> PlayStage.PLAYER_START
-        purifyStarted -> PlayStage.PURIFY_IN_FLIGHT
         else -> PlayStage.LOCAL_HANDOFF
     }
 }

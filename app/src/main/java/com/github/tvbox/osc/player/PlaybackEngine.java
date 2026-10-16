@@ -918,18 +918,6 @@ public final class PlaybackEngine implements PlaybackHostApi {
         }
 
         @Override
-        public void playM3u8(String url, HashMap<String, String> headers) {
-            startVideoPlayback(url, headers, false);
-        }
-
-        @Override
-        public void playM3u8(String url, HashMap<String, String> headers, int gen) {
-            // 无页面桥不做净化(净化用例在页面),与 2 参实现一致直接起播,但同样要过代际
-            if (!controller.isParseResultCurrent(gen)) return;
-            startVideoPlayback(url, headers, false);
-        }
-
-        @Override
         public void startVideoPlayback(String url, HashMap<String, String> headers, boolean forceExoPlayer) {
             if (released) return;
             // 错误态兜底:复用判定放行后内核仍可能报错,坏内核不能接着 reset 用(与页面桥同一口径)

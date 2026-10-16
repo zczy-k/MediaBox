@@ -130,17 +130,6 @@ final class PlayContainerControlListener implements VodControlListener {
         container.startDanmuIfReady();
     }
     @Override
-    public void startPlayUrl(String url, HashMap<String, String> headers) {
-        if (!TextUtils.isEmpty(container.scheduler.m3u8SourceUrl()) && !container.scheduler.isM3u8ProxyUrl(url)) container.scheduler.clearM3u8ProxyUrl();
-        container.scheduler.goPlayUrl(url, headers);
-    }
-
-    @Override
-    public void onM3u8ProxyUrl(String proxyUrl, String sourceUrl) {
-        container.scheduler.setM3u8Urls(proxyUrl, sourceUrl);
-    }
-
-    @Override
     public void clickCast() {
         container.showCastDialog();
     }

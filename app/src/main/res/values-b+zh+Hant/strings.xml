@@ -517,7 +517,6 @@
     <string name="settings_auto_block_bad_sources_subtitle">同一源反覆失敗後自動停用一段時間;已封鎖的源不再參與搜尋與換源</string>
     <string name="settings_source_blocked_count">已封鎖 %1$d 個源</string>
     <string name="settings_source_unblock_all">全部解除</string>
-    <string name="settings_m3u8_purify">M3U8 淨化</string>
     <string name="settings_buffer_time">緩衝時間</string>
     <string name="settings_search_threads">同時搜尋的來源數</string>
     <string name="settings_search_threads_subtitle">找片與換源都用它當上限</string>

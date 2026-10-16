@@ -517,7 +517,6 @@
     <string name="settings_auto_block_bad_sources_subtitle">Pause a source after repeated failures; blocked sources are skipped in search and source switching</string>
     <string name="settings_source_blocked_count">Blocked sources: %1$d</string>
     <string name="settings_source_unblock_all">Unblock all</string>
-    <string name="settings_m3u8_purify">M3U8 Purify</string>
     <string name="settings_buffer_time">Buffer Time</string>
     <string name="settings_search_threads">Sources Searched At Once</string>
     <string name="settings_search_threads_subtitle">Caps both finding titles and switching sources</string>

@@ -77,10 +77,6 @@ public class PlaybackController {
     /** 当前清晰度列表原始结果(多清晰度源的 url 数组;null=该源无多清晰度) */
     private JSONObject qualityResult;
 
-    /** 净化后的 m3u8 代理地址与其原始地址(投屏时换回源地址) */
-    private String m3u8ProxyUrl;
-    private String m3u8SourceUrl;
-
     /** 换源/换线时"接着看"的进度(新键无历史时才写入) */
     private String inheritProgressKey;
     private long inheritProgress;
@@ -112,10 +108,8 @@ public class PlaybackController {
         // 否则"切到 B 但取流失败(播放器里其实还是 A)"后重进 B,会被 D6 误判成同片接管(播错内容)
         startedPlaybackKey = null;
         // 会话级状态的统一复位:这些字段的复位点原本只在 play() 里,而 **D6 同片接管不走 play()** ⇒
-        // playbackStarted 陈旧会吞掉续播失败(黑屏不重试)、switchStopPending 残留会丢在途取流结果、
-        // m3u8 残留会让投屏拿到上一部的源地址。
+        // playbackStarted 陈旧会吞掉续播失败(黑屏不重试)、switchStopPending 残留会丢在途取流结果。
         st.beginSession();
-        clearM3u8ProxyUrl();
         this.vod = session.vod();
         this.sourceKey = session.sourceKey();
         this.sourceBean = ApiConfig.get().getSource(sourceKey);
@@ -233,35 +227,15 @@ public class PlaybackController {
 
     // ==================== 投屏地址改写 ====================
 
-    /** m3u8 代理地址 → 源地址;本地代理地址 → 局域网地址(配合 ControlManager 的地址发现) */
+    /** 本地代理地址 → 局域网地址(配合 ControlManager 的地址发现) */
     public String getCastUrl(String url) {
         if (TextUtils.isEmpty(url)) return url;
-        if (isM3u8ProxyUrl(url) && !TextUtils.isEmpty(m3u8SourceUrl)) return m3u8SourceUrl;
         String local = ControlManager.get().getAddress(true);
         String server = ControlManager.get().getAddress(false);
         if (!TextUtils.isEmpty(local) && !TextUtils.isEmpty(server) && url.startsWith(local)) {
             return server + url.substring(local.length());
         }
         return url;
-    }
-
-    public boolean isM3u8ProxyUrl(String url) {
-        return !TextUtils.isEmpty(m3u8ProxyUrl) && url.equals(m3u8ProxyUrl);
-    }
-
-    public void setM3u8Urls(String proxyUrl, String sourceUrl) {
-        this.m3u8ProxyUrl = proxyUrl;
-        this.m3u8SourceUrl = sourceUrl;
-    }
-
-    @Nullable
-    public String m3u8SourceUrl() {
-        return m3u8SourceUrl;
-    }
-
-    public void clearM3u8ProxyUrl() {
-        m3u8ProxyUrl = null;
-        m3u8SourceUrl = null;
     }
 
     // ==================== 播放请求头 ====================
@@ -816,7 +790,7 @@ public class PlaybackController {
             long now = android.os.SystemClock.elapsedRealtime();
             VodInfo startedVod = vod();
             // 首帧耗时只记 **player 段**(地址交给内核 → 画面出来)。分段归因到这里才闭环:
-            // spider/purify 那些段慢的不是这条线,拿它们算预算会把死线也养成长等待。
+            // spider 段慢的是站点不答话,不是这条线,拿它算预算会把死线也养成长等待。
             long playerMs = st.stageKernelAt > 0L ? now - st.stageKernelAt : -1L;
             if (playerMs > 0L && startedVod != null) {
                 LineHealthRecorder.INSTANCE.recordFirstFrame(
@@ -827,8 +801,7 @@ public class PlaybackController {
             LOG.i("echo-firstframe ms=" + (now - armedAt)
                     + " total=" + span(st.stageRequestedAt, now)
                     + " spider=" + span(st.stageRequestedAt, st.stageAnsweredAt)
-                    + " local=" + span(st.stageAnsweredAt, st.stagePurifyAt > 0L ? st.stagePurifyAt : st.stageKernelAt)
-                    + " purify=" + span(st.stagePurifyAt, st.stageKernelAt)
+                    + " local=" + span(st.stageAnsweredAt, st.stageKernelAt)
                     + " player=" + span(st.stageKernelAt, now)
                     + " line=" + (startedVod == null ? "?" : startedVod.playFlag));
         }
@@ -962,7 +935,7 @@ public class PlaybackController {
     public PlayStage playStage() {
         // "答没答话"用 stageAnsweredAt 判,不用 resolveStartElapsed:后者是消费式的
         // (结果被采纳就清零),拿它判会把"已采纳"和"根本没发起"混成同一种状态
-        return PlayStages.of(st.stageAnsweredAt == 0L, st.stagePurifyAt != 0L, st.stageKernelAt != 0L);
+        return PlayStages.of(st.stageAnsweredAt == 0L, st.stageKernelAt != 0L);
     }
 
     /** 本段已经等了多久(超时日志要说清"慢在哪一段、已经慢了多少") */
@@ -978,39 +951,12 @@ public class PlaybackController {
         return from <= 0L ? -1L : Math.max(-1L, to - from);
     }
 
-    /**
-     * 把净化在飞行中吃掉的那段时间**还给这条线路的起播预算**(2026-10-16 止血)。
-     *
-     * <p>为什么这是"重复 arm 不续命"那条规矩的**例外**而不是破例:
-     * 还的额度不是重新发一份预算,而是**实测到的净化耗时**,并且一轮只兑一次
-     * ({@code purifyCredited})。净化没跑、跑得快、跑得慢,还回去的量都不一样 ——
-     * 慢在我们自己,凭什么让线路的 4~17 秒预算替它买单;但也不能因为"怕被续命"
-     * 就连自己欠的那几秒都不还。封顶 3500ms 是因为净化链自己有 3 秒死线,
-     * 正常不可能更久;封顶只是防住一个逻辑外的迟到值。
-     */
-    private void creditPurifyWait() {
-        if (st.stagePurifyAt == 0L || st.purifyCredited) return;
-        st.purifyCredited = true;
-        long waited = span(st.stagePurifyAt, android.os.SystemClock.elapsedRealtime());
-        // 预算没发过(禁自动换线时 switchLineDeadline 恒为 0)⇒ 没有可还的东西
-        if (waited < 0L || st.switchLineDeadline <= 0L) return;
-        long credit = Math.min(waited, 3500L);
-        st.switchLineDeadline += credit;
-        long left = st.switchLineDeadline - android.os.SystemClock.elapsedRealtime();
-        // 按新的截止重投定时消息。用的就是宽限复查那条通道,语义是"到截止那一拍再问一次",
-        // 判据不变(仍是 handleSwitchLinePlayTimeout 里的分段归因),所以不是新加了一条判定。
-        timeouts.startSwitchLineGraceTimeout(Math.max(250L, left));
-        LOG.i("echo-m3u8-purify deadline credit=" + credit + "ms waited=" + waited + "ms left=" + left + "ms");
-    }
-
     private long stageMarkFor(PlayStage stage) {
         switch (stage) {
             case SPIDER_WAIT:
                 return st.stageRequestedAt;
             case LOCAL_HANDOFF:
                 return st.stageAnsweredAt;
-            case PURIFY_IN_FLIGHT:
-                return st.stagePurifyAt;
             case PLAYER_START:
                 return st.stageKernelAt;
             default:
@@ -1441,10 +1387,14 @@ public class PlaybackController {
     }
 
     /**
-     * 取流结果入口:先按 M3U8 去广告规则分流,再交给 goPlayUrl 起播。
+     * 取流结果入口:交给 {@link #goPlayUrl} 起播。
      *
      * <p>这也是**所有**播放路径(直连 / parse 解析 / 嗅探 / 多码率数组)的唯一汇合点,
      * 所以「线路N · 1080P」的实测挂点放在这里 —— 见 {@link #probeLineQualityOnRealUrl}。
+     *
+     * <p>2026-10-16:这里原本有一段"按去广告开关把 m3u8 交给净化链再回头起播"的分流,已整条撤除
+     * (净化要自己再拉一次网络、基本拉不回来还吃掉起播预算;判据没有可靠证据分级)。
+     * 起播路径从汇合点到 goPlayUrl 只有一条,不再有"绕出去等网络"的分支。
      */
     public void playUrl(String url, HashMap<String, String> headers) {
         startSwitchLinePlayTimeout();
@@ -1453,26 +1403,7 @@ public class PlaybackController {
             EventBus.getDefault().post(new RefreshEvent(RefreshEvent.TYPE_REFRESH, url));//更新播放地址
         }
         probeLineQualityOnRealUrl(url, headers);
-        if (!KV.get(HawkConfig.M3U8_PURIFY, false)) {
-            goPlayUrl(url, headers);
-            return;
-        }
-        if (url.startsWith("http://127.0.0.1") || !url.contains(".m3u8")) {
-            goPlayUrl(url, headers);
-            return;
-        }
-        if (vod() != null && DefaultConfig.noAd(vod().playFlag)) {
-            goPlayUrl(url, headers);
-            return;
-        }
-        LOG.i("echo-playM3u8:" + url);
-        // 净化链唯一不走 goPlayUrl 的起播路径(净化完成回调 startPlayUrl),起播前由页面桥校验代际
-        // 记下这一刻:净化要**自己再拉 1~2 次网络**(master 列表两次),而它原本没有自己的计时器,
-        // 慢在它身上的话会被算成"这条线路起播失败" —— 分段就是为了把它认出来。
-        st.stagePurifyAt = android.os.SystemClock.elapsedRealtime();
-        if (view != null) view.playM3u8(url, headers, playUrlGeneration);
-        // 净化期间先记下起点地址,否则净化源上 autoRetry/retryAfterStartedError 找不到可重播地址
-        setWebPlayUrl(url);
+        goPlayUrl(url, headers);
     }
 
     /**
@@ -1537,9 +1468,7 @@ public class PlaybackController {
         }
         if (view == null || !view.isPageAlive()) return;
         // 地址定稿、即将交给内核 —— 从这里往后的等待才真的只可能是"这条流出不出画面"。
-        // 净化链完成后也是回到这里,所以这一刻同时意味着净化已经回来。
         st.stageKernelAt = android.os.SystemClock.elapsedRealtime();
-        creditPurifyWait();
         // 调用方与解析回调同帧或同线程 ⇒ 本地址归属当前轮,在排队前签发代际(见 playUrlGeneration 注释)
         playUrlGeneration = resolver.currentGen();
         final String finalUrl = url;

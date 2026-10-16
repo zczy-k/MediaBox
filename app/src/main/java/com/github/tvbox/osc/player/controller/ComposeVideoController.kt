@@ -43,7 +43,6 @@ import com.github.tvbox.osc.player.state.PlayerUiState
 import com.github.tvbox.osc.player.state.VideoSizeGate
 import com.github.tvbox.osc.player.state.SelectDialogState
 import com.github.tvbox.osc.player.ui.PlayerOverlay
-import com.github.tvbox.osc.player.usecase.M3u8PurifyUseCase
 import com.github.tvbox.osc.player.usecase.PlayerSwitchUseCase
 import com.github.tvbox.osc.player.usecase.WebParseUseCase
 import com.github.tvbox.osc.subtitle.widget.SimpleSubtitleView
@@ -136,19 +135,6 @@ class ComposeVideoController @JvmOverloads constructor(
     private val keySeekCommitRunnable by lazy { Runnable { commitKeySeek() } }
     private val speedRetryRunnable by lazy { Runnable { applySpeedWhenReady() } }
 
-    private val m3u8PurifyUseCase by lazy {
-        // ⚠️ 不再传 context:该类已无 UI 依赖(去广告弹窗删除后 Context 失去唯一消费者),
-        // 构造签名同步收窄,详见 M3u8PurifyUseCase 的构造函数注释。
-        M3u8PurifyUseCase(object : M3u8PurifyUseCase.Callback {
-            override fun startPlayUrl(url: String?, headers: HashMap<String, String>?) {
-                listener?.startPlayUrl(url ?: return, headers)
-            }
-
-            override fun onM3u8ProxyUrl(proxyUrl: String?, sourceUrl: String?) {
-                listener?.onM3u8ProxyUrl(proxyUrl ?: return, sourceUrl ?: return)
-            }
-        })
-    }
     private val webParseUseCase by lazy { WebParseUseCase() }
 
     // FastClickCheckUtil 等价：同一动作 500ms 内只生效一次
@@ -784,10 +770,6 @@ class ComposeVideoController @JvmOverloads constructor(
 
     override fun stopOther() {
         PlayerSwitchUseCase.stopOther()
-    }
-
-    override fun playM3u8(url: String?, headers: HashMap<String, String>?) {
-        m3u8PurifyUseCase.playM3u8(url ?: return, headers)
     }
 
     override fun encodeUrl(url: String?): String = PlayerSwitchUseCase.encodeUrl(url)
