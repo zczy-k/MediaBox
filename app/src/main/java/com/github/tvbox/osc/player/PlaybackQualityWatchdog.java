@@ -40,6 +40,20 @@ final class PlaybackQualityWatchdog {
         /** 这一段内容是否已经起播过(真起播,不是"进了播放态又掉回去") */
         boolean startedOnce();
 
+        /**
+         * 起播后**还没渲染出任何一帧**已经等了多久（毫秒）；-1 = 判不了，0 = 画面早就有了。
+         * 只有 media3 内核给得出这个证据（{@code onRenderedFirstFrame}）。
+         */
+        long waitedWithoutFrameMs();
+
+        /**
+         * 判定为"有声音、没画面"（进播放态、位置在走、零报错，却一帧都没渲染）。
+         *
+         * @param attempt 第几次报：1 = 先试重绑渲染面（内核换过但面没重交的代价最小一跳），
+         *                2 = 面已经交过一次仍无画 ⇒ 换线/换源
+         */
+        void onNoVideoFrame(int attempt);
+
         /** 判定为"持续劣质"时回调(实现方决定换线还是换源) */
         void onPlaybackTooSlow();
 
@@ -67,6 +81,16 @@ final class PlaybackQualityWatchdog {
 
     /** "已播到距片尾不足这个余量"就当正常播完,不算静默停住(否则片尾会莫名触发换线/换源) */
     private static final long NEAR_END_MS = 5_000L;
+
+    /**
+     * 第五层「画面真的上屏」:起播后这么久还没渲染出一帧,就判"有声无画"。
+     *
+     * <p>为什么是 15 秒:进播放态之后 media3 的 {@code onRenderedFirstFrame} 通常在几十到几百毫秒内就到;
+     * 高分辨率线路首帧慢,但那有"等起播预算"那条路管(它到点前根本不会标记起播)。
+     * 已经进了播放态还等 15 秒没画面,基本只剩"surface 没绑上/渲染层没画/流里没有可解码视频"三类,
+     * 而这三类的处置都是换线换源。再短会在弱网首帧时被误判,再长就是让用户多盯一段黑屏。
+     */
+    private static final long NO_FRAME_MS = 15_000L;
 
     /** 采样间隔 */
     static final long SAMPLE_INTERVAL_MS = 5_000L;
@@ -102,6 +126,12 @@ final class PlaybackQualityWatchdog {
     private long realPlayMs = 0L;
 
     private boolean realPlayConfirmed = false;
+
+    /** 本段已报过几次"有声无画"（上限 {@link #NO_FRAME_ATTEMPTS}）：1=重绑渲染面，2=换线/换源 */
+    private int noFrameAttempts = 0;
+
+    /** 无画面最多报两次：先试最便宜的一跳，再动线路与源 */
+    private static final int NO_FRAME_ATTEMPTS = 2;
 
     private final Host host;
 
@@ -161,6 +191,7 @@ final class PlaybackQualityWatchdog {
         realPlayMs = 0L;
         realPlayConfirmed = false;
         completedSeen = false;
+        noFrameAttempts = 0;
     }
 
     /** 本段内容是否已经报过"播完"：播完之后的 IDLE 是正常收尾，绝不能当成静默停住 */
@@ -188,6 +219,22 @@ final class PlaybackQualityWatchdog {
         }
 
         long pos = host.position();
+        // 第五层「画面真的上屏」:进播放态、位置在走、一次错误回调都没有,却一帧都没渲染
+        // —— 真机 v1.1.50 的《女孩希望充满激情》就是这个形状(退页释放引擎再回来之后整段黑屏)。
+        // 判不了(非 media3 内核 / 纯音频内容)一律不动作:这一层只抓它能确证的那一种。
+        // 两跳,由便宜到贵:第一跳只把现成的渲染面重新交给内核(幂等、不动线路),
+        // 第二跳才换线/换源。分两跳是因为真机那种"引擎复活后整段黑屏"根本不需要换源 ——
+        // 面没交出去而已;一上来就换源会把一条好源记成失败。
+        if (noFrameAttempts < NO_FRAME_ATTEMPTS) {
+            long waited = host.waitedWithoutFrameMs();
+            if (waited >= NO_FRAME_MS * (long) (noFrameAttempts + 1)) {
+                noFrameAttempts++;
+                lastTriggeredAt = now; // 与卡顿共用冷却:刚为无画面动过手,不该立刻又连环换
+                LOG.i("echo-play-verify layer=frame no-frame attempt=" + noFrameAttempts +
+                        " waited=" + waited + "ms");
+                host.onNoVideoFrame(noFrameAttempts);
+            }
+        }
         if (pos < 0) {
             // 位置读不到(内核刚重建):只重置基准,不判定
             lastPosition = -1L;

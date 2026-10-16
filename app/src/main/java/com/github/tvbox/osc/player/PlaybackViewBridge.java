@@ -63,6 +63,18 @@ public interface PlaybackViewBridge {
     /** 当前媒体总时长(毫秒;未知时 0) */
     long duration();
 
+    /**
+     * 把**现有的**渲染视图重新交给当前内核（幂等，不新建视图）。
+     *
+     * <p>「起播后一直没画面」的第一跳用它试：内核与 surface 的绑定只发生在两个时机 ——
+     * 新建渲染视图时（{@code addDisplay}）与系统交面时（{@code surfaceCreated/Changed}）。
+     * 引擎被释放后复活、或内核被换掉时，视图还是那个视图、面也还在，**两个时机都不会再走一遍**，
+     * 新内核手上就可能没有画面：声音照播、进度照走、一个错误都不报，屏幕全黑。
+     *
+     * @return 是否真的完成了一次重绑；拿不到视图或内核时返回 false，调用方据此直接进下一档处置
+     */
+    boolean rebindRenderToPlayer();
+
     /** 是否正在播放 */
     boolean isPlaying();
 

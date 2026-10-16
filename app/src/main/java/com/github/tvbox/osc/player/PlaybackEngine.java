@@ -833,6 +833,11 @@ public final class PlaybackEngine implements PlaybackHostApi {
         }
 
         @Override
+        public boolean rebindRenderToPlayer() {
+            return !released && videoView.rebindRenderToPlayer();
+        }
+
+        @Override
         public boolean isPlaying() {
             return !released && videoView.isPlaying();
         }

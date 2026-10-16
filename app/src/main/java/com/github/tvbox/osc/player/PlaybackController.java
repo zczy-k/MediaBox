@@ -587,6 +587,18 @@ public class PlaybackController {
     private final PlaybackAttemptState st = new PlaybackAttemptState();
 
     /**
+     * 本段内容进入播放态的时刻（{@code SystemClock.elapsedRealtime()}），0 = 还没起播。
+     *
+     * <p>与内核的"第一帧渲染时刻"同一个时钟基准，差值才是可信的等待时长 ——
+     * 看门狗自己用的是 uptimeMillis，跨时钟相减会在深度睡眠后失真，所以等待时长在这里算好再交出去。
+     */
+    private volatile long startedAtElapsed;
+
+    /** "无画面"已换过几次线/源（进程级）；到 {@link #NO_FRAME_SWITCH_LIMIT} 就只记录不动作，见 onNoVideoFrame 的熔断说明 */
+    private static final int NO_FRAME_SWITCH_LIMIT = 4;
+    private int noFrameSwitchCount;
+
+    /**
      * 播放质量看门狗:能播但持续卡顿 → 换线 / 换源。
      *
      * <p>判据与滞回见 {@link PlaybackQualityWatchdog};处置策略见
@@ -645,6 +657,55 @@ public class PlaybackController {
             return st.playbackStarted;
         }
 
+        /**
+         * 起播之后**仍然一帧画面都没渲染出来**已经等了多久（毫秒）。
+         *
+         * <p>返回 -1 表示"判不了"（不是 media3 内核 / 还没起播 / 这本就是纯音频内容 / 读不到），
+         * 返回 0 表示画面早就出过了。**判不了就不判**是刻意的：这一层只用来抓
+         * "进播放态、位置在走、零报错却没有画面"那一种，其它情形交给既有闸去管，
+         * 否则会把 IJK 内核或音乐播放当成故障一路换下去。
+         */
+        @Override
+        public long waitedWithoutFrameMs() {
+            PlaybackViewBridge v = view;
+            if (v == null) return -1L;
+            AbstractPlayer p = v.mediaPlayer();
+            if (!(p instanceof ExoPlayer)) return -1L;
+            if (isConfirmedAudioOnly()) return -1L;
+            long started = startedAtElapsed;
+            if (started <= 0L) return -1L;
+            if (((ExoPlayer) p).firstRenderedAtMs() > 0L) return 0L;
+            long waited = android.os.SystemClock.elapsedRealtime() - started;
+            return waited < 0L ? -1L : waited;
+        }
+
+        @Override
+        public void onNoVideoFrame(int attempt) {
+            if (attempt <= 1) {
+                // 第一跳：把现成的渲染面重新交给当前内核。引擎复活/换内核时 surface 不会被重交,
+                // 而这一跳既不换线也不换源 —— 代价近零,却是真机那种整段黑屏最可能的成因。
+                boolean rebound = view != null && view.rebindRenderToPlayer();
+                LOG.i("echo-play-verify layer=surface action=rebind done=" + rebound);
+                if (rebound) return;
+                // 连视图/内核都拿不到 ⇒ 这一跳没得试,直接进下一档,别白等第二个 15 秒
+            }
+            // 第二跳（或第一跳无从下手）：面已经交过了还是没画面 ⇒ 这条线路/这个源给不出可显示的视频，
+            // 走既有的"降档 → 换线 → 换源"阶梯，不再新写一套收口。
+            //
+            // ⚠️ 进程级熔断：这一层的证据是"media3 从未回调第一帧"。若这台设备/这条渲染路径上
+            // 该回调本身不来（自绘 sink 是可能的），每次播放都会白换一轮线 —— 那是比黑屏更糟的故障。
+            // 所以本进程最多动 4 次手，之后只记录不动作：日志仍然攒得出来，处置先把方向盘交回给人。
+            if (noFrameSwitchCount >= NO_FRAME_SWITCH_LIMIT) {
+                LOG.i("echo-play-verify layer=frame circuit=open attempt=" + attempt +
+                        " (本进程已换过 " + noFrameSwitchCount + " 次仍未见画面，停止处置)");
+                return;
+            }
+            noFrameSwitchCount++;
+            LOG.i("echo-play-verify layer=frame action=switch-line-or-source attempt=" + attempt +
+                    " count=" + noFrameSwitchCount);
+            retry.handlePlaybackTooSlow();
+        }
+
         @Override
         public void onPlaybackConfirmedRealPlay() {
             // 第四层:源级"这个源真能播"的确凿证据 —— 画面连续推进够了 60 秒才记。
@@ -669,6 +730,9 @@ public class PlaybackController {
         st.beginNewPlay();
         // 内容边界:质量看门狗重新计(换集/换源/重播后不该继承上一段的劣质累计)
         quality.reset();
+        // 新的一段:起播时刻清零 —— "无画面"判定要按**这段**的起播时间算等待,
+        // 拿上一段的起播时刻会把"刚起播"直接判成"已经等了很久没画面"
+        startedAtElapsed = 0L;
         // 内容边界:升档计数/会话锁/出发地快照作废(2026-10-10 自适应画质)
         retry.resetUpgradeState();
         // 新内容开始 ⇒ 上一条"播完待撤会话"的判定作废(否则那条迟到的消息会打到本次新会话上)
@@ -742,6 +806,7 @@ public class PlaybackController {
 
     public void markPlaybackStarted() {
         st.playbackStarted = true;
+        startedAtElapsed = android.os.SystemClock.elapsedRealtime();
         cancelPlayTimeout();
         // 首帧耗时埋点(2026-10-15,观察项):resolveMs 只量到"拿到地址",这段才含 prepare 到第一帧。
         // 攒够样本前不动现有的固定预算,先让"高分辨率线路到底要等多久"有数可查。

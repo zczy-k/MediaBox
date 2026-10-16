@@ -149,6 +149,20 @@ public class ExoPlayer extends ExoMediaPlayer {
     private volatile int rebufferCountTotal;
     private volatile boolean playbackStarted;
 
+    /**
+     * **第一帧真的渲染到屏幕上**的时刻（{@code SystemClock.elapsedRealtime()}），0 = 这次还没渲染出任何画面。
+     *
+     * <p>为什么单独记它：dkplayer 的"进入播放态"（PREPARED/BUFFERED/PLAYING）与 media3 的
+     * {@code onRenderedFirstFrame} 是两件事。真机 v1.1.50 那次《女孩希望充满激情》就是
+     * 进入播放态、位置在推进、零报错，而画面一片黑 —— 只看前者，"有声无画"永远算"播成功了"。
+     */
+    private volatile long firstRenderedAtMs;
+
+    /** 渲染时刻（毫秒，elapsedRealtime 基准）；0 = 已起播但从未渲染出一帧 */
+    public long firstRenderedAtMs() {
+        return firstRenderedAtMs;
+    }
+
     public long droppedFrames() {
         return droppedFramesTotal;
     }
@@ -270,6 +284,20 @@ public class ExoPlayer extends ExoMediaPlayer {
                 }
             }
 
+            /**
+             * 第一帧真的渲染出来了（media3 只有在画面实际送到 surface 才回调这个）。
+             *
+             * <p>这是"有声无画"唯一的可观测点：STATE_READY / 位置推进都只证明**音频时钟在走**，
+             * 不证明屏幕上出了画。surface 没绑回内核、渲染层画歪、流里根本没有可解码的视频帧，
+             * 三种成因在这里都会表现成"回调从未发生"。
+             */
+            @Override
+            public void onRenderedFirstFrame() {
+                if (firstRenderedAtMs == 0L) {
+                    firstRenderedAtMs = android.os.SystemClock.elapsedRealtime();
+                }
+            }
+
             @Override
             public void onVideoSizeChanged(VideoSize videoSize) {
                 if (videoEffectsOpen && videoSize.width > 0 && videoSize.height > 0) {
@@ -325,6 +353,9 @@ public class ExoPlayer extends ExoMediaPlayer {
     /** 起播前开通画质效果管线:media3 只在渲染器首次 enable(≈ 本次 prepare)时按当时的效果列表建 VideoSink,晚于 prepare 下发则本集不生效 */
     @Override
     public void prepareAsync() {
+        // 新的一段内容:上一帧的渲染时刻不能带给这条线路(内核是复用的,这个字段不会自己清零)。
+        // 不清就等于"上一条有画面"替这一条担保,有声无画反而永远测不出来。
+        firstRenderedAtMs = 0L;
         PictureEffects.INSTANCE.onPrepare(this, tunnelingEnabled);
         super.prepareAsync();
     }

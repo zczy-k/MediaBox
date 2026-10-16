@@ -136,6 +136,23 @@ public class MyVideoView extends VideoView implements DrawHandler.Callback {
         addDisplay();
     }
 
+    /**
+     * 把**现有的**渲染视图重新交给当前内核（不新建视图）。
+     *
+     * <p>为什么要它：内核与 surface 的绑定只发生在两个时机 —— {@code addDisplay()}（新建视图时）与
+     * {@code surfaceCreated/surfaceChanged}（系统交面时）。引擎被释放后复活、或内核被换掉时，
+     * 视图还是那个视图、surface 也还在，**两个时机都不会再走一遍**，于是新内核手上没有画面：
+     * 声音照播、位置照走、一个错误都不报，屏幕全黑（真机 v1.1.50 实测形状）。
+     * 这一手是幂等的、代价近零，所以"起播后一直没画面"的第一跳先试它，再谈换线换源。
+     *
+     * @return 是否真的完成了一次重绑（视图或内核缺失时返回 false，调用方据此直接进入下一档处置）
+     */
+    public boolean rebindRenderToPlayer() {
+        if (mRenderView == null || mMediaPlayer == null) return false;
+        mRenderView.attachToPlayer(mMediaPlayer);
+        return true;
+    }
+
     /** 纹理渲染路径没有 SurfaceHolder:补发输出分辨率信令的时机靠这里挂钩(交面之后),漏挂 = 效果链拿不到输出面 */
     @Override
     protected void addDisplay() {
