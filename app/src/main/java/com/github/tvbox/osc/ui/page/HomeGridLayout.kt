@@ -316,17 +316,27 @@ fun HomeGridLayout(
                             LaunchedEffect(videos.size) {
                                 if (tabPartition.hasMore) vm.loadMorePartition(tabPartition)
                             }
+                            // 页脚只在三种情形说话:真在请求⇒"加载中…";到底⇒"没有更多了";
+                            // 还有更多但此刻没在请求⇒留空(滚动会自动触发下一次)。
+                            // 旧实现只看 hasMore,把"还有更多"直接印成"加载中…"—— 而站点不报
+                            // pagecount 时(豆瓣这类)hasMore 永远为真,翻到空页也照样"加载中",
+                            // 用户完全分不清是没加载完还是已经加载完毕(2026-10-16 反馈)。
+                            val footerRes = when {
+                                !tabPartition.hasMore -> R.string.common_no_more
+                                tabPartition.paging -> R.string.common_loading_more
+                                else -> 0
+                            }
                             Box(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                 contentAlignment = Alignment.Center,
                             ) {
-                                Text(
-                                    text = stringResource(
-                    if (tabPartition.hasMore) R.string.common_loading_more else R.string.common_no_more,
-                ),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
+                                if (footerRes != 0) {
+                                    Text(
+                                        text = stringResource(footerRes),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                             }
                         }
                     }

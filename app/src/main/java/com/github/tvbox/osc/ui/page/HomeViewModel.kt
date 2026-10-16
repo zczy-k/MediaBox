@@ -62,12 +62,27 @@ class HomeViewModel : ViewModel() {
         val videos: List<Movie.Video>,
         val nextPage: Int,
         val maxPage: Int,
+        /**
+         * 最近一页**站点返回**的卡片数(粗筛过滤之前的原始数);-1 = 还没翻过页。
+         *
+         * <p>为什么用原始数而不是最终显示的条数:首页会滤掉"看起来没资源"的卡片
+         * (AvailabilityMemory/SourceHealthFilter)。站点明明给了 20 条、全被我们滤掉时，
+         * 用显示数判到底就会**误判成翻完了** —— 那是把产品过滤规则当成源站的事实。
+         */
+        val lastRawCount: Int = -1,
+        /** 这一分区的下一页是否在路上：页脚只有真在请求时才写"加载中…" */
+        val paging: Boolean = false,
     ) {
         companion object {
             const val FIRST_PAGE = 1
         }
 
-        val hasMore: Boolean get() = !(maxPage > 0 && nextPage > maxPage)
+        /**
+         * 还有更多可翻。**不能只看 maxPage**：站点不报 pagecount 时（豆瓣这类）maxPage=0，
+         * 旧判据 `!(maxPage > 0 && nextPage > maxPage)` 就永远为真 —— 真机 11:12:04 已经翻到
+         * `pg=8 n=0`（空页=到底），页脚却还写着"加载中…"，用户分不清"没加载完"还是"加载完了"。
+         */
+        val hasMore: Boolean get() = lastRawCount != 0 && !(maxPage > 0 && nextPage > maxPage)
     }
 
     data class Rec(val state: PartitionState, val videos: List<Movie.Video>)
@@ -440,19 +455,33 @@ class HomeViewModel : ViewModel() {
         }
     }
 
+    /** 页脚措辞要能区分"还在路上"和"已经到底"：请求发出即置位，回包/让路即清掉 */
+    private fun setPartitionPaging(sortId: String, on: Boolean) {
+        partitions.value = partitions.value.map {
+            if (it.sort.id == sortId) it.copy(paging = on) else it
+        }
+    }
+
     private fun requestPartition(current: Partition, page: Int) {
         val generation = loadGeneration
         val loader = loaders.getOrPut(current.sort.id) { PartitionLoader(current.sort) }
+        setPartitionPaging(current.sort.id, true)
         scope.launch {
-            loadSemaphore.withPermit {
-                if (generation != loadGeneration || loader.released) return@withPermit
-                armWatchdog()
-                val result = suspendCancellableCoroutine<LoaderResult> { cont ->
-                    loader.request(page) { r -> if (cont.isActive) cont.resume(r) }
+            try {
+                loadSemaphore.withPermit {
+                    if (generation != loadGeneration || loader.released) return@withPermit
+                    armWatchdog()
+                    val result = suspendCancellableCoroutine<LoaderResult> { cont ->
+                        loader.request(page) { r -> if (cont.isActive) cont.resume(r) }
+                    }
+                    if (!result.stale) {
+                        applyPartitionResult(current.sort.id, page, result.absXml)
+                    }
                 }
-                if (!result.stale) {
-                    applyPartitionResult(current.sort.id, page, result.absXml)
-                }
+            } finally {
+                // 只在还是同一代时清:换源/重刷会整批重建分区(那些构造点 paging 默认 false),
+                // 老一代的请求不能把新一代刚置上的位抹掉
+                if (generation == loadGeneration) setPartitionPaging(current.sort.id, false)
             }
         }
     }
@@ -490,10 +519,17 @@ class HomeViewModel : ViewModel() {
             if (p.sort.id != sortId) {
                 p
             } else if (videos.isEmpty() && page == Partition.FIRST_PAGE) {
-                Partition(p.sort, PartitionState.Empty, emptyList(), Partition.FIRST_PAGE, maxPage)
+                Partition(
+                    p.sort, PartitionState.Empty, emptyList(), Partition.FIRST_PAGE, maxPage,
+                    rawVideos.size,
+                )
             } else {
                 val merged = if (page == 0) videos else p.videos + videos
-                Partition(p.sort, PartitionState.Ready, merged, page + 1, maxPage)
+                Partition(
+                    p.sort, PartitionState.Ready, merged, page + 1, maxPage,
+                    // 到底判据看**原始返回数**:这一页站点真给了 0 条才算翻完
+                    rawVideos.size,
+                )
             }
         }
     }
