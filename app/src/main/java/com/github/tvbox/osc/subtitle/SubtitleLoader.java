@@ -290,7 +290,11 @@ public class SubtitleLoader {
         InputStream newInputStream = new ReaderInputStream(reader, Charset.defaultCharset());
         if (".srt".equalsIgnoreCase(ext)) {
             return new FormatSRT().parseFile(fileName, newInputStream);
-        } else if (".ass".equalsIgnoreCase(ext)) {
+        } else if (".ass".equalsIgnoreCase(ext) || ".ssa".equalsIgnoreCase(ext)) {
+            // SSA 显式交给 ASS 解析器(2026-10-16)。两者同族:[Script Info] / [Events] 分节、
+            // Dialogue 行的字段数与时间格式 `h:mm:ss.cc` 都一致,复用 ASS 解析是成立的。
+            // 以前 .ssa 没有分支,只能靠下面"扩展名不认识就挨个试"的兜底 —— 那一路先让 SRT
+            // 解析器去啃 [Script Info],能不能轮到 ASS 全看它中途有没有抛异常,是运气不是设计。
             return new FormatASS().parseFile(fileName, newInputStream);
         } else if (".stl".equalsIgnoreCase(ext)) {
             return new FormatSTL().parseFile(fileName, newInputStream);
@@ -308,6 +312,10 @@ public class SubtitleLoader {
                 continue;
             }
         }
+        // 全部试完仍解不出来 ⇒ 必须留一行。以前这里静默 return null,而引擎那侧只用 Log.d 记
+        // (不落盘)、字幕面板又已收起 ⇒ 用户"点了没反应"且事后在文件日志里查不到任何痕迹。
+        // 落文件名足够定位,不落整条 URL(可能带签名参数)。
+        LOG.i("echo-sub parse-failed ext=" + ext + " name=" + fileName);
         return null;
     }
 

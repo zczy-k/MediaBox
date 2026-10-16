@@ -615,11 +615,16 @@ public class SubtitleViewModel extends ViewModel {
             // Use the undecoded basename when a provider returns malformed escaping.
         }
         String lower = candidate.toLowerCase(Locale.ROOT);
+        // ⚠️ 这里列出的每一个扩展名都等于"用户点了就一定有字幕上屏"的承诺。
+        // 2026-10-16:摘掉 .scc —— 它是 Scenarist CEA-608 的十六进制流(行首 `Scenarist_SCC V1.0`,
+        // 正文是 608 字节对 + 卷号/擦除指令),我们四个解析器没有一个是 608 解码器,
+        // 而失败那一路只走 Log.d(不落盘)、字幕面板又已经收起 ⇒ 用户看到的是"点了没反应、日志里也没证据"。
+        // 没有真实 .scc 样本可验证之前,不写一个"大概是能用"的解码器,也不假装支持。
+        // (.ssa 保留:结构与 ASS 同族,已显式交给 ASS 解析器,见 SubtitleLoader.loadAndParse)
         return lower.endsWith(".srt")
                 || lower.endsWith(".ass")
                 || lower.endsWith(".ssa")
                 || lower.endsWith(".stl")
-                || lower.endsWith(".scc")
                 || lower.endsWith(".ttml");
     }
 
