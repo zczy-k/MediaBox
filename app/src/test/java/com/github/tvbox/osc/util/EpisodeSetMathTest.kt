@@ -129,6 +129,37 @@ class EpisodeSetMathTest {
         assertEquals(emptyList<Int>(), EpisodeSetMath.missing(normal, confirmed))
     }
 
+    // ==================== missingForLabel（给用户看的缺集标注） ====================
+
+    /**
+     * 真机 v1.1.50:《希望》(电影)的线路名叫「极速蓝光-b」,提不出集号 ⇒ own 是空集,
+     * 而权威集 confirmed={1} ⇒ `missing` 返回 [1] ⇒ 屏幕上写成「缺1集」。
+     * 空集是**不可数**,不是"一集都没有"。
+     */
+    @Test
+    fun `不可数线路不标缺集`() {
+        assertEquals(emptyList<Int>(), EpisodeSetMath.missingForLabel(emptySet(), setOf(1)))
+        assertEquals("原始差集照旧可查(内部判定不受影响)", listOf(1), EpisodeSetMath.missing(emptySet(), setOf(1)))
+    }
+
+    /** 只有一集的权威集 = 电影/单集内容,压根没有"缺几集"这个概念 */
+    @Test
+    fun `单集内容不标缺集`() {
+        assertEquals(emptyList<Int>(), EpisodeSetMath.missingForLabel(setOf(1), setOf(1)))
+        assertEquals(emptyList<Int>(), EpisodeSetMath.missingForLabel(setOf(2), setOf(1)))
+    }
+
+    /** 剧集该标的照旧要标:别把修误标的同时把真缺集也哑掉了 */
+    @Test
+    fun `多集线路真缺集照旧标`() {
+        assertEquals(listOf(3), EpisodeSetMath.missingForLabel(setOf(1, 2), (1..3).toSet()))
+        assertEquals(
+            "整段缺失列全",
+            listOf(4, 5, 6),
+            EpisodeSetMath.missingForLabel(setOf(1, 2, 3), (1..6).toSet()),
+        )
+    }
+
     // ==================== missingText ====================
 
     @Test

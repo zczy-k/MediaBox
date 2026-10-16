@@ -2826,7 +2826,9 @@ class DetailViewModel : ViewModel() {
             val n = EpisodeNormalizer.normalize(e.name)
             if (n.type == EpisodeType.REGULAR && n.episode != null) own.add(n.episode)
         }
-        return EpisodeSetMath.missing(own, CompletenessMemory.confirmedSet(completenessTitleKey))
+        // 走 missingForLabel 而不是 missing:电影线路名(「极速蓝光-b」)提不出集号时 own 是空集,
+        // 直接求差会得到"缺1集"—— 空集是**不可数**,不是"一集都没有"(真机 v1.1.50 的误标)。
+        return EpisodeSetMath.missingForLabel(own, CompletenessMemory.confirmedSet(completenessTitleKey))
     }
 
     /**

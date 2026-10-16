@@ -81,6 +81,27 @@ object EpisodeSetMath {
     fun missing(source: Set<Int>, confirmed: Set<Int>): List<Int> =
         confirmed.filterNot { source.contains(it) }.sorted()
 
+    /**
+     * 给**用户看**的缺集列表(线路标签「缺N集」用)。与 [missing] 的差别是两条"不判定"的闸。
+     *
+     * <p>真机 v1.1.50 把这条判据错误暴露得很干净:《希望》(电影)的一条线路显示「缺1集」。
+     * 日志是 `echo-completeness record title=希望 src=大米星球 regular=0 confirmed=1 cov=0%`
+     * —— `regular=0` 表示这条线路的集名(「极速蓝光-b」「HD中字」这类)**提不出任何可数集号**,
+     * 于是自己的集合是空;`missing(∅, {1})` 老老实实返回 `[1]` ⇒ 屏幕上就成了"缺一集"。
+     *
+     * <p>两条闸:
+     * <ol>
+     *   <li>**空集合 = 不可数,不是"一集都没有"。** [CompletenessMemory] 的注释早就写着
+     *       "集名不可数的源产不出正片集合,对该片整体不判定",但展示路径没执行它。</li>
+     *   <li>**只有一集的权威集 = 电影/单集内容**,根本没有"缺几集"这个概念,不该标。</li>
+     * </ol>
+     * 排序/降权那些**内部判定**仍然用原始 [missing] 和覆盖率 —— 这里只管"要不要说给用户听"。
+     */
+    fun missingForLabel(source: Set<Int>, confirmed: Set<Int>): List<Int> {
+        if (source.isEmpty() || confirmed.size <= 1) return emptyList()
+        return missing(source, confirmed)
+    }
+
     /** 从第 1 集起的连续前缀长度(文档 6.4 第一版口径) */
     fun continuity(source: Set<Int>): Int {
         var n = 0
