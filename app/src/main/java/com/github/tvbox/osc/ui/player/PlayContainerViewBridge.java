@@ -73,6 +73,11 @@ final class PlayContainerViewBridge implements PlaybackViewBridge {
     }
 
     @Override
+    public boolean rebindRenderToPlayer() {
+        return container.mVideoView != null && container.mVideoView.rebindRenderToPlayer();
+    }
+
+    @Override
     public AbstractPlayer mediaPlayer() {
         return container.mVideoView == null ? null : container.mVideoView.getMediaPlayer();
     }
