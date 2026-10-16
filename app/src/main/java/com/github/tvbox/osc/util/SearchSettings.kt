@@ -629,6 +629,16 @@ object SearchSettings {
      * ③ 去年份;④ 去年份 + 去季/集/版本后缀;⑤ 简繁互转(繁中用户搜简体片名、以及源站只存繁体的情况)。
      * 简繁转换靠 ICU,**任何异常都降级成"没有这个变体"** —— 它只是加分项,不能把搜索带崩。
      */
+    /**
+     * 标题的**核心片名**：归一化后剥去年份与季/集/版本后缀 —— 与 [queryVariants] 第④个变体
+     * 用的是同一把刀，所以"搜索时认为同一部的两个写法"与"换源时认为同一部"不会各说各话
+     * （2026-10-16 补：同名判据 [PlayTitleMatch] 要用它，另写一张尾缀表必然分叉）。
+     */
+    internal fun coreTitle(text: String?): String {
+        val noYear = YEAR_PATTERN.replace(normalizeCached(text), "")
+        return EDITION_PATTERN.replace(noYear, "").trim()
+    }
+
     fun queryVariants(keyword: String?): List<String> {
         val raw = keyword?.trim().orEmpty()
         if (raw.isEmpty()) return emptyList()

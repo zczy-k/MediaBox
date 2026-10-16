@@ -14,6 +14,7 @@ import com.github.tvbox.osc.util.SearchSettings
 import com.github.tvbox.osc.util.SearchResultCache
 import com.github.tvbox.osc.util.NoHitSourceCache
 import com.github.tvbox.osc.util.NoHitSourcePolicy
+import com.github.tvbox.osc.util.PlayTitleMatch
 import com.github.tvbox.osc.util.SourceCompletenessPolicy
 import com.github.tvbox.osc.util.QualityLabelPolicy
 import com.github.tvbox.osc.util.EpisodeMatcher
@@ -331,6 +332,15 @@ class DetailViewModel : ViewModel() {
     }
 
     private var vodName = ""
+    /**
+     * 用户**点进来那一部**的片名，整场固定。
+     *
+     * <p>为什么不能拿 vodName 或 searchTitle 当基准：两个都会被换源改掉 ——
+     * `switchSource`/换源链写 `vodName = video.name`，详情就绪又写 `searchTitle = info.name`。
+     * 于是"这条源给的是不是同一部片"就没有参照物了（真机 v1.1.49：《希望》切到《希望一次过》
+     * 之后，页面自己变成了那部片，系统从此认为一切正常）。
+     */
+    private var entryTitle = ""
     private var vodPicture = ""
     private var fromCollect = false
 
@@ -602,6 +612,7 @@ class DetailViewModel : ViewModel() {
         sendCommand(PlaybackCommand.SetEpisodeSheetOpen(false))
         fromCollect = target.fromCollect
         vodName = target.title
+        entryTitle = target.title
         vodPicture = target.picture
         publishHeader()
         loadDetail(target.vodId, target.sourceKey)
@@ -1591,6 +1602,33 @@ class DetailViewModel : ViewModel() {
             if (mVideo.name.isNullOrEmpty()) mVideo.name = "TVBox"
             if ((mVideo.pic == null || mVideo.pic.isEmpty()) && vodPicture.isNotEmpty()) {
                 mVideo.pic = vodPicture
+            }
+            // 「这是不是用户点进来的那部片」(四层成功判据的第三层)。
+            // 不同名就**不进播放链**:一旦进播放态,现有判据会把它当"播成功"——
+            // 记一次源级 PLAY_SUCCESS、撤销这条源已有的 🟡、而且再也不会有任何失败信号
+            // (真机 v1.1.49:《希望》切到《希望一次过》,详情正常、首帧正常、零报错,
+            //  于是既不换源也不标黄,用户看到的就是一张"播成功的另一部片")。
+            // 处置形状与"详情不可用/空详情"完全一致(同一套接管链),只是归因不同、日志不同。
+            // 判据本身保守:只有"同前缀但后面接的是片名正文"(另一部作品)才判不同,
+            // 别名/译名/繁简写法一律 UNKNOWN=放行 —— 错杀一条源比放过一部错片更糟。
+            if (PlayTitleMatch.isDifferentFilm(mVideo.name, entryTitle)) {
+                LOG.i(
+                    "echo-play-verify layer=title other-film key=$sourceKey id=$vodId" +
+                        " got=\"" + mVideo.name.orEmpty().take(30) + "\" want=\"" + entryTitle.take(30) + "\""
+                )
+                currentSourceConfirmedEmpty = true
+                markCurrentSourceGaveNothing("other-film")
+                if (fallbackActive) {
+                    fallbackLoadingCandidate = false
+                    cancelDetailTimeout()
+                    loadNextFallbackCandidate()
+                    return
+                }
+                ensureSourceSearchRunning()
+                if (!startFallbackIfNeeded(auto = true)) {
+                    if (!rollbackManualSwitch()) enterEmpty()
+                }
+                return
             }
             val info = VodInfo()
             info.setVideo(mVideo)
@@ -3597,8 +3635,15 @@ class DetailViewModel : ViewModel() {
     private fun appendCandidates(videos: List<Movie.Video>): List<Movie.Video> {
         if (videos.isEmpty()) return emptyList()
         val added = ArrayList<Movie.Video>(videos.size)
+        var rejectedByTitle = 0
         synchronized(fallbackCandidates) {
             for (v in videos) {
+                // 「是不是这部片」的门槛(判据见 PlayTitleMatch)。**在占去重键之前**判:
+                // 先 add 再拒掉会把 key 烧掉,同一张卡片以后带着正确标题再来就再也进不来。
+                if (PlayTitleMatch.isDifferentFilm(v.name, entryTitle)) {
+                    rejectedByTitle++
+                    continue
+                }
                 if (!candidateKeys.add(candidateKey(v))) continue
                 sourceBoard.assign(v.sourceKey)
                 // 这块面板从有了第一个源起就属于某一部片了:记下出场片名(诊断用,见 boardTitle KDoc)
@@ -3606,6 +3651,12 @@ class DetailViewModel : ViewModel() {
                 fallbackCandidates.add(v)
                 added.add(v)
             }
+        }
+        if (rejectedByTitle > 0) {
+            LOG.i(
+                "echo-play-verify layer=candidates rejected=" + rejectedByTitle +
+                    " of=" + videos.size + " want=\"" + entryTitle.take(30) + "\""
+            )
         }
         return added
     }

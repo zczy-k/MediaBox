@@ -34,6 +34,12 @@ final class PlaybackQualityWatchdog {
         /** 当前播放位置(毫秒;无播放器时 -1) */
         long position();
 
+        /** 片长(毫秒);直播/未知返回 0 或 -1。**只用来排除"播完后的静止",不参与卡顿判定** */
+        long duration();
+
+        /** 这一段内容是否已经起播过(真起播,不是"进了播放态又掉回去") */
+        boolean startedOnce();
+
         /** 判定为"持续劣质"时回调(实现方决定换线还是换源) */
         void onPlaybackTooSlow();
 
@@ -42,7 +48,25 @@ final class PlaybackQualityWatchdog {
 
         /** 网络持续富余(连续满速推进 + 缓冲余量达标)时回调;是否真的升档由 QualityGovernor 门控 */
         void onNetworkPlentiful();
+
+        /**
+         * **真播够了** {@link #CONFIRM_REAL_PLAY_MS}:画面确实在往前走这么久。
+         * 源级 {@code PLAY_SUCCESS} 从这里才记(四层成功判据的第四层),不再由"进播放态"直接算。
+         */
+        void onPlaybackConfirmedRealPlay();
     }
+
+    /**
+     * 确认"真的在播"所需的累计推进时长(2026-10-16 第四层)。
+     *
+     * <p>为什么是 60 秒而不是更短:源级权重是**只加不减**的账(见 LineHealthRecorder 的 KDoc),
+     * 记早了的代价是"一个每次给坏地址的源分数越堆越高";而 60 秒足够区分"起播闪一下就停"
+     * 与"这源真的能看"。用户侧的等待成本只有一次播放的机会成本,不是一次的换线。
+     */
+    static final long CONFIRM_REAL_PLAY_MS = 60_000L;
+
+    /** "已播到距片尾不足这个余量"就当正常播完,不算静默停住(否则片尾会莫名触发换线/换源) */
+    private static final long NEAR_END_MS = 5_000L;
 
     /** 采样间隔 */
     static final long SAMPLE_INTERVAL_MS = 5_000L;
@@ -73,6 +97,11 @@ final class PlaybackQualityWatchdog {
     private int goodStreak = 0;
 
     private long lastPlentifulAt = 0L;
+
+    /** 本段内容累计"确实在推进"的时长(毫秒);达标即回调 {@link Host#onPlaybackConfirmedRealPlay()} 一次 */
+    private long realPlayMs = 0L;
+
+    private boolean realPlayConfirmed = false;
 
     private final Host host;
 
@@ -128,11 +157,19 @@ final class PlaybackQualityWatchdog {
         goodStreak = 0;
         lastPosition = -1L;
         lastSampleAt = SystemClock.uptimeMillis();
+        // 内容边界:这一段的"真播确认"重新计(上一段确认过不能带给新线路/新集)
+        realPlayMs = 0L;
+        realPlayConfirmed = false;
+        completedSeen = false;
     }
+
+    /** 本段内容是否已经报过"播完"：播完之后的 IDLE 是正常收尾，绝不能当成静默停住 */
+    private boolean completedSeen = false;
 
     /** 播放状态变化:只有"应该前进"的状态才继续跑,其余停表 */
     void onPlayState(int playState) {
-        if (isExpectedToAdvance(playState)) {
+        if (playState == VideoView.STATE_PLAYBACK_COMPLETED) completedSeen = true;
+        if (shouldSample(playState)) {
             start();
         } else {
             stop();
@@ -145,7 +182,7 @@ final class PlaybackQualityWatchdog {
         int state = host.playState();
 
         // 状态已经不该前进(暂停/播完/出错):停表,且不把这段静默计入劣质
-        if (!isExpectedToAdvance(state)) {
+        if (!shouldSample(state)) {
             stop();
             return;
         }
@@ -184,6 +221,17 @@ final class PlaybackQualityWatchdog {
                 goodStreak++;
             } else {
                 goodStreak = 0;
+            }
+            // 第四层「真的在播」:只要这一拍确实在推进就累计时长,够了报一次确认。
+            // 与"进播放态"分开计是必须的 —— 真机《希望一次过》那次:进播放态、出首帧、零报错,
+            // 却没有一次推进被确认过,而源级 PLAY_SUCCESS 当时已经记上了。
+            if (!realPlayConfirmed) {
+                realPlayMs += elapsed;
+                if (realPlayMs >= CONFIRM_REAL_PLAY_MS) {
+                    realPlayConfirmed = true;
+                    LOG.i("echo-play-verify layer=real-play confirmed=" + realPlayMs + "ms");
+                    host.onPlaybackConfirmedRealPlay();
+                }
             }
         }
 
@@ -249,5 +297,30 @@ final class PlaybackQualityWatchdog {
         return playState == VideoView.STATE_PLAYING
                 || playState == VideoView.STATE_BUFFERING
                 || playState == VideoView.STATE_PREPARING;
+    }
+
+    /**
+     * 这一拍该不该采样。= "本应前进" ∪ "**起播后静默掉回 IDLE**"。
+     *
+     * <p>后一半是 2026-10-16 补的第二层判据。原实现遇到 IDLE/PAUSED 一律 {@code stop()}:
+     * 于是"进了播放态、什么错都没报、画面却不动"这种情形**两道闸都不管** ——
+     * 质量看门狗已经停表,而换线那条路又要求 {@code isPlaybackStarted()} 才肯动
+     * (它确实"起播过")。用户看到的就是一张静止画面 + 系统认为一切正常。
+     *
+     * <p>四条例外必须守住,否则会误伤：
+     * <ul>
+     *   <li>从没起播过(IDLE 是初始态)⇒ 不采,交给取流/等起播那两条既有预算;</li>
+     *   <li>本段已经报过 {@code STATE_PLAYBACK_COMPLETED} ⇒ 之后的 IDLE 是正常收尾,不是停住;</li>
+     *   <li>已接近片尾 ⇒ 当成正常播完(有些内核只报 IDLE、不报 COMPLETED,靠这条兜住);</li>
+     *   <li>STATE_PAUSED 不在本判据内 —— 那是用户按了暂停,位置不动是他的意图。</li>
+     * </ul>
+     */
+    private boolean shouldSample(int playState) {
+        if (isExpectedToAdvance(playState)) return true;
+        if (playState != VideoView.STATE_IDLE) return false;
+        if (!host.startedOnce() || completedSeen) return false;
+        long duration = host.duration();
+        long position = host.position();
+        return !(duration > 0L && position >= 0L && duration - position <= NEAR_END_MS);
     }
 }

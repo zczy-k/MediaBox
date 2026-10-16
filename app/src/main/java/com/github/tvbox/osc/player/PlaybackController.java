@@ -629,6 +629,34 @@ public class PlaybackController {
         }
 
         @Override
+        public long duration() {
+            // 只用来排除"播完后的静止";内核刚重建/释放时读不到就返回 0(= 不当播完,继续采样)
+            PlaybackViewBridge v = view;
+            if (v == null) return 0L;
+            try {
+                return v.duration();
+            } catch (Throwable th) {
+                return 0L;
+            }
+        }
+
+        @Override
+        public boolean startedOnce() {
+            return st.playbackStarted;
+        }
+
+        @Override
+        public void onPlaybackConfirmedRealPlay() {
+            // 第四层:源级"这个源真能播"的确凿证据 —— 画面连续推进够了 60 秒才记。
+            // 以前它在进播放态(markPlaybackStarted)就记上了,于是"播的是另一部片"
+            // 或"动一下就停"的源同样加分(源权重只加不减,记早了洗不干净)。
+            VodInfo vod = vod();
+            String key = vod == null ? null : vod.sourceKey;
+            if (TextUtils.isEmpty(key)) return;
+            LineHealthRecorder.INSTANCE.recordSourcePlaySuccess(key);
+        }
+
+        @Override
         public void onNetworkPlentiful() {
             retry.handleNetworkPlentiful();
         }

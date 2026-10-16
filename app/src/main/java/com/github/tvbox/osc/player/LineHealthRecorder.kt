@@ -119,24 +119,39 @@ object LineHealthRecorder {
     }
 
     /**
-     * 上报一次成功起播：线路侧连续失败归零，并给**源级**记一次 `PLAY_SUCCESS`。
+     * 上报一次线路起播：该线路连续失败归零。
      *
-     * <p>源级这一笔是 2026-10-15 补的：`PLAY_SUCCESS` 这个证据类型一直存在却没有任何调用点，
-     * 于是源权重实际只是"答不答话"的应答率 —— 一个源每次秒回、给出来的线路却全都播不通，
-     * 分数照样顶格。起播成功是"这个源的片子真能播"的唯一确凿证据。
-     *
-     * <p>⚠️ **只加不减**：播放失败不扣源的分（网络抖动、解码器不支持、单条地址过期都会造成失败，
-     * 归因太脏 —— 当年「天堂」被一条坏地址整源封 6 小时就是这么来的），失败仍只记线路级。
+     * <p>2026-10-16 拆账：**源级 `PLAY_SUCCESS` 不再在这里记**（改由
+     * [recordSourcePlaySuccess] 在"画面确实连续推进够 60 秒"后记，见
+     * [PlaybackQualityWatchdog.Host.onPlaybackConfirmedRealPlay]）。
+     * 线路级留在起播即时是安全的 —— 它表达的是"这条地址至少能起来"，而且失败侧本来就有
+     * 一堆抑制闸；源级不同：它**只加不减**，记早了洗不干净。
+     * 真机 v1.1.49 的那次《希望一次过》就是"进播放态即算成功"直接给一个放错片的源加了分。
      */
     @JvmStatic
     fun recordPlayed(sourceKey: String?, vodId: String?, flag: String?) {
         // 两本账都不再读那把屏蔽开关(2026-10-15):它们只改位次与耐心,
         // 关掉"自动屏蔽坏源"不该连带冻结越用越准的台账
         LineHealthMemory.recordPlayed(sourceKey, vodId, flag, System.currentTimeMillis())
+    }
+
+    /**
+     * 源级确凿证据：这一部片在**这个源**上真播起来了(画面连续推进 ≥ 60 秒)。
+     *
+     * <p>`PLAY_SUCCESS` 这个证据类型一直存在却长期没有任何调用点,于是源权重实际只是
+     * "答不答话"的应答率 —— 一个源每次秒回、给出来的线路却全都播不通,分数照样顶格
+     * (2026-10-15 记下的缺口)。现在它只在真播确认后加。
+     *
+     * <p>⚠️ **只加不减**：播放失败不扣源的分（网络抖动、解码器不支持、单条地址过期都会造成失败，
+     * 归因太脏 —— 当年「天堂」被一条坏地址整源封 6 小时就是这么来的），失败仍只记线路级。
+     */
+    @JvmStatic
+    fun recordSourcePlaySuccess(sourceKey: String?) {
         val key = sourceKey?.trim().orEmpty()
         if (key.isEmpty()) return
         // 直播不参与源权重:频道地址与"这个源好不好用"没有因果关系
         if (KV.get(HawkConfig.PLAYER_IS_LIVE, false)) return
         SourceWeightMemory.record(key, SourceWeightPolicy.EvidenceKind.PLAY_SUCCESS)
+        LOG.i("echo-play-verify layer=source-weight PLAY_SUCCESS source=" + key)
     }
 }
