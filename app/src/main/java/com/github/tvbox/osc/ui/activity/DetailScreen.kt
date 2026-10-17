@@ -4,6 +4,9 @@ package com.github.tvbox.osc.ui.activity
 
 import android.content.res.Configuration
 import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +26,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -40,6 +44,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -47,8 +52,6 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import com.github.tvbox.osc.R
 import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.player.ui.playerDim
-import com.github.tvbox.osc.ui.components.LoadState
-import com.github.tvbox.osc.ui.components.LoadStateBox
 import com.github.tvbox.osc.ui.components.VodCardMenu
 import com.github.tvbox.osc.ui.components.VodPoster
 import com.github.tvbox.osc.ui.components.rememberVodCardMenuState
@@ -68,7 +71,6 @@ fun DetailScreen(activity: DetailActivity, vm: DetailViewModel) {
     val playSignal by vm.playSignal.collectAsStateWithLifecycle()
     val toast by vm.toastEvent.collectAsStateWithLifecycle()
     val finish by vm.finishEvent.collectAsStateWithLifecycle()
-    val searchProgress by vm.searchProgress.collectAsStateWithLifecycle()
     val vodMenu = rememberVodCardMenuState()
 
     val configuration = LocalConfiguration.current
@@ -145,141 +147,67 @@ fun DetailScreen(activity: DetailActivity, vm: DetailViewModel) {
         }
     }
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surfaceContainer),
     ) {
-        Box(
-            modifier = if (fullBox) {
-                Modifier.fillMaxSize().background(Color.Black)
-            } else {
-                Modifier.fillMaxWidth()
-                    .background(Color.Black)
-                    .statusBarsPadding()
-                    .height(previewBoxHeight)
-                    .background(Color.Black)
-            },
-        ) {
-            AndroidView(
-                factory = { container },
-                modifier = Modifier.fillMaxSize(),
-            )
-            if (pageState is DetailViewModel.PageState.Loading && !fullBox) {
-                Box(
-                    modifier = Modifier.fillMaxSize().background(Color.Black),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    ContainedLoadingIndicator(
-                        containerColor = Color.White.copy(alpha = 0.2f),
-                        indicatorColor = Color.White.copy(alpha = 0.75f),
+        Column(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = if (fullBox) {
+                    Modifier.fillMaxSize().background(Color.Black)
+                } else {
+                    Modifier.fillMaxWidth()
+                        .background(Color.Black)
+                        .statusBarsPadding()
+                        .height(previewBoxHeight)
+                        .background(Color.Black)
+                },
+            ) {
+                AndroidView(
+                    factory = { container },
+                    modifier = Modifier.fillMaxSize(),
+                )
+                // 提示层由控制器 Compose 层绘制(PlayerLayers.PlayerTipLayer):写在这一层会盖住顶栏/底栏
+                if (!fullBox && pageState is DetailViewModel.PageState.Ready) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_player_expand),
+                        contentDescription = stringResource(R.string.detail_fullscreen_play),
+                        tint = Color.White.copy(alpha = 0.9f),
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(
+                                end = 16.dp,
+                                // vs_30 太小时该式子会变负(Compose 直接抛 IllegalArgumentException)，钳到 0
+                                bottom = (16.dp + playerDim(R.dimen.vs_30) / 2 - 20.dp).coerceAtLeast(0.dp),
+                            )
+                            .size(40.dp)
+                            .clickable { vm.onFullScreenToggleRequested(true, activity.playbackFacts()) }
+                            .padding(9.dp),
                     )
                 }
             }
-            // 提示层由控制器 Compose 层绘制(PlayerLayers.PlayerTipLayer):写在这一层会盖住顶栏/底栏
+
+            // 有内容才展开正文;没内容(找源中/确实没有)由下面的整页海报态接管
             if (!fullBox && pageState is DetailViewModel.PageState.Ready) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_player_expand),
-                    contentDescription = stringResource(R.string.detail_fullscreen_play),
-                    tint = Color.White.copy(alpha = 0.9f),
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(
-                            end = 16.dp,
-                            // vs_30 太小时该式子会变负(Compose 直接抛 IllegalArgumentException)，钳到 0
-                            bottom = (16.dp + playerDim(R.dimen.vs_30) / 2 - 20.dp).coerceAtLeast(0.dp),
-                        )
-                        .size(40.dp)
-                        .clickable { vm.onFullScreenToggleRequested(true, activity.playbackFacts()) }
-                        .padding(9.dp),
-                )
+                DetailContent(activity, vm, revision, onCardLongClick = { vodMenu.show(it) })
             }
         }
 
-        if (!fullBox) {
-            when (val state = pageState) {
-                is DetailViewModel.PageState.Loading -> {
-                    // 2026-10-16 用户真机指出：**换源那一行不该随页面状态消失**。
-                    // 切源会让页面回到 Loading 等对端详情(2~4 秒),此前整行不渲染,
-                    // 用户看到的就是"列表被重新加载了一遍"—— 而候选表其实一直都在
-                    // (日志里那段时间没有任何 cleared 记录)。
-                    // 上面那块(海报/片名/进度)该跟着状态走,下面这块不该。
-                    // 结构与 Empty 分支一致,不另造一套布局。
-                    Column(modifier = Modifier.fillMaxSize()) {
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(horizontal = 24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.Center,
-                    ) {
-                        if (header.picture.isNotEmpty()) {
-                            VodPoster(
-                                name = header.name,
-                                pic = header.picture,
-                                modifier = Modifier
-                                    .width(120.dp)
-                                    .height(160.dp)
-                                    .clip(RoundedCornerShape(12.dp)),
-                            )
-                            Spacer(modifier = Modifier.height(16.dp))
-                        }
-                        if (header.name.isNotEmpty()) {
-                            Text(
-                                text = header.name,
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                                textAlign = TextAlign.Center,
-                            )
-                            Spacer(modifier = Modifier.height(16.dp))
-                        }
-                        ContainedLoadingIndicator()
-                        // S6(2026-10-09):聚合搜索进行中显示实况进度 —— 修复前无候选时
-                        // 用户对着纯转圈最长 ~59s,分不清"在搜"还是"死了"。null = 搜索不在跑,不显示
-                        searchProgress?.let { p ->
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text(
-                                // 与换源行旁边那行小字**同一条判据**(sourceStatusText):
-                                // 同一场搜索在两处说两种话,用户会以为是两件不同的事。
-                                // 也不再写 x/总数:自动那轮只问 1/3 的池子、命中就收口。
-                                text = sourceStatusText(
-                                    searchedOnce = true,
-                                    searching = true,
-                                    asked = p.done,
-                                    found = vm.totalCandidateCount(),
-                                ),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                                textAlign = TextAlign.Center,
-                            )
-                        }
-                    }
-                    // 换源板块常驻:等待期间照常显示已发现的源(为空时它自己整块不渲染)
-                    // statusInline=false —— 上面已经说过一次"正在找源…",这里不重复(真机截图拍到两处同文)
-                    SourceSection(vm, revision = revision, statusInline = false)
-                    }
-                }
-
-                is DetailViewModel.PageState.Empty -> {
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        LoadStateBox(
-                            state = LoadState.Empty,
-                            emptyText = state.msg ?: stringResource(R.string.detail_empty_source),
-                            errorText = "",
-                            retryText = "",
-                            emptyIconRes = R.drawable.icon_error,
-                            modifier = Modifier.weight(1f),
-                        )
-                        SourceSection(vm, revision = revision)
-                    }
-                }
-
-                is DetailViewModel.PageState.Ready -> {
-                    DetailContent(activity, vm, revision, onCardLongClick = { vodMenu.show(it) })
-                }
-            }
+        // **整页海报态**(2026-10-17 用户真机截图指出的版式问题):
+        // 片子还没搜出来时,上面那块 16:9 播放器是空的,占着首屏最贵的位置;
+        // 海报和搜索状态被挤在下面一小条里。现在无内容时整屏只讲这一件事。
+        //
+        // 用**覆盖层**而不是把播放器高度收成 0:播放器 View 一直活着、尺寸不变,
+        // 换片时"同片保留"那条路径(重进同一部片的详情页)不会因表面被销毁而重开解码器;
+        // 它只是被不透明地盖住。转 Ready 时淡出,不重组播放器。
+        AnimatedVisibility(
+            visible = !fullBox && pageState !is DetailViewModel.PageState.Ready,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.matchParentSize(),
+        ) {
+            NoContentScreen(vm, pageState, revision, header, shortEdge, configuration.screenHeightDp.dp)
         }
     }
 
@@ -287,4 +215,114 @@ fun DetailScreen(activity: DetailActivity, vm: DetailViewModel) {
     // 那时窗口仍是竖屏,面板必须保持贴底
     EpisodeSheet(vm, revision, slideFromEnd = fullBox && isLandscapeNow)
     VodCardMenu(vodMenu) { menuContext.jumpToSearch(it) }
+}
+
+/**
+ * **整页海报态**:详情页还没有可播内容时(找源中 / 确实没找到),整屏只讲这一件事 ——
+ * 大海报 + 片名 + 搜索状态,垂直居中;换源板块仍然常驻在下方。
+ *
+ * <p>判据与换源那一行旁边的小字**共用** [sourceStatusText]:同一场搜索不能在两处说两种话。
+ */
+@Composable
+private fun NoContentScreen(
+    vm: DetailViewModel,
+    state: DetailViewModel.PageState,
+    revision: Int,
+    header: DetailViewModel.DetailHeader,
+    shortEdge: Dp,
+    screenHeight: Dp,
+) {
+    val searching by vm.sourcesSearching.collectAsStateWithLifecycle()
+    val progress by vm.searchProgress.collectAsStateWithLifecycle()
+    val found = vm.totalCandidateCount()
+    val empty = state as? DetailViewModel.PageState.Empty
+    val emptyMsg = empty?.msg
+    // "收口"= 这一场搜索不再在跑、页面也确实没内容:这时候才给「再搜一次」入口
+    val settled = empty != null && !searching
+    // 海报:宽约屏宽 46%、竖版 3:4;再用可用高度封一道,横屏小竖向空间时不会撑出屏幕
+    val posterW = minOf(shortEdge * 0.46f, screenHeight * 0.42f * 3f / 4f).coerceAtLeast(96.dp)
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .statusBarsPadding(),
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            if (header.picture.isNotEmpty()) {
+                VodPoster(
+                    name = header.name,
+                    pic = header.picture,
+                    modifier = Modifier
+                        .width(posterW)
+                        .height(posterW * 4f / 3f)
+                        .clip(RoundedCornerShape(16.dp)),
+                )
+                Spacer(modifier = Modifier.height(20.dp))
+            }
+            if (header.name.isNotEmpty()) {
+                Text(
+                    text = header.name,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(modifier = Modifier.height(14.dp))
+            }
+            if (!settled) {
+                ContainedLoadingIndicator()
+                Spacer(modifier = Modifier.height(14.dp))
+            }
+            Text(
+                text = if (settled) {
+                    emptyMsg ?: stringResource(R.string.detail_no_other_source)
+                } else {
+                    sourceStatusText(
+                        searchedOnce = true,
+                        searching = true,
+                        asked = progress?.done ?: 0,
+                        found = found,
+                    )
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+            )
+            if (settled && found > 0) {
+                // 这一行说"下面那些源是可点的":空的是**当前源**,不是整场搜索
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = sourceStatusText(
+                        searchedOnce = true,
+                        searching = false,
+                        asked = progress?.done ?: 0,
+                        found = found,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    textAlign = TextAlign.Center,
+                )
+            }
+            if (settled) {
+                Spacer(modifier = Modifier.height(4.dp))
+                TextButton(onClick = { vm.retry() }) {
+                    Text(stringResource(R.string.detail_search_again))
+                }
+            }
+        }
+        // 换源板块常驻:等待期间照常显示已发现的源
+        // statusInline=false —— 上面已经说过一次搜索状态,这里不重复(真机截图拍到两处同文)
+        SourceSection(vm, revision = revision, statusInline = false)
+    }
 }

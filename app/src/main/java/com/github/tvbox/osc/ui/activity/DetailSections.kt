@@ -101,16 +101,6 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int, statusInline: Boo
     val crossHint by vm.crossSourceHint.collectAsStateWithLifecycle()
     val chipPage by vm.chipPage.collectAsStateWithLifecycle()
     val searchedOnce by vm.sourceSearchStarted.collectAsStateWithLifecycle()
-    // [临时诊断 2026-10-14 #1] 观察 UI 实际收到的 sourcesSearching / searchProgress ——
-    // 仅在值变化时打点(Compose 会重组很多次,LaunchedEffect 的 key 变了才重跑),
-    // 用来判定"搜索在途时 UI 到底拿到的是 true 还是 false"。定位后移除。
-    LaunchedEffect(sourcesSearching, searchProgress) {
-        com.github.tvbox.osc.util.LOG.i(
-            "echo-source-diag ui searching=$sourcesSearching" +
-                " progress=${searchProgress?.done}/${searchProgress?.total}" +
-                " chips=${sourceChips.size}"
-        )
-    }
     // 2026-10-14(详情页「换源」分页设计):**不再"空列表就整块不渲染"** ——
     // 那样用户在"没有候选/搜索没跑"时**没有任何入口发起换源**(真机反馈的核心问题)。
     // 现在无条件渲染:「换源」按钮始终可见,候选列表有内容时才在下方展开。
