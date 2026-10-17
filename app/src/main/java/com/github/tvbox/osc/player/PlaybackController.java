@@ -1617,6 +1617,21 @@ public class PlaybackController {
         quality.stop();
     }
 
+    /**
+     * **内核释放边界**:播放器里已经没有这一集了 —— "这一集起播过"这个事实和看门狗的采样都要跟着作废。
+     *
+     * <p>必须在 `videoView.release()` **之前**调用:release 会同步回调一次 STATE_IDLE,而看门狗第二层
+     * 判据正是"起播过 + 掉回 IDLE ⇒ 静默卡死"(见 PlaybackQualityWatchdog.shouldSample)。
+     * 顺序颠倒或漏掉,那条 IDLE 回调会把采样器重新 start() 起来,三次空采样(15 秒)之后触发换线,
+     * 拿着**上一部**的地址重新起播 —— 真机 2026-10-17:新片《一个夜晚与三个夏天》还在搜源,
+     * 旧片《吉伊卡哇》的声音在 6 秒后自己回来了。
+     */
+    public void onKernelReleased() {
+        quality.stop();
+        st.playbackStarted = false;
+        LOG.i("echo-quality stop reason=kernel-released");
+    }
+
     /** 切集/换线/换源/重播:作废在途预解析与预载数据(稳定播放后重新评估) */
     public void invalidatePreload() {
         preload.invalidate();

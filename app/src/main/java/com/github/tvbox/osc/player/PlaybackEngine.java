@@ -543,6 +543,9 @@ public final class PlaybackEngine implements PlaybackHostApi {
     public void releasePlayer() {
         if (released) return;
         LOG.i(TAG + " release player kernel (engine kept)");
+        // 先作废"这一集起播过"并停表,再 release:release 同步回调的 STATE_IDLE 会被质量看门狗
+        // 读成"起播后静默卡死",15 秒后拿上一部的地址换线重播(详见 PlaybackController.onKernelReleased)
+        controller.onKernelReleased();
         videoView.release();
         // 内核没了 ⇒ 播放器里不再有"属于某个会话的内容":清掉 D6 的接管依据,
         // 否则"换源停播后重进同一部"会被判成同片接管而跳过取流(内容其实已经没了)
