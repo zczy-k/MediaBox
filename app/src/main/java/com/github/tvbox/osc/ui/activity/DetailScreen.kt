@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -246,7 +247,9 @@ private fun NoContentScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surfaceContainer)
-            .statusBarsPadding(),
+            // 上下两道安全区都要留:真机 v1.1.63 第一版只挡了状态栏,换源板块卡片被手势条切掉下沿
+            .statusBarsPadding()
+            .navigationBarsPadding(),
     ) {
         Column(
             modifier = Modifier
