@@ -404,7 +404,9 @@
     <string name="detail_source_searching_none">Searching sources · asked %1$d</string>
     <string name="detail_source_searching_found">Searching sources · asked %1$d · found %2$d sources</string>
     <string name="detail_source_found">Found %1$d sources</string>
-    <string name="detail_source_none_found">No other sources found yet</string>
+    <string name="detail_source_none_found">Asked %1$d sources, no other source found</string>
+    <string name="detail_source_wave_asked">Asked %1$d sources, %2$d left</string>
+    <string name="detail_source_continue">Keep searching</string>
     <string name="detail_source_prev_page">Previous page</string>
     <string name="detail_source_next_page">Next page</string>
     <string name="detail_finding_source">Finding sources…</string>

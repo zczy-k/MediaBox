@@ -421,11 +421,29 @@ class DetailViewModel : ViewModel() {
     private val usedSourceKeys = HashSet<String>()
 
     /**
-     * **当前搜索轮次**(2026-10-13 动态扩池)。从 [ExpandPoolPolicy.FIRST_ROUND] 起,
-     * 每轮"全部收口且 0 命中"时自增,池按比例扩大,直至全量轮。
+     * **当前搜源档号**(2026-10-17 用户定案的分档口径)。从 [ExpandPoolPolicy.FIRST_WAVE] 起,
+     * 每档"全部收口"后**只有用户点过「继续找源」才自增**(自动链永远只跑第 1 档)。
      * 内容边界(换片)复位为 1。
      */
-    private var poolRound = ExpandPoolPolicy.FIRST_ROUND
+    private var poolRound = ExpandPoolPolicy.FIRST_WAVE
+
+    /**
+     * **用户排队要再搜几档**(2026-10-17)。点一次「继续找源」= 加一档:
+     * 剩下的档由他一档一档点着推进,不是一次点满全池 —— 那是"替他决定还要等多久"。
+     */
+    private var manualWavesQueued = 0
+
+    /** 还有下一档可搜 ⇒ 海报态那一行下面出「继续找源」按钮(自动那档跑完且没搜尽时为 true) */
+    val canContinueSourceSearch = MutableStateFlow(false)
+
+    /**
+     * 本场搜索的可用源总数 + **已经问过的源数**(2026-10-17)。
+     *
+     * <p>必须是独立的快照流,不能等页面去读 `searchProgress` —— 收口那一刻 searchProgress 会被清空,
+     * 而"问过多少个"恰恰是收口那一行话要用的数字(没有它,用户只看到一句"此影片暂无法播放")。
+     */
+    val sourcePoolTotal = MutableStateFlow(0)
+    val sourceSearchAsked = MutableStateFlow(0)
 
     /**
      * **本次搜索已投出过的源**(2026-10-13 增量扩池)。跨扩池轮次**保留**,
@@ -459,7 +477,7 @@ class DetailViewModel : ViewModel() {
      * 而现在①手动换源本来就一次投满搜索范围、②并发会按超时占比自适应退让,
      * 固定截断只会让冷门片**永远搜不到源**(源集合 300+ 时前 120 个之外的源从不参与换源)。
      */
-    private fun roundPoolSize(total: Int): Int = ExpandPoolPolicy.poolSizeForRound(total, poolRound)
+    private fun roundPoolSize(total: Int): Int = ExpandPoolPolicy.poolSizeForWave(total, poolRound)
     /**
      * 详情换源链的**当前并发度**(2026-10-14 起自适应,不再写死 12)。
      *
@@ -685,6 +703,11 @@ class DetailViewModel : ViewModel() {
         // 旧协程被取消后不会回写,不清会永远停在"搜索中"
         sourcesSearching.value = false
         manualSwitching.value = false
+        // 换片:上一部排过的"再搜一档"与「继续找源」按钮都不带给新片(每部都从第 1 档起)
+        manualWavesQueued = 0
+        canContinueSourceSearch.value = false
+        sourcePoolTotal.value = 0
+        sourceSearchAsked.value = 0
         qualityOptions.value = emptyList()
         qualitySelected.value = 0
         episodeSheet.value = false
@@ -1512,16 +1535,10 @@ class DetailViewModel : ViewModel() {
     }
 
     /**
-     * 开新的一代并返回它。只有"发起新的内容请求"才自增:换片、换源、重试(含 [loadDetail] 的早退分支);
+     * 开新的一代并返回它。只有"发起新的内容请求"才自增:换片、换源、重搜(含 [loadDetail] 的早退分支);
      * fallback 候选站(见 [loadDetailInternal])沿用当前代次。
      */
     private fun nextDetailRequestToken(): Int = ++detailRequestToken
-
-    fun retry() {
-        if (vodId.isEmpty()) return
-        loadDetail(vodId, sourceKey)
-        if (searchTitle.isNotEmpty() && !sourcesSearching.value) startSourceSearch()
-    }
 
     private fun onDetailUnavailable() {
         // 同 handleEmptyDetail:当前源不可播/不在订阅,也是"当前源没内容"的确认信号。
@@ -1800,7 +1817,9 @@ class DetailViewModel : ViewModel() {
         // 判据用 searchTitle 是否变化:扩池是同片(两值相等)⇒ 不复位、且**不清已搜源**(增量续搜);
         // 换片 ⇒ 复位轮次 + 清"已搜源"。
         if (searchTitle != title) {
-            poolRound = ExpandPoolPolicy.FIRST_ROUND
+            poolRound = ExpandPoolPolicy.FIRST_WAVE
+            manualWavesQueued = 0
+            canContinueSourceSearch.value = false
             searchedSourceKeys.clear()
             // 换片:上一部的零命中名单在函数开头的 flushFallbackHitsSave() 里已按**旧片名**落盘,
             // 这里清空才不会把 A 片的"没有"记到 B 片头上
@@ -1879,8 +1898,14 @@ class DetailViewModel : ViewModel() {
         // 一起移除 —— 源集合 300+ 时截断会让范围外的源**永远不参与换源**,而它想省的时间
         // 现在已经由"并发按超时占比自适应退让"去省了。
         val effectiveTotal = askablePool.size
-        val roundSize = if (manualSwitchActive) effectiveTotal else roundPoolSize(askablePool.size)
+        // 每档问多少由分档计划定,**不再区分"手动就一次投满全池"**(2026-10-17):
+        // 手动点一次 = 往前推一档,剩下的档留着让他继续点 —— 等待时长由他决定。
+        sourcePoolTotal.value = effectiveTotal
+        sourceSearchAsked.value = searchedSourceKeys.size
+        val roundSize = roundPoolSize(effectiveTotal)
         val sources = askablePool.take(roundSize)
+        // 这一档正在跑 ⇒ 页面上不该同时出现「继续找源」(点了也没意义,档内还在收口)
+        canContinueSourceSearch.value = false
         // 诊断包靠这行判断"预热到底有没有触发、候选池多大" —— 真机日志被 ROM 屏蔽时,
         // 文件日志(仅 diag 包落盘)是唯一可观测点。前缀 echo-source- 已在 LOG 白名单里。
         // round/pool/total 三者同看,才能确认"动态扩池"真的在逐轮扩大。
@@ -2102,11 +2127,10 @@ class DetailViewModel : ViewModel() {
                     }
                 }
                 val hitCount = synchronized(fallbackCandidates) { fallbackCandidates.size }
-                // 本轮(本波)**新搜到**的候选数 —— 扩池判据只认它,不认累计候选:
-                // fallbackCandidates 是累计表(含 cache-seed 灌入的历史命中),若拿它的绝对数当"本轮命中",
-                // 则"有 1 个历史命中"就会把 shouldExpand 的 hitCount>0 短路掉 ⇒ 永不扩池。
-                // 2026-10-14 真机日志:click ... candidates=1 / wave-done ... hit=1 但 wave=0(本轮未投源),
-                // 扩池因 hit=1 被拦 → 换源点了等于没搜。故必须用"波前/波后增量"。
+                // 本轮(本波)**新搜到**的候选数。fallbackCandidates 是累计表(含 cache-seed 灌入的
+                // 历史命中),拿它的绝对数当"本轮命中"会把日志读成"命中了所以没往下问"。
+                // 2026-10-14 真机日志:click ... candidates=1 / wave-done ... hit=1 但 wave=0(本轮未投源)。
+                // 2026-10-17 起扩档不再看命中(只看用户点没点),这个增量留给日志与收口判据用。
                 val newHitsThisWave = hitCount - candidatesBeforeWave
                 // 并发自适应:判据与弱网缩超时**共用**(样本 ≥8 且超时占比 ≥0.5)。
                 // 上一波结算数不足样本时原样保持,别让一小波噪声改动并发。
@@ -2131,29 +2155,36 @@ class DetailViewModel : ViewModel() {
                 )
                 // 让路:换片/冻结后立即停(别再投下一波、也别走收口)
                 if (!searchActive(tokenStr)) return@launch
-                // 扩池判定:本波收口且**本轮 0 命中**且还有更多源 ⇒ 加大宽度进下一波(**不重启、不重投**)。
-                // ⚠️ hitCount 必须传"本轮新增命中"(newHitsThisWave),不能传累计候选数 —— 见上注释。
-                // 用户主动换源(manualSwitchActive)时**放宽命中判据**:用户点「换源」的意图就是"还要继续找",
-                // 此时即便本轮偶有命中也要把剩余源搜完(与"搜索跑全量直到用户退出"的定案一致)。
+                // 扩档判定(2026-10-17 用户定案):**自动链只跑第 1 档**,跑完就停下给结论;
+                // 要往下一档走必须是他点过「继续找源」(manualWavesQueued),一次点一档。
+                // 命中的档不再往下问(目的已达成),但**手动点过就照点数的推进** —— 他要的就是"再问一批"。
                 //
-                // ⚠️⚠️ 但"还有更多源可搜"(searchedSourceKeys.size < total)是**不可绕过的硬边界**:
-                //   若 manual 时连它一起短路 ⇒ 源搜尽后(searched==total)仍每轮 expand、wave=0 空转,
+                // ⚠️ "还有下一档"是不可绕过的硬边界:若问尽后仍继续 expand ⇒ wave=0 空转、
                 //   poolRound 无限自增、日志刷屏、CPU 空转(2026-10-14 v1.0.99 真机死循环现场:
-                //   round 566→576… 每轮 1ms)。故 manual 只放宽 hitCount,不放宽"还有源"这一条。
-                val hasMoreSources = searchedSourceKeys.size < total
-                val canExpand = hasMoreSources &&
-                    (manualSwitchActive || ExpandPoolPolicy.shouldExpand(
-                        newHitsThisWave, true, searchedSourceKeys.size, total, poolRound))
+                //   round 566→576… 每轮 1ms)。
+                val hasMoreWaves = ExpandPoolPolicy.hasNextWave(total, poolRound)
+                val canExpand = hasMoreWaves && manualWavesQueued > 0
                 if (canExpand) {
+                    manualWavesQueued -= 1
                     poolRound += 1
-                    waveSize = ExpandPoolPolicy.poolSizeForRound(total, poolRound)
+                    waveSize = ExpandPoolPolicy.poolSizeForWave(total, poolRound)
                     LOG.i(
                         "echo-source-search expand round=" + poolRound +
                             " nextSize=" + waveSize + " total=" + total +
                             " searched=" + searchedSourceKeys.size + " token=$myToken" +
-                            " manual=$manualSwitchActive"
+                            " manual=true queued=$manualWavesQueued"
                     )
                     continue  // 继续下一波:只投"新增的"源(searchedSourceKeys 已滤掉已搜的)
+                }
+                // 停下来等用户:还有档没问 ⇒ 海报态那一行下面出「继续找源」
+                sourceSearchAsked.value = searchedSourceKeys.size
+                canContinueSourceSearch.value = hasMoreWaves && tokenStr == currentTokenStr()
+                if (hasMoreWaves) {
+                    LOG.i(
+                        "echo-source-search wave-stop round=" + poolRound +
+                            " asked=" + searchedSourceKeys.size + " total=" + total +
+                            " hit=" + hitCount + " token=$myToken reason=auto-runs-first-wave"
+                    )
                 }
                 break
             }
@@ -2169,6 +2200,9 @@ class DetailViewModel : ViewModel() {
                 manualSwitchActive = false
                 LOG.i("echo-source-switch manual pass complete, re-arm freeze token=$myToken")
             }
+            // 源问尽了就没有"下一档"可言:按钮不该再挂着
+            sourceSearchAsked.value = searchedSourceKeys.size
+            if (searchedSourceKeys.size >= total) canContinueSourceSearch.value = false
             // 全池/在途波次收口再回存一次(过程中已按合并窗口增量回存,这里兜底)
             if (tokenStr == currentTokenStr() && fallbackSearchHits.isNotEmpty()) {
                 saveFallbackHitsToCache()
@@ -2652,6 +2686,14 @@ class DetailViewModel : ViewModel() {
         }
         manualSwitching.value = true
         manualSwitchActive = true
+        // 一次点击 = 往前推一档(2026-10-17 用户定案:剩下的档由他一档一档点着走):
+        //  - 搜索还在跑 ⇒ 排队,本档收口时接上(见 wave-done 的 manualWavesQueued);
+        //  - 已经停下来(海报态点「继续找源」)⇒ 当场进下一档,否则重投的还是同一批已问过的源。
+        if (!sourcesSearching.value && ExpandPoolPolicy.hasNextWave(sourcePoolTotal.value, poolRound)) {
+            poolRound += 1
+        } else {
+            manualWavesQueued += 1
+        }
         chipPage.value = 0
         // 解冻:否则 startSourceSearch 内 searchActive 恒 false,搜索跑不动
         searchFrozen = false
@@ -2666,9 +2708,23 @@ class DetailViewModel : ViewModel() {
         startSourceSearch(userInitiated = true)
     }
 
+    /**
+     * 「再搜一次」:全池都问完了还是 0 命中,用户要的是**真的再问一遍**,
+     * 不是拿"已问过"的名单原地空转(那会直接走 no-new-source 出口,等于按钮没反应)。
+     */
+    fun restartSourceSearch() {
+        poolRound = ExpandPoolPolicy.FIRST_WAVE
+        manualWavesQueued = 0
+        canContinueSourceSearch.value = false
+        searchedSourceKeys.clear()
+        manualSwitching.value = true
+        manualSwitchActive = true
+        LOG.i("echo-source-switch restart title=$searchTitle total=${sourcePoolTotal.value}")
+        startSourceSearch(userInitiated = true)
+    }
+
     /** 下一页(仅在有下一页时生效;钳制由 [CandidatePager.hasNext] 保证)。 */
-    fun nextChipPage() {
-        if (!CandidatePager.hasNext(chipSourceTotal(), chipPage.value)) return
+    fun nextChipPage() {        if (!CandidatePager.hasNext(chipSourceTotal(), chipPage.value)) return
         chipPage.value += 1
         publishSourceChips()
         LOG.i("echo-source-switch next page=${chipPage.value}")

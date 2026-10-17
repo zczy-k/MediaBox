@@ -403,7 +403,9 @@
     <string name="detail_source_searching_none">正在找源 · 已問過 %1$d 個</string>
     <string name="detail_source_searching_found">正在找源 · 已問過 %1$d 個 · 已找到 %2$d 個來源</string>
     <string name="detail_source_found">已找到 %1$d 個來源</string>
-    <string name="detail_source_none_found">暫時沒找到其他源</string>
+    <string name="detail_source_none_found">問過 %1$d 個源，暫時沒找到其他源</string>
+    <string name="detail_source_wave_asked">問過 %1$d 個源，還有 %2$d 個沒問</string>
+    <string name="detail_source_continue">繼續找源</string>
     <string name="detail_source_prev_page">上一頁</string>
     <string name="detail_source_next_page">下一頁</string>
     <string name="detail_finding_source">尋找片源中…</string>

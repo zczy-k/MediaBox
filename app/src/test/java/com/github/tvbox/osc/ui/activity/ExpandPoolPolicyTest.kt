@@ -6,150 +6,110 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 按比例动态扩池判据单测。锁三件事:
- * ① 轮次比例 1/3→1/2→2/3→全量且**单调不减**;② 小源数向上取整不退化;③ 扩池触发条件三缺一不可。
+ * **按源总数分档**判据单测(2026-10-17 用户定案)。锁四件事:
+ * ① 池子越大档数越多(≤99 一档 / 100~300 两档 / >300 三档);
+ * ② 每档**累计**单调不减、末档必等于全量;③ 边界值不跳档、越界档号钳得住;
+ * ④ "还有下一档吗 / 还剩几个没问"与档号自洽 —— 自动链只跑第 1 档,
+ *    而小池的第 1 档就是全量,所以小订阅不该出现「继续找源」。
  */
 class ExpandPoolPolicyTest {
 
-    // ==================== poolSizeForRound ====================
+    // ==================== waveCount ====================
 
     @Test
-    fun `360源的比例分档`() {
-        val total = 360
-        assertEquals(120, ExpandPoolPolicy.poolSizeForRound(total, 1)) // 1/3
-        assertEquals(180, ExpandPoolPolicy.poolSizeForRound(total, 2)) // 1/2
-        assertEquals(240, ExpandPoolPolicy.poolSizeForRound(total, 3)) // 2/3
-        assertEquals(360, ExpandPoolPolicy.poolSizeForRound(total, 4)) // 全量
+    fun `池子大小决定档数`() {
+        assertEquals(1, ExpandPoolPolicy.waveCount(1))
+        assertEquals(1, ExpandPoolPolicy.waveCount(99))
+        assertEquals(2, ExpandPoolPolicy.waveCount(100))   // 跨过 99 就分两档
+        assertEquals(2, ExpandPoolPolicy.waveCount(300))
+        assertEquals(3, ExpandPoolPolicy.waveCount(301))   // 跨过 300 就分三档
+        assertEquals(3, ExpandPoolPolicy.waveCount(315))
+        assertEquals(3, ExpandPoolPolicy.waveCount(10_000))
     }
 
     @Test
-    fun `轮次单调不减`() {
-        val total = 359
-        val sizes = (1..ExpandPoolPolicy.FINAL_ROUND).map { ExpandPoolPolicy.poolSizeForRound(total, it) }
-        for (i in 1 until sizes.size) {
-            assertTrue("第${i + 1}轮(${sizes[i]})应 >= 第${i}轮(${sizes[i - 1]})", sizes[i] >= sizes[i - 1])
-        }
-        assertEquals(total, sizes.last())
+    fun `没有源就没有档`() {
+        assertEquals(0, ExpandPoolPolicy.waveCount(0))
+        assertEquals(0, ExpandPoolPolicy.waveCount(-7))
+    }
+
+    // ==================== poolSizeForWave ====================
+
+    @Test
+    fun `315个源三档跑完`() {
+        assertEquals(105, ExpandPoolPolicy.poolSizeForWave(315, 1)) // 1/3
+        assertEquals(210, ExpandPoolPolicy.poolSizeForWave(315, 2)) // 2/3
+        assertEquals(315, ExpandPoolPolicy.poolSizeForWave(315, 3)) // 全量
     }
 
     @Test
-    fun `超终结轮仍为全量`() {
-        assertEquals(100, ExpandPoolPolicy.poolSizeForRound(100, ExpandPoolPolicy.FINAL_ROUND))
-        assertEquals(100, ExpandPoolPolicy.poolSizeForRound(100, ExpandPoolPolicy.FINAL_ROUND + 5))
+    fun `250个源两档跑完`() {
+        assertEquals(125, ExpandPoolPolicy.poolSizeForWave(250, 1)) // 1/2
+        assertEquals(250, ExpandPoolPolicy.poolSizeForWave(250, 2)) // 全量
     }
 
     @Test
-    fun `小源数向上取整不退化`() {
-        // 5 个源的 1/3 = 1.67 → 上取整 2(不能是 1,否则扩池在小订阅上无意义)
-        assertEquals(2, ExpandPoolPolicy.poolSizeForRound(5, 1))
-        // 3 个源的 1/3 = 1
-        assertEquals(1, ExpandPoolPolicy.poolSizeForRound(3, 1))
-        // 2 个源的 1/3 = 0.67 → 1
-        assertEquals(1, ExpandPoolPolicy.poolSizeForRound(2, 1))
+    fun `小池一档就是全量`() {
+        // 自动链只跑第 1 档 ⇒ 小订阅不需要再点一次就搜完了
+        assertEquals(90, ExpandPoolPolicy.poolSizeForWave(90, 1))
+        assertEquals(5, ExpandPoolPolicy.poolSizeForWave(5, 1))
+        assertEquals(1, ExpandPoolPolicy.poolSizeForWave(1, 1))
     }
 
     @Test
-    fun `永不超过总数`() {
-        for (total in 1..500 step 37) {
-            for (round in 1..6) {
-                val size = ExpandPoolPolicy.poolSizeForRound(total, round)
-                assertTrue("total=$total round=$round size=$size", size in 1..total)
+    fun `各档累计单调不减且末档等于全量`() {
+        for (total in listOf(1, 2, 3, 50, 99, 100, 101, 250, 300, 301, 315, 999)) {
+            val n = ExpandPoolPolicy.waveCount(total)
+            var prev = 0
+            for (wave in 1..n) {
+                val size = ExpandPoolPolicy.poolSizeForWave(total, wave)
+                assertTrue("total=$total wave=$wave size=$size 越界", size in 1..total)
+                assertTrue("total=$total 第$wave 档($size)应 >= 上一档($prev)", size >= prev)
+                prev = size
             }
+            assertEquals("total=$total 末档必须是全量", total, prev)
         }
     }
 
     @Test
-    fun `非法轮次按第一轮处理`() {
+    fun `越界档号钳到范围内`() {
         assertEquals(
-            ExpandPoolPolicy.poolSizeForRound(90, 1),
-            ExpandPoolPolicy.poolSizeForRound(90, 0),
+            ExpandPoolPolicy.poolSizeForWave(315, 1),
+            ExpandPoolPolicy.poolSizeForWave(315, 0),
         )
         assertEquals(
-            ExpandPoolPolicy.poolSizeForRound(90, 1),
-            ExpandPoolPolicy.poolSizeForRound(90, -3),
+            ExpandPoolPolicy.poolSizeForWave(315, 1),
+            ExpandPoolPolicy.poolSizeForWave(315, -3),
         )
+        // 超出最后一档 = 全量(不会溢出、也不会退回小档)
+        assertEquals(315, ExpandPoolPolicy.poolSizeForWave(315, 4))
+        assertEquals(315, ExpandPoolPolicy.poolSizeForWave(315, 99))
     }
 
     @Test
     fun `零或负总数返回0`() {
-        assertEquals(0, ExpandPoolPolicy.poolSizeForRound(0, 1))
-        assertEquals(0, ExpandPoolPolicy.poolSizeForRound(-5, 2))
+        assertEquals(0, ExpandPoolPolicy.poolSizeForWave(0, 1))
+        assertEquals(0, ExpandPoolPolicy.poolSizeForWave(-5, 2))
     }
 
-    // ==================== isFinalRound ====================
+    // ==================== hasNextWave / remainingFor ====================
 
     @Test
-    fun `终结轮判定`() {
-        assertFalse(ExpandPoolPolicy.isFinalRound(1))
-        assertFalse(ExpandPoolPolicy.isFinalRound(3))
-        assertTrue(ExpandPoolPolicy.isFinalRound(4))
-        assertTrue(ExpandPoolPolicy.isFinalRound(5))
-    }
-
-    // ==================== shouldExpand ====================
-
-    @Test
-    fun `收口且0命中且有更多源才扩池`() {
-        assertTrue(
-            ExpandPoolPolicy.shouldExpand(
-                hitCount = 0, roundDone = true, curSize = 120, total = 360, round = 1
-            )
-        )
+    fun `还有没有下一档`() {
+        assertFalse(ExpandPoolPolicy.hasNextWave(90, 1))    // 小池:自动那一档就搜完了
+        assertTrue(ExpandPoolPolicy.hasNextWave(250, 1))
+        assertFalse(ExpandPoolPolicy.hasNextWave(250, 2))
+        assertTrue(ExpandPoolPolicy.hasNextWave(315, 2))
+        assertFalse(ExpandPoolPolicy.hasNextWave(315, 3))
     }
 
     @Test
-    fun `未收口不扩`() {
-        assertFalse(
-            ExpandPoolPolicy.shouldExpand(
-                hitCount = 0, roundDone = false, curSize = 120, total = 360, round = 1
-            )
-        )
-    }
-
-    @Test
-    fun `已有命中不扩`() {
-        assertFalse(
-            ExpandPoolPolicy.shouldExpand(
-                hitCount = 3, roundDone = true, curSize = 120, total = 360, round = 1
-            )
-        )
-    }
-
-    @Test
-    fun `已到全量不扩`() {
-        assertFalse(
-            ExpandPoolPolicy.shouldExpand(
-                hitCount = 0, roundDone = true, curSize = 360, total = 360, round = 1
-            )
-        )
-    }
-
-    /**
-     * 自动链的停线轮(真机《鲸口脱险》):第 2 轮跑完仍 0 命中 ⇒ 不再往 2/3、全量扩,
-     * 让用户尽快拿到"暂时没找到其他源"这个答复,而不是陪同类站再跑几分钟。
-     * 手动按「搜源」不走这条判据(调用方用 manualSwitchActive 短路),仍可问全量。
-     */
-    @Test
-    fun `自动链跑完两轮就收口`() {
-        assertFalse(
-            ExpandPoolPolicy.shouldExpand(
-                hitCount = 0, roundDone = true, curSize = 180, total = 360, round = 2
-            )
-        )
-        assertFalse(
-            ExpandPoolPolicy.shouldExpand(
-                hitCount = 0, roundDone = true, curSize = 240, total = 360, round = 3
-            )
-        )
-    }
-
-    /** 非法/缺失轮次按第一轮处理,不会因为 round 被写成 0 就永远不扩 */
-    @Test
-    fun `轮次为0时按第一轮`() {
-        assertTrue(
-            ExpandPoolPolicy.shouldExpand(
-                hitCount = 0, roundDone = true, curSize = 120, total = 360, round = 0
-            )
-        )
+    fun `还剩多少个没问与档号自洽`() {
+        assertEquals(0, ExpandPoolPolicy.remainingFor(90, 1))
+        assertEquals(125, ExpandPoolPolicy.remainingFor(250, 1))
+        assertEquals(0, ExpandPoolPolicy.remainingFor(250, 2))
+        assertEquals(210, ExpandPoolPolicy.remainingFor(315, 1))
+        assertEquals(105, ExpandPoolPolicy.remainingFor(315, 2))
+        assertEquals(0, ExpandPoolPolicy.remainingFor(315, 3))
     }
 }

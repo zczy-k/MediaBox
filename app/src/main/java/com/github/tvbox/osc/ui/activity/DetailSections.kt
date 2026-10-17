@@ -76,7 +76,8 @@ internal fun sourceStatusText(searchedOnce: Boolean, searching: Boolean, asked: 
         SourceSearchStatus.Line.SEARCHING_FOUND ->
             stringResource(R.string.detail_source_searching_found, asked, found)
         SourceSearchStatus.Line.FOUND -> stringResource(R.string.detail_source_found, found)
-        SourceSearchStatus.Line.NONE_FOUND -> stringResource(R.string.detail_source_none_found)
+        SourceSearchStatus.Line.NONE_FOUND ->
+            stringResource(R.string.detail_source_none_found, asked)
     }
 
 /**

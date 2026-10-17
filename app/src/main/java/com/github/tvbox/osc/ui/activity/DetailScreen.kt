@@ -235,11 +235,15 @@ private fun NoContentScreen(
 ) {
     val searching by vm.sourcesSearching.collectAsStateWithLifecycle()
     val progress by vm.searchProgress.collectAsStateWithLifecycle()
+    val canContinue by vm.canContinueSourceSearch.collectAsStateWithLifecycle()
+    val poolTotal by vm.sourcePoolTotal.collectAsStateWithLifecycle()
+    val asked by vm.sourceSearchAsked.collectAsStateWithLifecycle()
     val found = vm.totalCandidateCount()
     val empty = state as? DetailViewModel.PageState.Empty
     val emptyMsg = empty?.msg
-    // "收口"= 这一场搜索不再在跑、页面也确实没内容:这时候才给「再搜一次」入口
+    // "收口"= 这一场搜索不再在跑、页面也确实没内容:这时候才给"下一步"入口
     val settled = empty != null && !searching
+    val remaining = (poolTotal - asked).coerceAtLeast(0)
     // 海报:宽约屏宽 46%、竖版 3:4;再用可用高度封一道,横屏小竖向空间时不会撑出屏幕
     val posterW = minOf(shortEdge * 0.46f, screenHeight * 0.42f * 3f / 4f).coerceAtLeast(96.dp)
 
@@ -288,15 +292,17 @@ private fun NoContentScreen(
                 Spacer(modifier = Modifier.height(14.dp))
             }
             Text(
-                text = if (settled) {
-                    emptyMsg ?: stringResource(R.string.detail_source_none_found)
-                } else {
-                    sourceStatusText(
+                text = when {
+                    !settled -> sourceStatusText(
                         searchedOnce = true,
                         searching = true,
                         asked = progress?.done ?: 0,
                         found = found,
                     )
+                    // 收口且还有档没问:说清"问过多少、还剩多少" —— 自动只跑第一档,
+                    // 剩下的由他点(2026-10-17 定案),这句话就是那颗按钮的凭据
+                    canContinue -> stringResource(R.string.detail_source_wave_asked, asked, remaining)
+                    else -> stringResource(R.string.detail_source_none_found, asked)
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -305,16 +311,38 @@ private fun NoContentScreen(
                 textAlign = TextAlign.Center,
             )
             if (settled) {
+                // 收口原因(超时/解析失败…)单独一行小字:它不是"问过多少"的替代,是另一件事
+                emptyMsg?.let { reason ->
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = reason,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                    )
+                }
                 Spacer(modifier = Modifier.height(4.dp))
-                TextButton(onClick = { vm.retry() }) {
-                    Text(stringResource(R.string.detail_search_again))
+                TextButton(
+                    onClick = {
+                        // 还有下一档 ⇒ 点一次推进一档;已经问完全池 ⇒ 清零重问(见 restartSourceSearch)
+                        if (canContinue) vm.onSwitchSourceClick() else vm.restartSourceSearch()
+                    },
+                ) {
+                    Text(
+                        stringResource(
+                            if (canContinue) R.string.detail_source_continue else R.string.detail_search_again
+                        )
+                    )
                 }
             }
         }
-        // 换源板块常驻:等待期间照常显示已发现的源。
-        // statusInline 只在**收口后**打开:找源中时上面那行已经说过"正在找源 · 已问过 N 个",
-        // 板块再说一遍就是两处同文(真机 v1.1.47 拍到过);收口后上面那行说的是失败原因,
-        // 板块这行补的是"问过多少 / 找到几个"的证据,两句不重复。
-        SourceSection(vm, revision = revision, statusInline = settled)
+        // **搜源栏只在"收口且真搜出了候选"时才出现**(2026-10-17 用户要求):
+        // 刚进页面那几秒底下挂一排还点不动的芯片没有意义,那一屏只讲"在找源"这一件事。
+        // 收口后有候选 ⇒ 它是用户唯一的抓手,必须回来(10-14 的定案不变)。
+        if (settled && found > 0) {
+            SourceSection(vm, revision = revision, statusInline = false)
+        }
     }
 }

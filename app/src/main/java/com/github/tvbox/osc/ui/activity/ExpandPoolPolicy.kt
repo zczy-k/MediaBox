@@ -3,100 +3,71 @@ package com.github.tvbox.osc.ui.activity
 import kotlin.math.ceil
 
 /**
- * **按比例动态扩池**判据(纯函数,可 JVM 单测,2026-10-13)。
+ * **按源总数分档**的搜源计划(纯函数,可 JVM 单测;2026-10-17 用户定案)。
  *
  * <p>## 解决的现场
- * 详情页换源/聚合搜索此前对候选源**固定截断**(旧 `DetailViewModel` 里的 120 上界):
- * 源集合有 300+ 源时,其余源**永不参与搜索** ⇒ 冷门片明明有源却搜不到。
+ * 池子大小因人而异(几十到三百多):固定截断会让范围外的源永不参与换源;
+ * 而"自动一路搜到全量"又把人挂在等待里 —— 冷门片 0 命中时自动链跑完 315 个源要四五分钟。
+ * 上一版我把它拍成"自动跑两轮(1/3→1/2)就收口",那是**用轮次数替他决定等多久**,
+ * 而且小订阅(几十个源)也被切成两轮,白多点一次。
  *
- * <p>用户提出的方案:不是固定值,而是**按源总数比例**逐轮扩大,直到全量 —— 因为源数量因人而异,
- * 固定值要么不够(冷门片)、要么过多(小订阅白排队)。
- *
- * <p>## 轮次比例(用户指定)
+ * <p>## 分档口径(用户 2026-10-17 指定)
  * <pre>
- *   第 1 轮 = 1/3       第 2 轮 = 1/2
- *   第 3 轮 = 2/3       第 4 轮 = 100%(全量,终结)
+ *   总数 ≤ 99   ⇒ 1 档跑完(池子小,再分档只是让人多点一次)
+ *   100 ~ 300   ⇒ 2 档:1/2 → 全量
+ *   &gt; 300      ⇒ 3 档:1/3 → 2/3 → 全量
  * </pre>
- * 触发条件:**上一轮全部源收口且 0 命中** ⇒ 进入下一轮(扩大池)。
- * 终结:全量轮仍 0 命中 ⇒ 调用方提示"未找到可用片源"(见 [isFinalRound])。
+ * **自动链只跑第 1 档**;小池的第 1 档本身就是全量,所以"自动搜多少个"在小池上没有歧义。
+ * 剩下的每一档都要用户点一次「继续找源」才推进 —— 等待时长由他决定。
  *
- * <p>## 为什么单调不减是硬要求
- * 每轮必须在**上一轮的全部源**之上**追加**新源(不能重新从大池子里按新比例取样)
- * —— 否则"第 2 轮"可能把"第 1 轮已搜过的源"排除在外,出现"搜过的又被搜/有的永远搜不到"。
- * [poolSizeForRound] 因此返回的是**累计**要搜的源数(单调不减),调用方按它切前 N 个。
+ * <p>## 为什么累计单调不减
+ * 每档必须在**上一档已问过的源**之上**追加**,不能按新比例重新取样 —— 否则会出现
+ * "搜过的又被搜 / 有的永远搜不到"。[poolSizeForWave] 返回**累计**要问到的源数。
  *
  * <p>纯逻辑,无 IO / Android 依赖 —— 由 `ExpandPoolPolicyTest` 锁行为。
  */
 object ExpandPoolPolicy {
 
-    /** 比例档位(分子/分母):1/3 → 1/2 → 2/3 → 全量。终结轮由 [FINAL_ROUND] 表示。 */
-    private val RATIOS: List<Pair<Int, Int>> = listOf(1 to 3, 1 to 2, 2 to 3)
+    /** ≤ 这个数就一档跑完(小池不分档) */
+    const val SMALL_POOL_MAX = 99
 
-    /** 终结轮编号:该轮用全量;再往后仍无果即宣告"未找到"。 */
-    const val FINAL_ROUND = 4
+    /** ≤ 这个数分两档;再大分三档 */
+    const val MID_POOL_MAX = 300
 
-    /** 第 1 轮(初始)编号 */
-    const val FIRST_ROUND = 1
+    /** 第 1 档(自动那一档)编号 */
+    const val FIRST_WAVE = 1
+
+    /** 这个池子分几档跑完。[total] ≤ 0 ⇒ 0 档(没源可搜) */
+    @JvmStatic
+    fun waveCount(total: Int): Int = when {
+        total <= 0 -> 0
+        total <= SMALL_POOL_MAX -> 1
+        total <= MID_POOL_MAX -> 2
+        else -> 3
+    }
 
     /**
-     * 第 [round] 轮**累计**应搜的源数(单调不减,封顶 [total])。
+     * 第 [wave] 档**累计**应问到的源数(单调不减,最后一档 = 全量)。
      *
      * @param total 可用源总数(过滤后);<=0 返回 0
-     * @param round 轮次(从 [FIRST_ROUND] 起;[FINAL_ROUND] 及以后 = 全量)
-     * @return 该轮累计要搜的源数,∈ [0, total]
+     * @param wave  档号(从 [FIRST_WAVE] 起,越界钳到范围内)
      */
     @JvmStatic
-    fun poolSizeForRound(total: Int, round: Int): Int {
+    fun poolSizeForWave(total: Int, wave: Int): Int {
         if (total <= 0) return 0
-        val normalized = maxOf(round, FIRST_ROUND)
-        if (normalized >= FINAL_ROUND) return total
-        val (num, den) = RATIOS[normalized - 1]
-        // 向上取整:源数很少时(如 5 个源、1/3)也要至少推出 2 个,否则"扩池"在小订阅上退化为"不扩"
-        val size = ceil(total.toDouble() * num / den).toInt()
-        return size.coerceIn(1, total)
+        val n = waveCount(total)
+        val w = wave.coerceIn(FIRST_WAVE, n)
+        if (w >= n) return total
+        // 向上取整:别让"下一档"在小池上退化成"不搜"
+        return ceil(total.toDouble() * w / n).toInt().coerceIn(1, total)
     }
 
-    /**
-     * 是否已是终结轮(全量轮)。调用方据此决定:全量轮仍 0 命中 ⇒ 提示"未找到可用片源"。
-     */
+    /** 第 [wave] 档之后还有没有档 —— 决定页面上该不该出「继续找源」 */
     @JvmStatic
-    fun isFinalRound(round: Int): Boolean = maxOf(round, FIRST_ROUND) >= FINAL_ROUND
+    fun hasNextWave(total: Int, wave: Int): Boolean = wave < waveCount(total)
 
-    /**
-     * **自动链**最多扩到第几轮(2026-10-17 真机《鲸口脱险》)。
-     *
-     * <p>此前自动链会一路扩到全量(第 4 轮)才收口:真机上它问完 105 个源 0 命中、又问 137 个仍 0 命中,
-     * 还在继续往 183、315 走 —— 而那几分钟里用户看到的就是一句"正在找源"。对照正规片的记录
-     * (《狮子王》首轮 hit=25、《镖人》hit=4、《给阿嬷的情书》hit=4),**能找到的片几乎都在前两波就命中**;
-     * 前两波(累计约半个池子)全 0 命中,剩下那些同类站给出的答案大概率还是 0。
-     * 所以自动链停在第 2 轮收口,把"没找到"这个答复提前给用户;
-     * 用户主动按「搜源」时**不受这条限制**(调用方走 manualSwitchActive 那条路),想问全量就问全量。
-     */
-    const val AUTO_EXPAND_MAX_ROUND = 2
-
-    /**
-     * 本轮结束后是否应进入下一轮扩池(纯判据)。
-     *
-     * <p>条件:**本轮已全部收口** 且 **0 命中** 且 **还有更多源没搜** 且 **自动链还没停线**。
-     * 前三个缺一不可:
-     * <ul>
-     *   <li>未收口 ⇒ 还有源在跑,别急着扩(会与在途结果打架);</li>
-     *   <li>已有命中 ⇒ 目的达成,不必扩(冷门片才需要扩);</li>
-     *   <li>已到全量 ⇒ 没得扩了,由 [isFinalRound] 走"未找到"终态;</li>
-     *   <li>已到 [AUTO_EXPAND_MAX_ROUND] ⇒ 自动链收口,别再让用户干等剩下的同类站。</li>
-     * </ul>
-     *
-     * @param hitCount   本轮**新增**命中数(不能传累计候选,见调用处注释)
-     * @param roundDone  本轮是否已全部收口(搜索 all-done)
-     * @param curSize    本轮搜的源数(累计)
-     * @param total      源总数
-     * @param round      刚跑完的是第几轮(自动停线判据)
-     */
+    /** 还剩多少个源没问(用于"问过 N 个,还有 M 个没问"这行话) */
     @JvmStatic
-    fun shouldExpand(hitCount: Int, roundDone: Boolean, curSize: Int, total: Int, round: Int): Boolean {
-        if (!roundDone) return false
-        if (hitCount > 0) return false
-        if (curSize >= total) return false
-        return maxOf(round, FIRST_ROUND) < AUTO_EXPAND_MAX_ROUND
-    }
+    fun remainingFor(total: Int, wave: Int): Int =
+        (total - poolSizeForWave(total, wave)).coerceAtLeast(0)
 }
