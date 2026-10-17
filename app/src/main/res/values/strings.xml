@@ -391,7 +391,6 @@
     <string name="detail_fullscreen_play">全屏播放</string>
     <string name="detail_empty_source">暂无片源,可尝试换源或搜索</string>
     <string name="detail_load_timeout">加载超时,可尝试换源或搜索</string>
-    <string name="detail_no_other_source">暂时没找到其他源</string>
     <string name="detail_search_again">再搜一次</string>
     <string name="detail_music_player">进入音乐播放器</string>
     <string name="detail_uncollect">取消收藏</string>

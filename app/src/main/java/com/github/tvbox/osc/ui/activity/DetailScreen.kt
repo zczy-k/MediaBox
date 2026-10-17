@@ -287,7 +287,7 @@ private fun NoContentScreen(
             }
             Text(
                 text = if (settled) {
-                    emptyMsg ?: stringResource(R.string.detail_no_other_source)
+                    emptyMsg ?: stringResource(R.string.detail_source_none_found)
                 } else {
                     sourceStatusText(
                         searchedOnce = true,
@@ -302,21 +302,6 @@ private fun NoContentScreen(
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
             )
-            if (settled && found > 0) {
-                // 这一行说"下面那些源是可点的":空的是**当前源**,不是整场搜索
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = sourceStatusText(
-                        searchedOnce = true,
-                        searching = false,
-                        asked = progress?.done ?: 0,
-                        found = found,
-                    ),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    textAlign = TextAlign.Center,
-                )
-            }
             if (settled) {
                 Spacer(modifier = Modifier.height(4.dp))
                 TextButton(onClick = { vm.retry() }) {
@@ -324,8 +309,10 @@ private fun NoContentScreen(
                 }
             }
         }
-        // 换源板块常驻:等待期间照常显示已发现的源
-        // statusInline=false —— 上面已经说过一次搜索状态,这里不重复(真机截图拍到两处同文)
-        SourceSection(vm, revision = revision, statusInline = false)
+        // 换源板块常驻:等待期间照常显示已发现的源。
+        // statusInline 只在**收口后**打开:找源中时上面那行已经说过"正在找源 · 已问过 N 个",
+        // 板块再说一遍就是两处同文(真机 v1.1.47 拍到过);收口后上面那行说的是失败原因,
+        // 板块这行补的是"问过多少 / 找到几个"的证据,两句不重复。
+        SourceSection(vm, revision = revision, statusInline = settled)
     }
 }
