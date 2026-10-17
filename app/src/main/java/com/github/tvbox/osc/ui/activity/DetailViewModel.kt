@@ -662,7 +662,7 @@ class DetailViewModel : ViewModel() {
         publishHeader()
         loadDetail(target.vodId, target.sourceKey)
         LOG.i("echo-detail-open collect=$fromCollect key=$sourceKey id=$vodId")
-        // ⚠️ 2026-10-12:这里**不再**无条件 `startSourceSearch()`。
+        // ⚠️ 这里**不发**聚合搜索(2026-10-12 改,2026-10-14 定案)。
         //
         // 原实现是 `if (vodName.isNotEmpty()) startSourceSearch()` —— 即"点开卡片的同时
         // 立刻用 12 并发去搜几百个源"。后果(真机实测):
@@ -671,10 +671,13 @@ class DetailViewModel : ViewModel() {
         //     全部发生在详情还没出来的时候;
         //   - 用户感受就是"点卡片进去变慢了"。
         //
-        // 改为走既有的 [prewarmSourceSearch](延迟 1.5s):绝大多数详情在 1.5s 内就 Ready,
-        // 于是这轮搜索**根本不会发**;只有当前源确实取不到(或很慢)时,才轮到它兜底 ——
-        // 而那条路径本来就是它设计的用途。判定逻辑一行没改,只是把"立刻发"改成"按需发"。
-        prewarmSourceSearch()
+        // 现行判据:**能起播就不自动搜全站**。当前源交出内容 ⇒ 直接起播,一个搜索请求都不发;
+        // 只有当前源交不出内容时才按需启动([ensureSourceSearchRunning] → [startSourceSearch]),
+        // 触发点共四处:
+        //   - 详情空/不可用:handleEmptyDetail
+        //   - 详情看门狗超时:onDetailLoadTimedOut
+        //   - 详情就绪但 playingList 为空 / 记忆判定当前源严重不全:startFallbackIfNeeded
+        //   - 用户主动换源:onSwitchSourceClick → startSourceSearch(userInitiated = true)
     }
 
     /** 换片时收掉上一部在途的聚合搜索,并让旧 token 立即失效(搜索回包仍靠 token 失配兜底) */
@@ -1406,63 +1409,8 @@ class DetailViewModel : ViewModel() {
         armLoadingBudget()
         armDetailWatchdog(key)
         sourceViewModel.getDetail(sourceKey, vodId, false, requestToken)
-        // 详情照旧请求当前源;聚合搜索**并行**预热,不等它出结果。
-        // 目的只有一个:把"当前源没有这部剧"的兜底从 20~45 秒压到秒级(见 [prewarmSourceSearch])
-        prewarmSourceSearch()
-    }
-
-    /**
-     * 详情请求发出后,延迟 [SOURCE_SEARCH_PREWARM_DELAY_MS] 预热聚合搜索。
-     *
-     * <p>**要解决的问题**:换源候选只能来自聚合搜索,而它原先**只在当前源失败之后**才启动
-     * ([ensureSourceSearchRunning])。当前源失败要先等详情看门狗(20~45 秒,
-     * 见 [DetailLoadWatchdog])才判定失败,于是用户盯着"寻找中"白等几十秒 ——
-     * 这正是"打开有些影片总是先卡在这个界面"的成因:不是搜索慢,是**启动得太晚**。
-     *
-     * <p>**为什么延迟而不是立刻发**:当前源绝大多数情况是能取到的,立刻发等于每次点卡片
-     * 都惊动上百个站,流量与并发都白扔。延迟一小会儿再发,命中"当前源能取到"时搜索早已超时收工、
-     * 用户全程无感;只有真慢到超时的那些才刚好赶上兜底时机。
-     *
-     * <p>**为什么不改判定逻辑**:只改启动时机。[ensureSourceSearchRunning] 仍然保留 ——
-     * 它是"延迟期间搜索已收工"或"标题彼时还没拿到"的兜底,两条路径都指向同一个
-     * [startSourceSearch],而后者用 `sourcesSearching && searchTitle == title` 自去重,
-     * 所以重复调用不会发出第二轮搜索。
-     *
-     * <p>换片/换源时 [prewarmSourceSearch] 开头就 `removeCallbacks(sourceSearchPrewarm)`,
-     * 旧片的预热不会残留。刻意**不**借用 `cancelDetailTimeout()`(它走的是
-     * `removeCallbacksAndMessages(null)`)—— 那是"连本 Handler 全部回调一起清"的粗粒度收口,
-     * 预热这种良性任务没这个必要,顺带把它捎上只是增加耦合。
-     */
-    private fun prewarmSourceSearch() {
-        // 2026-10-14 用户定案:**能起播就不自动搜全站** ⇒ 取消"1.5s 后自动预热搜索"。
-        // 原设计是"详情慢过 1.5s 就先搜全站兜底",但实测这让每次进详情页都狂搜 322 源
-        // (3~3.5 分钟),而绝大多数情况当前源其实能起播 —— 纯浪费。
-        // 现在完全不预热;当前源放不出来/起播失败时,由以下兜底路径按需启动:
-        //   - 详情空/不可用:handleEmptyDetail→ensureSourceSearchRunning(约 1528)
-        //   - 起播失败:ensureSourceSearchRunning 的其余调用点
-        //   - 用户主动换源:onSwitchSourceClick→startSourceSearch
-        mainHandler.removeCallbacks(sourceSearchPrewarm)
-    }
-
-    private val sourceSearchPrewarm = Runnable {
-        // 详情已经拿到内容就不必再找替代源了:省掉这一整轮搜索
-        if (pageState.value is PageState.Ready) {
-            LOG.i("echo-source-prewarm skip reason=already-ready")
-            return@Runnable
-        }
-        // ⚠️ 这里**可能什么都不打** —— 那不是"预热没生效",而是搜索早已被别的入口启动过了
-        // (例如详情看门狗先判失败、或 [onDetailUnavailable] 已收口)。
-        // 那种情况下 [ensureSourceSearchRunning] 的 `if (sourcesSearching.value) return`
-        // 守卫直接短路 —— 不打日志,也不重复搜索。
-        // 所以判断预热是否生效**不能只看这个前缀**,还要看 [startSourceSearch] 的
-        // `echo-source-search start` 时间戳相对 `echo-detail-watchdog-arm` 的差值。
-        //
-        // 2026-10-12 起本预热是**所有**进入详情路径的统一启动点:
-        // [applyTarget] 原先无条件 `startSourceSearch()`,已改为调本方法 ——
-        // 于是"点卡片就惊动几百个源"变成"1.5s 内详情就绪则根本不搜"。
-        // 详见 [applyTarget] 处的说明。
-        LOG.i("echo-source-prewarm fire")
-        ensureSourceSearchRunning()
+        // 这里**不发**聚合搜索:能起播就不自动搜全站(2026-10-14 定案)。
+        // 只有当前源交不出内容时,才由失败路径按需启动 —— 入口清单见 [applyTarget]。
     }
 
     /**
@@ -1768,8 +1716,6 @@ class DetailViewModel : ViewModel() {
                     return@launch
                 }
                 pageState.value = PageState.Ready
-                // 当前源已取到:聚合搜索预热没有存在意义了,直接撤掉(省一整轮上百站搜索)
-                mainHandler.removeCallbacks(sourceSearchPrewarm)
                 bumpRevision()
                 // 仅在已有多个同名源且当前源有多条线路时预检;单源/单线路直接起播,不等待。
                 // 传 detailBuildToken 快照:探测期间换了片的话,快照与当前值就不相等了。
@@ -1777,6 +1723,21 @@ class DetailViewModel : ViewModel() {
                 requestPlay()
                 if (playingList.isNullOrEmpty()) {
                     startFallbackIfNeeded(auto = true)
+                } else {
+                    // 缓存秒灌(2026-10-17):当前源能播 ⇒ 先把**上次搜到的备用源**灌进列表。
+                    //
+                    // 为什么挂在这里:[seedCandidatesFromCache] 此前只有 [startSourceSearch] 里
+                    // 一个调用点,于是"详情能播、不搜"这条路上它永远不执行 —— 缓存明明在硬盘上,
+                    // 却没人去读,用户看到的列表照样是空的。
+                    //
+                    // 为什么不放在 requestPlay() 之前:它要读 MMKV + Gson 解析(最多 20 个词条 ×
+                    // 每源 30 条),压在起播前面会让点卡片多卡一下。播放永远优先。
+                    //
+                    // 零网络:只读本地缓存。失效由 [SearchResultCache] 的 24h TTL 兜底,
+                    // 可疑源由 publishSourceChips 里的 sourceBoard 标记兜底。
+                    // 文案/按钮不用改:SourceSearchStatus.line 的 `found > 0` 分支优先于
+                    // searchedOnce,列表有源就报"已找到 N 个来源"、按钮写「搜源」。
+                    seedCandidatesFromCache(searchTitle)
                 }
             }
         } else {
@@ -4447,13 +4408,6 @@ class DetailViewModel : ViewModel() {
         /** 候选站详情取超时:候选站本身慢就赶紧轮到下一个,别让用户盯着等 */
         private const val DETAIL_FALLBACK_DETAIL_TIMEOUT_MS = 3000L
         /**
-         * 首集无记忆时的真实画质探测预算(毫秒)。放在 `pageState=Ready` 之后执行,UI 已渲染,
-         * 不会白屏;超时就按记忆/站点原序起播,探测是锦上添花,绝不能拖住起播。
-         */
-        private const val FIRST_WATCH_PROBE_BUDGET_MS = 700L
-        /** 探测线路数上限:每条一次 ≤256KB 请求,3 条最坏 768KB */
-        private const val FIRST_WATCH_PROBE_LINES = 3
-        /**
          * 打开线路面板时按需探测的条数上限（爬虫型线路，每条解析 1~3 秒、串行）。
          * 面板一屏能看到的线路本就有限，再多探的只是"看不到的那几条"，没有收益却持续占带宽。
          */
@@ -4475,15 +4429,6 @@ class DetailViewModel : ViewModel() {
          * 与"首屏一批 24 源"配套(12 并发 × 8s ⇒ 最坏 16s),见 [onLoadingBudgetExpired]。
          */
         private const val LOADING_BUDGET_MS = 15_000L
-        /**
-         * 详情发出后延迟多久预热聚合搜索(毫秒)。
-         *
-         * <p>取值权衡:必须**短于**详情看门狗的最短时限(20s,[DetailLoadWatchdog.MIN_TIMEOUT_MS]),
-         * 否则"当前源没这部剧"时兜底仍要等看门狗先判失败,等于没优化;又要**足够长**,
-         * 让"当前源正常返回"的绝大多数点击在预热触发前就已经 Ready,搜索压根不用发。
-         * 1.5s 的依据:站内有本地命中缓存的详情多在几百毫秒内回,1.5s 已是宽松余量。
-         */
-        private const val SOURCE_SEARCH_PREWARM_DELAY_MS = 1500L
 
         // i18n: keep —— 源侧"没有数据"的哨兵值;误翻会把空结果判成源报错,详情页提示后自动关闭
         private const val SOURCE_EMPTY_MSG = "数据列表"

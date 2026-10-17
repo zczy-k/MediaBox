@@ -45,7 +45,7 @@ public class LOG {
      *   <li>{@code echo-detail} —— 详情加载与看门狗(卡在哪一步)</li>
      *   <li>{@code echo-searchplan} —— 搜索批次规划与收尾统计(每批多少源/命中/失败/超时/最慢源耗时)</li>
      *   <li>{@code SubtitleCacheJanitor} —— 字幕缓存 LRU 裁剪结果</li>
-     *   <li>{@code echo-source} / {@code source-prewarm} —— 聚合搜索预热与候选数</li>
+     *   <li>{@code echo-source} —— 聚合搜索候选与换源(详情页预热已于 2026-10-14 取消)</li>
      * </ul>
      */
     private static final String[] FILE_LOG_PREFIXES = FILE_LOG
@@ -62,8 +62,8 @@ public class LOG {
             // 非 echo 前缀的三个家族(它们的名字是历史决定的,兜底覆盖不到)
             "dlna-cast", "boot-guard", "native-lib-repair",
             "echo-preload", "echo-setDataSource", "echo-play-cache", "echo-kv", "echo-progress", "echo-exo", "echo-music", "echo-lyric", "echo-sub", "echo-danmu", "echo-p2", "echo-p3", "echo-p4", "echo-p5", "clearCache", "echo--jar", "echo-local-src", "echo-setTrack", "echo-autoRetry", "echo-player", "echo-switch", "echo-goPlayUrl", "echo-history", "echo-render", "echo-picture", "echo-anime4k", "echo--list", "echo--getList", "echo--parse", "echo--getSort", "echo--sort", "echo-proxy",
-            // ↓ 诊断包(v1.0.24 起):画质优选 / 详情看门狗 / 换源预热 / 缓存裁剪
-            "echo-quality", "echo-detail", "echo-source", "source-prewarm", "SubtitleCacheJanitor",
+            // ↓ 诊断包(v1.0.24 起):画质优选 / 详情看门狗 / 聚合换源 / 缓存裁剪
+            "echo-quality", "echo-detail", "echo-source", "SubtitleCacheJanitor",
             // ↓ v1.0.26:线路实测画质探测(诊断「线路N」后面一直不显示分辨率)
             // ↓ v1.0.30:echo-line-heights 是**读取侧**,与写入侧的 echo-quality write-key 配对,
             //   两侧同看才能判断"记忆写进去了却读不回来"这类键不匹配问题。
