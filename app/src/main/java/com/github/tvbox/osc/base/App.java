@@ -4,6 +4,10 @@ import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
 
+import androidx.lifecycle.DefaultLifecycleObserver;
+import androidx.lifecycle.LifecycleOwner;
+import androidx.lifecycle.ProcessLifecycleOwner;
+
 import com.github.tvbox.osc.bean.VodInfo;
 import com.github.tvbox.osc.data.AppDataManager;
 import com.github.tvbox.osc.server.ControlManager;
@@ -49,6 +53,28 @@ public class App extends Application {
         super.attachBaseContext(LanguageManager.INSTANCE.wrap(base));
     }
 
+    /**
+     * 进程级前后台判定(2026-10-17):App 整体退到后台就把正在播的内容**暂停**,页面与内核都留着 ——
+     * 用户再进来仍停在播放界面,由他自己点继续。
+     *
+     * <p>为什么不用 Activity 的 onPause:那已经是现有暂停动作,但它只在页面还活着时管用。系统一旦
+     * 在后台回收播放页,它就近距离变成 onDestroy → detach,而 detach 过去会出现"停一下又自己播回来"
+     * (真机 2026-10-17 12:27:21 退出 → 12:27:41 出声)。进程级这条先按下暂停,销毁路径再兜一次。
+     *
+     * <p>ProcessLifecycleOwner 的 onStop 有约 700ms 去抖:详情页 → 音乐页/直播页这类页面间跳转
+     * 不会被当成"退到后台",后台出声的既有语义(纯音频)因此不受影响。
+     */
+    private void installBackgroundPause() {
+        ProcessLifecycleOwner.get().getLifecycle().addObserver(new DefaultLifecycleObserver() {
+            @Override
+            public void onStop(LifecycleOwner owner) {
+                com.github.tvbox.osc.player.PlaybackEngine engine =
+                        com.github.tvbox.osc.player.PlaybackService.peek();
+                if (engine != null) engine.pauseForBackground();
+            }
+        });
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -64,6 +90,8 @@ public class App extends Application {
         // 启动看门狗(2026-09-21):装崩溃记录器。必须最早装 —— 第三方爬虫可能在
         // Application.onCreate 之后的任意时刻于自己的线程上闪退,晚了就记不到。
         com.github.tvbox.osc.util.BootGuard.install();
+        // 进程级前后台判定(2026-10-17):App 退到桌面即暂停播放,页面与内核都留着,回来由用户手动继续。
+        installBackgroundPause();
         // 2026-10-15:把留在 cache 里的下载产物(爬虫 jar、字幕落盘、导入字幕副本)搬到 files/durable。
         // 必须**同步**且赶在任何源加载之前:JarLoader 一开始下载就会在旧目录建新文件,搬晚了等于白搬;
         // 而同分区 rename 只改目录项(几毫秒),不值得为它开一条线程再去讲究时序。

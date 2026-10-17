@@ -257,6 +257,9 @@ dependencies {
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
+    // 进程级前后台判定(2026-10-17):退到桌面要暂停播放,靠单个 Activity 的生命周期不可靠
+    // (低内存或 ROM 策略会在后台把播放页销毁,那时走的是 detach → 曾经的"退出后自动重播"老路)
+    implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.compose.material3)

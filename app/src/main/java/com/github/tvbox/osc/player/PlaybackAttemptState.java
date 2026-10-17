@@ -171,6 +171,16 @@ final class PlaybackAttemptState {
     boolean audioPlayback;
 
     /**
+     * 播放页已摘除(见 {@code PlaybackEngine.detach}):本片这一轮**作废**,任何自动路径
+     * (质量看门狗换线、断网重连重试、音频焦点恢复、已排队的取流结果)都不许再把它拉起来播。
+     *
+     * <p>为什么不能靠 {@code HeadlessView.isPageAlive()}:那个判据的语义是"还存在可服务的宿主"
+     * (退页后仍要维护媒体会话,所以恒为 true),它天生挡不住"没人看却在后台自动重播"。
+     * 真机 2026-10-17 12:27:21 detach → 12:27:41 旧片 goPlayUrl 就是从这条缝里出去的。
+     */
+    boolean pageExited;
+
+    /**
      * 本次会话确认过"纯音频"的粘滞标记:轨道信息读不到时不得让退后台判定翻转成影视;
      * 不得用于封面判定(封面须实时读取,否则影视被压成海报);复位点仅内容边界(见 beginNewPlay/startSession)。
      */
@@ -342,6 +352,16 @@ final class PlaybackAttemptState {
         boolean reuse = switchIntent == SwitchIntent.REUSE;
         switchIntent = SwitchIntent.NONE;
         return reuse;
+    }
+
+    /** 播放页摘除:本轮作废(见 {@link #pageExited} 的注释) */
+    void exitedForPage() {
+        pageExited = true;
+    }
+
+    /** 播放页重新挂载:解除作废 */
+    void reenteredPage() {
+        pageExited = false;
     }
 
     /** 清会话标记(退出页面/起播失败/页面销毁三处同集) */

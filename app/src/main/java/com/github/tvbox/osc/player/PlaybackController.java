@@ -192,6 +192,8 @@ public class PlaybackController {
      * 取流结果是否已过期(切集/换线/换源后,旧源在途结果不得拉起播放)。
      */
     public boolean isStalePlayResult(JSONObject info) {
+        // 页面已摘除 ⇒ 本片这一轮的在途结果一律算过期,不再区分它是哪一集哪一条线
+        if (st.pageExited) return true;
         if (vod == null || vod.seriesMap == null || TextUtils.isEmpty(progressKey)) return false;
         String resultKey = info.optString("proKey", "");
         if (!TextUtils.isEmpty(resultKey) && !progressKey.equals(resultKey)) return true;
@@ -1002,15 +1004,30 @@ public class PlaybackController {
     // 实现见 PlaybackRetryDelegate
 
     public boolean retryAfterStartedError() {
+        if (blockedByPageExit("after-started-error")) return false;
         return retry.retryAfterStartedError();
     }
 
     public boolean autoRetry() {
+        if (blockedByPageExit("auto-retry")) return false;
         return retry.autoRetry();
     }
 
     public boolean tryNextLineIfEnabled() {
+        if (blockedByPageExit("next-line-if-enabled")) return false;
         return retry.tryNextLineIfEnabled();
+    }
+
+    /**
+     * 自动重试路径的统一守卫:播放页已摘除 ⇒ 不再为这一轮做任何换线/换源/重播。
+     *
+     * <p>用户手动动作(点重播、点换线)走的是别的入口,那时页面是挂着的、{@code pageExited} 已随
+     * attach 解除,不会被这道闸挡住。
+     */
+    private boolean blockedByPageExit(String from) {
+        if (!st.pageExited) return false;
+        LOG.i("echo-autoRetry skip reason=page-exited from=" + from);
+        return true;
     }
 
     public boolean tryNextLine() {
@@ -1481,6 +1498,11 @@ public class PlaybackController {
             return;
         }
         if (view == null || !view.isPageAlive()) return;
+        // 页面已摘除 ⇒ 这一轮作废,谁也不许在无人观看时把它播起来(真机 2026-10-17:退出 20 秒后旧片自己响)
+        if (st.pageExited) {
+            LOG.i("echo-ignore goPlayUrl after page exit");
+            return;
+        }
         // 地址定稿、即将交给内核 —— 从这里往后的等待才真的只可能是"这条流出不出画面"。
         st.stageKernelAt = android.os.SystemClock.elapsedRealtime();
         // 调用方与解析回调同帧或同线程 ⇒ 本地址归属当前轮,在排队前签发代际(见 playUrlGeneration 注释)
@@ -1489,6 +1511,12 @@ public class PlaybackController {
         view.runOnUi(new Runnable() {
             @Override
             public void run() {
+                // 排队期间页面被摘除 ⇒ 已投递到主线程队列的这一发同样不许落地(见 pageExited)
+                if (st.pageExited) {
+                    st.stageKernelAt = 0L;
+                    LOG.i("echo-ignore goPlayUrl queued before page exit");
+                    return;
+                }
                 if (st.switchStopPending) {
                     // 换源点击即停后,已排队的取流结果(含嗅探/解析回调)不得再拉起播放
                     // ⚠️ 必须把"地址已交给内核"这一刻撤掉:它在 runOnUi 之前就置了,而这个地址
@@ -1617,6 +1645,16 @@ public class PlaybackController {
         quality.stop();
     }
 
+    /** 播放页重新挂载:解除"本片已退出"的作废(见 {@link PlaybackAttemptState#pageExited}) */
+    public void onPageReentered() {
+        st.reenteredPage();
+    }
+
+    /** 本轮是否已因播放页摘除而作废 —— 与页面无关的重试路径(断网重连)动手前先问它 */
+    public boolean isPageExited() {
+        return st.pageExited;
+    }
+
     /**
      * **内核释放边界**:播放器里已经没有这一集了 —— "这一集起播过"这个事实和看门狗的采样都要跟着作废。
      *
@@ -1627,9 +1665,14 @@ public class PlaybackController {
      * 旧片《吉伊卡哇》的声音在 6 秒后自己回来了。
      */
     public void onKernelReleased() {
+        stopQualityAndInvalidateStarted("kernel-released");
+    }
+
+    /** 停质量看门狗 + 作废"这一集起播过":两条边界(内核释放、播放页摘除)共用同一动作 */
+    private void stopQualityAndInvalidateStarted(String reason) {
         quality.stop();
         st.playbackStarted = false;
-        LOG.i("echo-quality stop reason=kernel-released");
+        LOG.i("echo-quality stop reason=" + reason);
     }
 
     /** 切集/换线/换源/重播:作废在途预解析与预载数据(稳定播放后重新评估) */
@@ -1739,6 +1782,17 @@ public class PlaybackController {
 
     public void stopPlaybackForPageExit() {
         st.clearSessionFlags();
+        // 页面退出 = 这一轮彻底作废:此后一切自动重播路径都不该再把本片拉起来(见 pageExited 注释)
+        st.exitedForPage();
+        // ⚠️ 停表与作废"起播过"必须在这里做一次,不能只挂在 releasePlayer 的 onKernelReleased 上:
+        // detach 的顺序是 saveCurrentProgress(→ markPlaybackStarted,把标记重新点亮)→ pause
+        // → stopPlaybackHard(同步回调 STATE_IDLE)→ 本方法。漏掉这一步,那条 IDLE 会被质量看门狗
+        // 读成"起播后静默卡死",15 秒后换线重播。真机 2026-10-17 四次 detach 后 20.1 秒出声即此。
+        stopQualityAndInvalidateStarted("page-exit");
+        // 页面退出即"没有正在播的源":在途结果与超时都要作废
+        cancelPlayTimeout();
+        cancelResolvePlayUrlTimeout();
+        stopParse();
         // 与 onHostDestroy 同属会话边界:一并作废"播完待撤会话"的待判消息
         timeouts.cancelPendingCompletionDrop();
         // 页面退出 = 内容走了:上一次换线/换源记下、却没等到起播的位置就此作废(见 clearPendingInherit)

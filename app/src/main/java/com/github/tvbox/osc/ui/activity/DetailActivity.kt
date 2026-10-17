@@ -308,7 +308,12 @@ class DetailActivity : BaseActivity(), PageHost {
         playContainer?.hostResume()
         syncEpisodeAfterMusicPage()
         val container = playContainer
-        if (container != null && container.hasClaimedPlayback() && !container.ownsEngineContent()) {
+        // 刚从后台暂停态回到前台 ⇒ 不要自动发起播放,停在暂停态让用户自己点继续(2026-10-17 口径)。
+        // 少了这一条,容器不自动 resume 也没用:下面这支会换个入口把整条取流起播重新跑一遍。
+        val wasPausedByBackground = container?.consumeResumedFromPause() == true
+        if (container != null && !wasPausedByBackground
+            && container.hasClaimedPlayback() && !container.ownsEngineContent()
+        ) {
             vm.requestPlay()
         }
     }

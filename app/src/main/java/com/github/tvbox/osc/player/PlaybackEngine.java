@@ -141,6 +141,11 @@ public final class PlaybackEngine implements PlaybackHostApi {
         if (event == null || event.type != com.github.tvbox.osc.event.RefreshEvent.TYPE_NETWORK_RESTORED) return;
         if (released) return;
         try {
+            // 页面已摘除 ⇒ 这一轮作废,断网重连也不许把它在后台捞回来播(真机:回首页 20 秒后出声)
+            if (controller.isPageExited()) {
+                LOG.i(TAG + " net-restored: page already exited, skip");
+                return;
+            }
             // 只在"当前这一集没能正常播"时动作:没有起播过(卡在取流/起播失败)或处于错误态。
             boolean playing = videoView != null && videoView.isPlaying();
             boolean started = controller.isPlaybackStarted();
@@ -462,9 +467,31 @@ public final class PlaybackEngine implements PlaybackHostApi {
         if (!videoView.isPlaying()) videoView.coverVideoFrame();
         videoView.attachContainerTo(page.renderSlot());
         controller.setViewBridge(page.viewBridge());
+        // 有人把这一轮接回去了 ⇒ 解除"页面已摘除"的作废(见 PlaybackAttemptState.pageExited)
+        controller.onPageReentered();
         // 有人接手了,撤销空闲释放排期
         cancelIdleRelease();
         LOG.i(TAG + " attach page=" + page.hashCode() + " key=" + (session == null ? "-" : session.playbackKey()));
+    }
+
+    /**
+     * 整个 App 退到后台(回桌面 / 切去别的 App):**暂停播放,页面留着、内核也留着** ——
+     * 用户再进来时仍停在播放界面,由他自己点"继续"(2026-10-17 口径)。
+     *
+     * <p>为什么挂在进程生命周期而不是 Activity 的 onPause:onPause 其实也在做同样的事,但系统一旦
+     * 在后台把播放页回收掉,它就近距离变成 onDestroy → detach,而 detach 过去会"停一下又自己播回来"
+     * (真机 12:27:21 退出 → 12:27:41 出声)。进程级判定先按下暂停,后续销毁也走不到"自动重播"。
+     *
+     * <p>三种情形不参与:直播(直播页有自己的状态机)、已确认的纯音频(音乐本来就允许后台出声)、
+     * 页面已摘除(detach 已经管过停播与释放)。
+     */
+    public void pauseForBackground() {
+        if (released || liveMode) return;
+        if (attachedPage() == null) return;
+        if (controller.isConfirmedAudioOnly()) return;
+        if (!videoView.isPlaying()) return;
+        LOG.i(TAG + " app background: pause playback (page kept, kernel kept)");
+        videoView.pause();
     }
 
     /**
@@ -526,10 +553,18 @@ public final class PlaybackEngine implements PlaybackHostApi {
         videoView.setDanmuView(null);
         videoView.detachContainerFromHost();
         controller.setViewBridge(headlessView);
-        // 页面已摘、播放已停,但实例仍留着(跨页复用的收益所在)—— 给它一个释放上界:
-        // 到点还没人来取就释放内核(见 IDLE_RELEASE_DELAY_MS)
-        scheduleIdleRelease();
         LOG.i(TAG + (keepPlayback ? " detach for handover page=" : " detach page=") + page.hashCode());
+        if (keepPlayback) {
+            // 交接给下一个页面(详情页 → 音乐页):不停播,只给实例一个释放上界(见 IDLE_RELEASE_DELAY_MS)
+            scheduleIdleRelease();
+        } else {
+            // **退出即释放**(2026-10-17 口径):不再留 60 秒跨页复用窗口。真机四次 detach 后整 20.1 秒
+            // 旧片在后台自己播起来(12:27:21 detach → 12:27:41 goPlayUrl),窗口只要开着,质量看门狗、
+            // 断网重连、音频焦点恢复就都拿着本片地址有机会重播,还会把 wake/wifi 锁和通知重新申请回去。
+            // 释放掉的是"属于这一片的东西";预热开着时立刻补一个空实例,秒开收益不丢。
+            releasePlayer();
+            if (prewarmEnabled()) prewarmKernel();
+        }
     }
 
     /**
@@ -749,6 +784,13 @@ public final class PlaybackEngine implements PlaybackHostApi {
 
     @Override
     public void resumeFromMediaSession() {
+        // 播放页已摘除 ⇒ 这一轮作废:通知栏/耳机键都不该把它在后台捞回来播(见 PlaybackAttemptState.pageExited)。
+        // 这是唯一一条不走 goPlayUrl 的起播入口(IDLE 态的 start() 会用残留地址重建内核),所以单独设闸。
+        // 音乐播放页挂着时 pageExited 为 false,后台听歌按通知栏继续不受影响。
+        if (controller.isPageExited()) {
+            LOG.i(TAG + " resume from media session skipped: page already exited");
+            return;
+        }
         videoView.start();
         controller.updateMusicSession();
     }

@@ -191,16 +191,25 @@ public class PlayContainer extends FrameLayout implements CustomAdapt, PlaybackH
     private boolean lifecyclePaused;
     private String ownedPlaybackKey;
 
+    /** 本次回到前台是否伴随"刚从离开时的暂停态恢复"(读一次即清,见 {@link #consumeResumedFromPause}) */
+    private boolean resumedFromPause;
+
     public void hostResume() {
         exitingPreview = false;
         if (mController != null) mController.setLifecyclePaused(false);
         reattachIfOwnedByOther();
-        if (mVideoView != null && lifecyclePaused) {
-            lifecyclePaused = false;
-            if (ownsEngineContent()) {
-                mVideoView.resume();
-            }
-        }
+        // 回前台**不再自动续播**(2026-10-17 口径):离开时是暂停态,回来就停在暂停态,由用户自己点播放。
+        // 原来这里无条件 resume(),表现为"一切回 App 声音就自己响回来"。这次"刚从暂停态回来"要留给
+        // 页面判断 —— 页面若照旧自动发起播放,等于换个入口把声音又捞回来了。
+        resumedFromPause = lifecyclePaused;
+        lifecyclePaused = false;
+    }
+
+    /** 取走并复位"刚从后台暂停态回到前台"这个事实(仅 hostResume 之后同帧读取有意义) */
+    public boolean consumeResumedFromPause() {
+        boolean paused = resumedFromPause;
+        resumedFromPause = false;
+        return paused;
     }
 
     private void reattachIfOwnedByOther() {
