@@ -90,21 +90,66 @@ class ExpandPoolPolicyTest {
 
     @Test
     fun `收口且0命中且有更多源才扩池`() {
-        assertTrue(ExpandPoolPolicy.shouldExpand(hitCount = 0, roundDone = true, curSize = 120, total = 360))
+        assertTrue(
+            ExpandPoolPolicy.shouldExpand(
+                hitCount = 0, roundDone = true, curSize = 120, total = 360, round = 1
+            )
+        )
     }
 
     @Test
     fun `未收口不扩`() {
-        assertFalse(ExpandPoolPolicy.shouldExpand(hitCount = 0, roundDone = false, curSize = 120, total = 360))
+        assertFalse(
+            ExpandPoolPolicy.shouldExpand(
+                hitCount = 0, roundDone = false, curSize = 120, total = 360, round = 1
+            )
+        )
     }
 
     @Test
     fun `已有命中不扩`() {
-        assertFalse(ExpandPoolPolicy.shouldExpand(hitCount = 3, roundDone = true, curSize = 120, total = 360))
+        assertFalse(
+            ExpandPoolPolicy.shouldExpand(
+                hitCount = 3, roundDone = true, curSize = 120, total = 360, round = 1
+            )
+        )
     }
 
     @Test
     fun `已到全量不扩`() {
-        assertFalse(ExpandPoolPolicy.shouldExpand(hitCount = 0, roundDone = true, curSize = 360, total = 360))
+        assertFalse(
+            ExpandPoolPolicy.shouldExpand(
+                hitCount = 0, roundDone = true, curSize = 360, total = 360, round = 1
+            )
+        )
+    }
+
+    /**
+     * 自动链的停线轮(真机《鲸口脱险》):第 2 轮跑完仍 0 命中 ⇒ 不再往 2/3、全量扩,
+     * 让用户尽快拿到"暂时没找到其他源"这个答复,而不是陪同类站再跑几分钟。
+     * 手动按「搜源」不走这条判据(调用方用 manualSwitchActive 短路),仍可问全量。
+     */
+    @Test
+    fun `自动链跑完两轮就收口`() {
+        assertFalse(
+            ExpandPoolPolicy.shouldExpand(
+                hitCount = 0, roundDone = true, curSize = 180, total = 360, round = 2
+            )
+        )
+        assertFalse(
+            ExpandPoolPolicy.shouldExpand(
+                hitCount = 0, roundDone = true, curSize = 240, total = 360, round = 3
+            )
+        )
+    }
+
+    /** 非法/缺失轮次按第一轮处理,不会因为 round 被写成 0 就永远不扩 */
+    @Test
+    fun `轮次为0时按第一轮`() {
+        assertTrue(
+            ExpandPoolPolicy.shouldExpand(
+                hitCount = 0, roundDone = true, curSize = 120, total = 360, round = 0
+            )
+        )
     }
 }

@@ -63,25 +63,40 @@ object ExpandPoolPolicy {
     fun isFinalRound(round: Int): Boolean = maxOf(round, FIRST_ROUND) >= FINAL_ROUND
 
     /**
+     * **自动链**最多扩到第几轮(2026-10-17 真机《鲸口脱险》)。
+     *
+     * <p>此前自动链会一路扩到全量(第 4 轮)才收口:真机上它问完 105 个源 0 命中、又问 137 个仍 0 命中,
+     * 还在继续往 183、315 走 —— 而那几分钟里用户看到的就是一句"正在找源"。对照正规片的记录
+     * (《狮子王》首轮 hit=25、《镖人》hit=4、《给阿嬷的情书》hit=4),**能找到的片几乎都在前两波就命中**;
+     * 前两波(累计约半个池子)全 0 命中,剩下那些同类站给出的答案大概率还是 0。
+     * 所以自动链停在第 2 轮收口,把"没找到"这个答复提前给用户;
+     * 用户主动按「搜源」时**不受这条限制**(调用方走 manualSwitchActive 那条路),想问全量就问全量。
+     */
+    const val AUTO_EXPAND_MAX_ROUND = 2
+
+    /**
      * 本轮结束后是否应进入下一轮扩池(纯判据)。
      *
-     * <p>条件:**本轮已全部收口** 且 **0 命中** 且 **还有更多源没搜**(未到全量)。
-     * 三者缺一不可:
+     * <p>条件:**本轮已全部收口** 且 **0 命中** 且 **还有更多源没搜** 且 **自动链还没停线**。
+     * 前三个缺一不可:
      * <ul>
      *   <li>未收口 ⇒ 还有源在跑,别急着扩(会与在途结果打架);</li>
      *   <li>已有命中 ⇒ 目的达成,不必扩(冷门片才需要扩);</li>
-     *   <li>已到全量 ⇒ 没得扩了,由 [isFinalRound] 走"未找到"终态。</li>
+     *   <li>已到全量 ⇒ 没得扩了,由 [isFinalRound] 走"未找到"终态;</li>
+     *   <li>已到 [AUTO_EXPAND_MAX_ROUND] ⇒ 自动链收口,别再让用户干等剩下的同类站。</li>
      * </ul>
      *
-     * @param hitCount   本轮候选命中数(详情页 fallbackCandidates 里属于本轮的条目数)
+     * @param hitCount   本轮**新增**命中数(不能传累计候选,见调用处注释)
      * @param roundDone  本轮是否已全部收口(搜索 all-done)
      * @param curSize    本轮搜的源数(累计)
      * @param total      源总数
+     * @param round      刚跑完的是第几轮(自动停线判据)
      */
     @JvmStatic
-    fun shouldExpand(hitCount: Int, roundDone: Boolean, curSize: Int, total: Int): Boolean {
+    fun shouldExpand(hitCount: Int, roundDone: Boolean, curSize: Int, total: Int, round: Int): Boolean {
         if (!roundDone) return false
         if (hitCount > 0) return false
-        return curSize < total
+        if (curSize >= total) return false
+        return maxOf(round, FIRST_ROUND) < AUTO_EXPAND_MAX_ROUND
     }
 }

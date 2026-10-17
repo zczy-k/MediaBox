@@ -1518,12 +1518,33 @@ mController.toggleControlBar();
         hideTipOnUiThread();
     }
 
-    /** 同页换片:停掉当前内容并立即落盘,免得新片加载期间旧片声画残留;不在播本页内容时不动(别误停音乐页/直播) */
-    public void stopForContentSwitch() {
+    /**
+     * 同页换片:把上一部**彻底**停掉并立即落盘(内核、解码器、缓冲、CDN 连接一起撤)。
+     *
+     * <p>2026-10-17 判据改写(真机《鲸口脱险》):这一句原来是 `!ownsEngineContent() → return`,
+     * 而"本页是否拥有引擎内容"要本页走过 setData 才成立 —— 资料卡型入口(js_douban 这类只有海报、
+     * 没有线路的卡片)永远不会有自己的会话,于是守卫直接放行:上一部继续播、继续缓冲、继续给自己记
+     * PLAY_SUCCESS,而新片同时在拿三百个源做全站搜索 —— 两边抢带宽、线程与内存。
+     * 现在的判据换成一句话:<b>引擎里那份内容是不是本页接下来要播的那部片</b>。
+     * 不是(包括"本页还没有任何可播内容")就释放;同一部片才留着内核。
+     */
+    public void stopForContentSwitch(String incomingKey) {
         // 内容要走了:上一次换线/换源记下却没等到起播的位置必须作废,否则会被新片的起播错当成"接着看"
         // (放在归属判定**之前**:归属不属本页不代表那份脏数据就该留着)
         if (scheduler != null) scheduler.clearPendingInherit();
-        if (mVideoView == null || !ownsEngineContent()) return;
+        if (mVideoView == null) return;
+        // 直播页 / 已交给音乐页接管的引擎不归本页处置(原来的"本页是否拥有"就是拿来挡这两种情形,
+        // 但它顺手把"本页还没有内容"也挡了 —— 那恰恰是最该停的一种)
+        if (engine != null && engine.isLiveMode()) return;
+        if (handedOver) return;
+        String started = scheduler == null ? null : scheduler.startedPlaybackKey();
+        int state = mVideoView.getCurrentPlayState();
+        // 空内核(预热着、或已被 stopPlaybackHard 停死)没什么可停:留着它才是收益,释放反而白重建一次
+        if (state == VideoView.STATE_IDLE && TextUtils.isEmpty(started)) return;
+        if (isSameFilm(started, incomingKey)) {
+            LOG.i("echo-p2 stopForContentSwitch keep same-film key=" + started);
+            return;
+        }
         // 在途的解析/取流/超时属上一部:新片会话边界虽也会清,但新片详情回来之前它们足以把旧片再拉起来
         scheduler.cancelInFlight();
         mVideoView.pause();
@@ -1533,9 +1554,16 @@ mController.toggleControlBar();
         // 2026-10-13(P1):换片必须把上一部的内核也作废 —— stopPlaybackKeepPlayer 只把状态置 PAUSED,
         // 内核里那份画面/声音还在。新片详情回来之前有 1~3s 的窗口,这期间 playWhenReady 仍为 true,
         // 旧内容会自己响起来("上一部声音"正是这条路径漏的)。释放后下一起播必走 REBUILD,
-        // 既不会带旧 key 也不会继承旧进度。同片换源/换线/换集不走本方法,不受影响。
+        // 既不会带旧 key 也不会继承旧进度。
         releasePlayerKernel();
-        LOG.i("echo-p2 stopForContentSwitch released kernel to drop previous vod");
+        LOG.i("echo-p2 stopForContentSwitch released kernel prev=" + started
+                + " incoming=" + incomingKey + " state=" + state);
+    }
+
+    /** 片级归属:播放归属键形如 `源|片id|线路|集号`,前两段相同就是同一部片(线路/集号不参与) */
+    private static boolean isSameFilm(String startedKey, String incomingKey) {
+        if (TextUtils.isEmpty(startedKey) || TextUtils.isEmpty(incomingKey)) return false;
+        return (startedKey + "|").startsWith(incomingKey + "|");
     }
                 public MyVideoView getPlayer() {
         return mVideoView;

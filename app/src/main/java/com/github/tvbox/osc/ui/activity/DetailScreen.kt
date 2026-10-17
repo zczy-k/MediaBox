@@ -85,7 +85,7 @@ fun DetailScreen(activity: DetailActivity, vm: DetailViewModel) {
     LaunchedEffect(container, vm) {
         vm.playbackCommands.collect { command ->
             when (command) {
-                is PlaybackCommand.StopForContentSwitch -> container.stopForContentSwitch()
+                is PlaybackCommand.StopForContentSwitch -> container.stopForContentSwitch(command.incomingKey)
                 is PlaybackCommand.StopForSourceSwitch -> container.stopForSourceSwitch(command.tip)
                 is PlaybackCommand.ClearSourceSwitchTip -> container.clearSourceSwitchTip()
                 is PlaybackCommand.SetEpisodeSheetOpen -> container.setEpisodeSheetOpen(command.open)
@@ -257,7 +257,8 @@ fun DetailScreen(activity: DetailActivity, vm: DetailViewModel) {
                         }
                     }
                     // 换源板块常驻:等待期间照常显示已发现的源(为空时它自己整块不渲染)
-                    SourceSection(vm, revision = revision)
+                    // statusInline=false —— 上面已经说过一次"正在找源…",这里不重复(真机截图拍到两处同文)
+                    SourceSection(vm, revision = revision, statusInline = false)
                     }
                 }
 

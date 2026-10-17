@@ -3,8 +3,15 @@ package com.github.tvbox.osc.ui.activity
 /** 详情页 → 播放层的下行指令(UI 收集后投影到容器,见 `DetailScreen`;V2 前是 VM 直调容器) */
 sealed interface PlaybackCommand {
 
-    /** 同页换片:停掉当前内容 */
-    data object StopForContentSwitch : PlaybackCommand
+    /**
+     * 同页换片:把上一部**彻底**停掉（内核、解码器、缓冲、socket 一起撤）。
+     *
+     * @param incomingKey 本页接下来要播的那部片，形如 `sourceKey|vodId`（线路/集号还未知，故只到片级）。
+     *   容器用它判"引擎里那份是不是同一部"：同一部（返回列表再进同一片）才允许留着内核，
+     *   其余一律释放 —— 包括"本页还没有任何可播内容"（资料卡/还在搜源）这种以前会被
+     *   `ownsEngineContent()` 误判成"本页无权停"、结果旧片继续播继续吃带宽的情形。
+     */
+    data class StopForContentSwitch(val incomingKey: String?) : PlaybackCommand
 
     /** 换源点击即停(tip 在 VM 侧取文案:指令在 VM 创建,取不到资源) */
     data class StopForSourceSwitch(val tip: String) : PlaybackCommand

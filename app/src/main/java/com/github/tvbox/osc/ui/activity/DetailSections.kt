@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -92,7 +93,7 @@ internal fun sourceStatusText(searchedOnce: Boolean, searching: Boolean, asked: 
  * 提示既刷屏又泄露身份(与 [DetailViewModel.stopPlaybackForSwitch] 静默换源同一口径)。
  */
 @Composable
-internal fun SourceSection(vm: DetailViewModel, revision: Int) {
+internal fun SourceSection(vm: DetailViewModel, revision: Int, statusInline: Boolean = true) {
     @Suppress("UNUSED_EXPRESSION") revision
     val sourceChips by vm.sourceChips.collectAsStateWithLifecycle()
     val sourcesSearching by vm.sourcesSearching.collectAsStateWithLifecycle()
@@ -152,22 +153,28 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int) {
                     )
                 )
             }
-            Text(
-                // 措辞判据在 [SourceSearchStatus]:报"问到第几个 / 找到几个",**不报 x/总数** ——
-                // 自动那轮只问权重最高的 1/3、命中就收口,写全池 323 就是兑现不了的承诺
-                // (真机 v1.1.47 停在 `108/323`,用户读成"还剩 215 个没搜却停了")。
-                text = sourceStatusText(
-                    searchedOnce = searchedOnce,
-                    searching = sourcesSearching,
-                    asked = searchProgress?.done ?: 0,
-                    found = totalCandidates,
-                ),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(start = 4.dp),
-            )
+            if (statusInline) {
+                Text(
+                    // 措辞判据在 [SourceSearchStatus]:报"问到第几个 / 找到几个",**不报 x/总数** ——
+                    // 自动那轮只问权重最高的 1/3、命中就收口,写全池 323 就是兑现不了的承诺
+                    // (真机 v1.1.47 停在 `108/323`,用户读成"还剩 215 个没搜却停了")。
+                    text = sourceStatusText(
+                        searchedOnce = searchedOnce,
+                        searching = sourcesSearching,
+                        asked = searchProgress?.done ?: 0,
+                        found = totalCandidates,
+                    ),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(start = 4.dp),
+                )
+            } else {
+                // 等待遮罩已经把这句话说过了(真机截图:同一句"正在找源 · 已问过 131 个"在页面中间
+                // 和这一行各出现一次)⇒ 这里只留按钮,撑开宽度别让按钮跟着文字跑。
+                Spacer(modifier = Modifier.weight(1f))
+            }
         }
         crossHint?.let { hint ->
             // 只说"对端实测画质"这一事实,不带站名;序号按**那个源的身份**取(与 chips 同一口径),

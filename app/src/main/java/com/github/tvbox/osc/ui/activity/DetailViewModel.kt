@@ -608,7 +608,7 @@ class DetailViewModel : ViewModel() {
     private fun applyTarget(target: DetailNavStack.Target) {
         cancelInFlightContent()
         resetContentState()
-        sendCommand(PlaybackCommand.StopForContentSwitch)
+        sendCommand(PlaybackCommand.StopForContentSwitch(target.sourceKey + "|" + target.vodId))
         sendCommand(PlaybackCommand.SetEpisodeSheetOpen(false))
         fromCollect = target.fromCollect
         vodName = target.title
@@ -2142,7 +2142,8 @@ class DetailViewModel : ViewModel() {
                 //   round 566→576… 每轮 1ms)。故 manual 只放宽 hitCount,不放宽"还有源"这一条。
                 val hasMoreSources = searchedSourceKeys.size < total
                 val canExpand = hasMoreSources &&
-                    (manualSwitchActive || ExpandPoolPolicy.shouldExpand(newHitsThisWave, true, searchedSourceKeys.size, total))
+                    (manualSwitchActive || ExpandPoolPolicy.shouldExpand(
+                        newHitsThisWave, true, searchedSourceKeys.size, total, poolRound))
                 if (canExpand) {
                     poolRound += 1
                     waveSize = ExpandPoolPolicy.poolSizeForRound(total, poolRound)
