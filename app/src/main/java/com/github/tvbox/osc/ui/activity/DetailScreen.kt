@@ -247,9 +247,11 @@ private fun NoContentScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surfaceContainer)
-            // 上下两道安全区都要留:真机 v1.1.63 第一版只挡了状态栏,换源板块卡片被手势条切掉下沿
+            // 上下两道安全区都要留:真机 v1.1.63 第一版只挡了状态栏,换源板块卡片被手势条切掉下沿。
+            // 手势条那侧再补 16dp 实际留白 —— 全屏手势下 inset 常常是 0,只靠它卡片仍贴屏幕底边。
             .statusBarsPadding()
-            .navigationBarsPadding(),
+            .navigationBarsPadding()
+            .padding(bottom = 16.dp),
     ) {
         Column(
             modifier = Modifier
