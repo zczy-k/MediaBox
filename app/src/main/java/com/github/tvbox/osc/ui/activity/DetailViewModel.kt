@@ -2171,6 +2171,9 @@ class DetailViewModel : ViewModel() {
                         " timeouts=" + timeoutsThisWave.get() + " concCap=$concurrencyCap" +
                         " variantAsks=" + variantAsks.get()
                 )
+                // 问过多少个:每档收口就入账。放在"让路 return"之前 —— 被冻结/换片打断的那一档
+                // 同样真的问过这些源,那一行的数字不该退回 0。
+                sourceSearchAsked.value = searchedSourceKeys.size
                 // 让路:换片/冻结后立即停(别再投下一波、也别走收口)
                 if (!searchActive(tokenStr)) return@launch
                 // 扩档判定(2026-10-17 用户定案):**自动链只跑第 1 档**,跑完就停下给结论;

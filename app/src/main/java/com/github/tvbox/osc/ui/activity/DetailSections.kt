@@ -102,6 +102,9 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int, statusInline: Boo
     val crossHint by vm.crossSourceHint.collectAsStateWithLifecycle()
     val chipPage by vm.chipPage.collectAsStateWithLifecycle()
     val searchedOnce by vm.sourceSearchStarted.collectAsStateWithLifecycle()
+    // 收口后 searchProgress 会被清空,那一行的"问过多少个"要有一份不随进度条消失的账
+    // (真机 v1.1.68:片正在播,这行却写「问过 0 个源，暂时没找到其他源」)
+    val askedDurable by vm.sourceSearchAsked.collectAsStateWithLifecycle()
     // 2026-10-14(详情页「换源」分页设计):**不再"空列表就整块不渲染"** ——
     // 那样用户在"没有候选/搜索没跑"时**没有任何入口发起换源**(真机反馈的核心问题)。
     // 现在无条件渲染:「换源」按钮始终可见,候选列表有内容时才在下方展开。
@@ -152,7 +155,7 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int, statusInline: Boo
                     text = sourceStatusText(
                         searchedOnce = searchedOnce,
                         searching = sourcesSearching,
-                        asked = searchProgress?.done ?: 0,
+                        asked = searchProgress?.done ?: askedDurable,
                         found = totalCandidates,
                     ),
                     style = MaterialTheme.typography.bodySmall,
