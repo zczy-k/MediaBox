@@ -455,6 +455,16 @@ class DetailViewModel : ViewModel() {
      */
     private var noHitShortCircuit: Boolean? = null
 
+    /**
+     * **本场分档计划的分母**(= 本片第一次算池子时的"排序后全池"大小,整场定死,2026-10-17)。
+     *
+     * <p>不能拿"跳过已知没有之后剩下的数量"当分母:那份名单会在第一档里边搜边长
+     * (真机 13:21 那次:第 1 档 total=315 切 1/3=105,点一下「继续找源」后名单长出 54 个,
+     * 第 2 档的池子只剩 261 ⇒ 直接按"全量"把第 2、3 档合成一档跑完,他要的"两次手动点击"变成一次)。
+     * 短路只该决定**这一档实际投出哪些源**,不该挪档的边界。0 = 本场还没算过。
+     */
+    private var sessionPlanTotal = 0
+
     private fun shortCircuitThisSession(userInitiated: Boolean): Boolean {
         val decided = noHitShortCircuit
             ?: NoHitSourcePolicy.allowShortCircuit(userInitiated, manualSwitchActive)
@@ -1838,6 +1848,7 @@ class DetailViewModel : ViewModel() {
             manualWavesQueued = 0
             canContinueSourceSearch.value = false
             noHitShortCircuit = null
+            sessionPlanTotal = 0
             searchedSourceKeys.clear()
             // 换片:上一部的零命中名单在函数开头的 flushFallbackHitsSave() 里已按**旧片名**落盘,
             // 这里清空才不会把 A 片的"没有"记到 B 片头上
@@ -1915,7 +1926,10 @@ class DetailViewModel : ViewModel() {
         // 搜索范围就是**过滤后的全部可用源**:原先那个"固定截断到 120 个"的退路已随「自动扩池」开关
         // 一起移除 —— 源集合 300+ 时截断会让范围外的源**永远不参与换源**,而它想省的时间
         // 现在已经由"并发按超时占比自适应退让"去省了。
-        val effectiveTotal = askablePool.size
+        // 分档的分母 = 本场定死的"排序后全池"(见 [sessionPlanTotal]);
+        // 零命中短路只从**这一档实际投出的源**里扣,不挪档的边界。
+        if (sessionPlanTotal == 0) sessionPlanTotal = orderedPool.size
+        val effectiveTotal = sessionPlanTotal
         // 每档问多少由分档计划定,**不再区分"手动就一次投满全池"**(2026-10-17):
         // 手动点一次 = 往前推一档,剩下的档留着让他继续点 —— 等待时长由他决定。
         sourcePoolTotal.value = effectiveTotal
@@ -1950,6 +1964,8 @@ class DetailViewModel : ViewModel() {
             sourcesSearching.value = false
             manualSwitching.value = false
             manualSwitchActive = false
+            // 可问的源已经问完了:即便按分档计划"还有下一档",那一档里也没东西可投,按钮不该再挂着
+            canContinueSourceSearch.value = false
             searchProgress.value = null
             publishSourceChips()
             if (userInitiated) {
@@ -1973,12 +1989,6 @@ class DetailViewModel : ViewModel() {
         searchProgress.value = SearchProgress(
             searchedSourceKeys.size.coerceAtMost(effectiveTotal),
             effectiveTotal,
-        )
-        // [临时诊断 2026-10-14 #1] 搜索启动时刻的 UI 状态快照(searchProgress 分母应为全量源数)。
-        LOG.i(
-            "echo-source-diag on-start searching=${sourcesSearching.value}" +
-                " progressTotal=${searchProgress.value?.total} sources=${sources.size}" +
-                " title=$searchTitle token=$searchToken"
         )
         // 历史命中先灌一批候选(2026-10-13)。
         // ⚠️ 必须在调用方(startFallbackIfNeeded → loadNextFallbackCandidate)之前:
@@ -2271,14 +2281,6 @@ class DetailViewModel : ViewModel() {
         // 而列表在视图层还会滤掉正在播的源与隐藏的源 —— 以前在这里替它算一次、UI 再算一次,
         // 真机 v1.1.45 就分叉过(顶部"4 个"、下面 3 个)。现在 UI 自己问 totalCandidateCount()。
         searchProgress.value = SearchProgress(searched.coerceAtMost(total), total)
-        // [临时诊断 2026-10-14 #1] 节流:每 25 个源打一次 + 首尾必打,避免刷屏又能看到进度在走。
-        if (searched == 1 || searched == total || searched % 25 == 0) {
-            LOG.i(
-                "echo-source-diag progress searched=$searched total=$total" +
-                    " searching=${sourcesSearching.value} frozen=$searchFrozen" +
-                    " title=$searchTitle token=$searchToken"
-            )
-        }
     }
 
     /**
@@ -2740,6 +2742,7 @@ class DetailViewModel : ViewModel() {
         manualWavesQueued = 0
         canContinueSourceSearch.value = false
         noHitShortCircuit = null
+        sessionPlanTotal = 0
         searchedSourceKeys.clear()
         manualSwitching.value = true
         manualSwitchActive = true
