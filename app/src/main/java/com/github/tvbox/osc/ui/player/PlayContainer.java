@@ -28,6 +28,7 @@ import com.github.tvbox.osc.event.RefreshEvent;
 import com.github.tvbox.osc.player.ExoPlayer;
 import com.github.tvbox.osc.player.KernelReusePolicy;
 import com.github.tvbox.osc.player.PreloadCoordinator;
+import com.github.tvbox.osc.player.PreloadManagerHolder;
 import com.github.tvbox.osc.player.MyVideoView;
 import com.github.tvbox.osc.player.PageHost;
 import com.github.tvbox.osc.player.PlaybackEngine;
@@ -1556,6 +1557,10 @@ mController.toggleControlBar();
         // 旧内容会自己响起来("上一部声音"正是这条路径漏的)。释放后下一起播必走 REBUILD,
         // 既不会带旧 key 也不会继承旧进度。
         releasePlayerKernel();
+        // 旧片的"下一集预载"也要一起撤:那份队列在进程级的 PreloadManagerHolder 里,
+        // 不随本页换片自动作废 —— 留着就是新片在搜源、旧片在偷偷下载,抢的正是同一份带宽。
+        // 只在真的跨片释放时清(同片换集/换线不走这条路径,那份预载对它仍然有用)。
+        PreloadManagerHolder.clearAll();
         LOG.i("echo-p2 stopForContentSwitch released kernel prev=" + started
                 + " incoming=" + incomingKey + " state=" + state);
     }
