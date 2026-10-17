@@ -446,6 +446,23 @@ class DetailViewModel : ViewModel() {
     val sourceSearchAsked = MutableStateFlow(0)
 
     /**
+     * **本场搜索要不要走零命中短路 —— 只在本片第一次算池子时定一次,之后每档沿用**(2026-10-17)。
+     *
+     * <p>不这么做会让"档"的分母在档间漂移:自动那档跳过"已知没这部片"的源 ⇒ 池子 273,
+     * 手动那档按老口径不跳 ⇒ 池子 315。于是第 1 档是 273 的一半(137),第 2 档却按 315 的
+     * 2/3(210)去切 —— 真机 v1.1.67 12:38 那一次正是这个形状。分档要成立,整场只能用同一个池子。
+     * null = 本片还没算过第一档。
+     */
+    private var noHitShortCircuit: Boolean? = null
+
+    private fun shortCircuitThisSession(userInitiated: Boolean): Boolean {
+        val decided = noHitShortCircuit
+            ?: NoHitSourcePolicy.allowShortCircuit(userInitiated, manualSwitchActive)
+                .also { noHitShortCircuit = it }
+        return decided
+    }
+
+    /**
      * **本次搜索已投出过的源**(2026-10-13 增量扩池)。跨扩池轮次**保留**,
      * 用于"扩池时只投新增源" —— 这是"扩池后**继续搜**、不重头搜"的核心:
      * 每波只把 [searchedSourceKeys] 里没有的源投出去,已搜过的**绝不重发**。
@@ -1820,6 +1837,7 @@ class DetailViewModel : ViewModel() {
             poolRound = ExpandPoolPolicy.FIRST_WAVE
             manualWavesQueued = 0
             canContinueSourceSearch.value = false
+            noHitShortCircuit = null
             searchedSourceKeys.clear()
             // 换片:上一部的零命中名单在函数开头的 flushFallbackHitsSave() 里已按**旧片名**落盘,
             // 这里清空才不会把 A 片的"没有"记到 B 片头上
@@ -1881,7 +1899,7 @@ class DetailViewModel : ViewModel() {
         //   ① 只有"确实答过话"才入账,超时/异常/解析崩绝不进 —— 那是源的耐心问题,不是它有没有;
         //   ② 用户主动点「换源」或手动那一轮**一律穿透**,他的意图就是"还要继续找",
         //      用缓存少给几个源只会让他认为功能坏了。
-        val knownAbsent = if (NoHitSourcePolicy.allowShortCircuit(userInitiated, manualSwitchActive)) {
+        val knownAbsent = if (shortCircuitThisSession(userInitiated)) {
             NoHitSourceCache.knownAbsent(SearchSettings.normalizedTitle(title))
         } else {
             emptySet()
@@ -2180,10 +2198,12 @@ class DetailViewModel : ViewModel() {
                 sourceSearchAsked.value = searchedSourceKeys.size
                 canContinueSourceSearch.value = hasMoreWaves && tokenStr == currentTokenStr()
                 if (hasMoreWaves) {
+                    // 停下来的原因要说实话:自动那档跑完 ≠ 手动那一档排队跑完
                     LOG.i(
                         "echo-source-search wave-stop round=" + poolRound +
                             " asked=" + searchedSourceKeys.size + " total=" + total +
-                            " hit=" + hitCount + " token=$myToken reason=auto-runs-first-wave"
+                            " hit=" + hitCount + " token=$myToken" +
+                            " reason=" + (if (manualSwitchActive) "manual-queue-empty" else "auto-runs-first-wave")
                     )
                 }
                 break
@@ -2716,6 +2736,7 @@ class DetailViewModel : ViewModel() {
         poolRound = ExpandPoolPolicy.FIRST_WAVE
         manualWavesQueued = 0
         canContinueSourceSearch.value = false
+        noHitShortCircuit = null
         searchedSourceKeys.clear()
         manualSwitching.value = true
         manualSwitchActive = true
