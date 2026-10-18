@@ -1932,8 +1932,13 @@ class DetailViewModel : ViewModel() {
         // 搜索范围就是**过滤后的全部可用源**:原先那个"固定截断到 120 个"的退路已随「自动扩池」开关
         // 一起移除 —— 源集合 300+ 时截断会让范围外的源**永远不参与换源**,而它想省的时间
         // 现在已经由"并发按超时占比自适应退让"去省了。
+        //
         // 分档的分母 = 本场定死的"排序后全池"(见 [sessionPlanTotal]);
         // 零命中短路只从**这一档实际投出的源**里扣,不挪档的边界。
+        // ⚠️ 分母**不能**改成 `askablePool.size`(试过,已回退):那份通过名单会在第一档里边搜边长,
+        // 按它重算会让后面几档的边界跟着漂,最终把第 2、3 档并成一档跑完
+        // —— 用户要的"点两次推进两档"变成一次([sessionPlanTotal] 的 KDoc 有真机现场)。
+        // 账目对不上(缺陷 F)要修的是**档宽与已投源的比较方式**,不是这个分母。
         if (sessionPlanTotal == 0) sessionPlanTotal = orderedPool.size
         val effectiveTotal = sessionPlanTotal
         // 每档问多少由分档计划定,**不再区分"手动就一次投满全池"**(2026-10-17):
@@ -2114,7 +2119,14 @@ class DetailViewModel : ViewModel() {
                                             }
                                             false
                                         } finally {
-                                            pendingSearchDone.remove(bean.key)
+                                            // ⚠️ 2026-10-18:**必须按"值"删,不能按 key 删**。
+                                            // 换片/换源会 cancel 旧 Job,而 cancellation 的 finally 与
+                                            // 新 Job 的 `put` 之间没有先后保证 —— 旧 Job 的 finally 若晚一步,
+                                            // `remove(bean.key)` 会把**新 Job 刚登记的那个 deferred 删掉**。
+                                            // 后果:新轮这个源的回包到达时 `remove(...)?.complete()` 拿到 null,
+                                            // `done.await()` 一直等不到完成 ⇒ 明明回了包却被判超时。
+                                            // 按 (key, value) 删除时,只有"删的正是自己登记的那个"才生效。
+                                            pendingSearchDone.remove(bean.key, done)
                                         }
                                     }
                                     val answered = askOnce(title)
@@ -2123,7 +2135,6 @@ class DetailViewModel : ViewModel() {
                                     // 「功夫女足(2026)」「夢華錄」这类源用原词问就是"没有",表现为明明有源搜不到。
                                     // 只在"这个源一个候选都没给"时补发 ⇒ 有命中的源不会被重复问,请求量不会翻倍。
                                     var variantIndex = 1
-                                    var variantTimeout = false
                                     if (answered) {
                                         while (variantIndex < searchVariants.size &&
                                             bean.key !in sourcesWithHit && searchActive(tokenStr)
@@ -2133,15 +2144,26 @@ class DetailViewModel : ViewModel() {
                                             ) {
                                                 break
                                             }
-                                            val again = askOnce(searchVariants[variantIndex])
+                                            // 补发失败就停:后面还有变体也不值得继续花预算。
+                                            // ⚠️ 这个失败**只**结束循环,不写任何源证据 ——
+                                            // 原词已答话的源不该因为"变体没回"被记超时(见下方说明)。
+                                            if (!askOnce(searchVariants[variantIndex])) break
                                             variantIndex++
-                                            if (!again) {
-                                                variantTimeout = true
-                                                break
-                                            }
                                         }
                                     }
-                                    if (!answered || variantTimeout) {
+                                    // ⚠️ 2026-10-18:判据从"没答话**或**变体补发超时"收窄为"**没答话**"。
+                                    //
+                                    // 旧判据把"变体补发超时"也算成源超时,于是"原词答了话(+20 已在事件通道记上)、
+                                    // 只是后来的查询变体补发超时"的源,会被再记一次 `SEARCH_TIMEOUT`(−25)。
+                                    // 后果有两层:
+                                    //   ① 权重台账自相矛盾 —— 同一个源在同一波里先 +20 后 −25,净 −5,
+                                    //      而它实际上是好源(原词就问到了),排序被反向教育;
+                                    //   ② 自适应并发被带偏 —— `timeoutsThisWave` 把变体超时也算进去,
+                                    //      超时占比被系统性抬高,`conc=16->8` 那次腰斩就有这份虚数。
+                                    //
+                                    // 现在:只有"原词就没答话"(`!answered`)才算源超时。
+                                    // 变体补发的失败只影响**这一次补发**(不会有副作用),不再改源证据。
+                                    if (!answered) {
                                         // **源没答话也要留证据**(2026-10-14 审查修正):此前详情页只记"收到回包",
                                         // 超时/异常一行证据都不写,而扣分只在搜索页发生 ⇒ 从不手动搜索的用户,
                                         // 权重台账对换源链恒为空,慢源每轮都占着首轮名额。
@@ -2330,7 +2352,22 @@ class DetailViewModel : ViewModel() {
     fun onSearchResultEvent(event: RefreshEvent) {
         if (event.type == RefreshEvent.TYPE_SEARCH_RESULT) {
             val data = event.obj as? AbsXml ?: return
-            if (data.searchToken != currentTokenStr()) return
+            if (data.searchToken != currentTokenStr()) {
+                // ⚠️ 2026-10-18:回包被判废 ⇒ 必须把这个源从**已投表**里撤销。
+                //
+                // 旧实现直接 return,而 `searchedSourceKeys` 是"发请求时"就写进去的
+                // (见波次循环的 `searchedSourceKeys.add`)。于是这个源同时满足两件坏事:
+                //   ① 它其实**没被回答过**(回包被我方丢弃),却记着"搜过了";
+                //   ② 下一轮的 `wave` 过滤 `it.key !in searchedSourceKeys` 会永远跳过它
+                //      ⇒ 用户再怎么点「继续找源」都问不到它。
+                // 真机"问过 221 个、只有 203 个真的问出去"的那 18 个差值就是这个来源。
+                // 把它移出表即可:下次投源时它是"没搜过"的,会被重新问到。
+                val staleKey = data.sourceKey
+                if (!staleKey.isNullOrEmpty() && searchedSourceKeys.remove(staleKey)) {
+                    LOG.i("echo-source-search stale-drop key-len=" + staleKey.length)
+                }
+                return
+            }
             pendingSearchDone.remove(data.sourceKey)?.complete(Unit)
             // **解析失败/空响应不算"源答过话"**(2026-10-14 审查修正,与搜索页同一处修复):
             // 旧路径给它也走 recordFallbackSourceAnswered → recordAnswered → 权重 +20 且清零连续超时,
@@ -3668,7 +3705,25 @@ class DetailViewModel : ViewModel() {
         // 修法:**二者成对清**(与 [startSourceSearch] 成对置位、[freezeFallbackSearch] 成对清一致),
         // 绝不允许出现 searching=true && progress=null 的非法组合。
         searchProgress.value = null
-        sourcesSearching.value = false
+        // ⚠️ 2026-10-18:换片与换源**必须分开处理**,这是缺陷 A 的修正。
+        //
+        // 旧实现在这里无条件把 `sourcesSearching` 写成 false,却让 Job 活着 ——
+        // 而本函数 8 个调用点里,`keepChips = true` 的那几处(详情就绪 `onDetailResult`、
+        // 用户点换源 `switchSource`、起播跳过兑现 `finishFallbackWithoutResult`)都是
+        // "同一部片、搜索应当继续跑"的场景。于是在那些路径上出现"状态说停了、搜索还在跑":
+        //   - Job 继续投源、继续往 [searchedSourceKeys] 记账;
+        //   - [loadNextFallbackCandidate] 的判据 `!sourcesSearching` 被谎报成"搜索已停",
+        //     换源链提前宣布"无路可走"(真机"越搜越少"的观感即由此放大);
+        //   - Job 真正收口时又会按 `!searchFrozen` 走一次接管分支,而页面内容可能已换。
+        //
+        // 现在:换片(!keepChips)⇒ 撤 Job 并置 false,两者同生共死;
+        //      换源/详情就绪(keepChips)⇒ **两者都不动**,由搜索自己收口
+        //      ([startSourceSearch] 的收口分支与 [freezeFallbackSearch] 负责置位)。
+        if (!keepChips) {
+            searchJob?.cancel()
+            searchJob = null
+            sourcesSearching.value = false
+        }
         manualSwitching.value = false
         // 2026-10-14(换源分页):换源(keepChips=true)时**保留** manualSwitchActive —— 用户还在
         // "换源浏览"状态,搜索应继续跑全量;换片(keepChips=false)才复位(新片重新开始)。
