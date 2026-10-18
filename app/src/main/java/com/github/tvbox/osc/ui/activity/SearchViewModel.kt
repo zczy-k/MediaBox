@@ -694,14 +694,23 @@ class SearchViewModel : ViewModel() {
             if (myToken != token) return@launch
             running.value = false
             logBatchSummary(myBatch, keys.size)
-            // P3:剩余队列已空 = 本轮全部源收口 ⇒ 保存命中缓存(仅命中源,重试批收口会再存一次,
-            // 把重试挽回的源也纳入缓存)
-            if (queuedSourceKeys.isEmpty()) {
-                SearchResultCache.save(
-                    SearchSettings.normalizedTitle(searchedTitle.value),
-                    results.value.mapNotNull { r -> if (r.videos.isEmpty()) null else r.sourceKey to r.videos }.toMap(),
-                )
-            }
+            // P3:保存命中缓存(仅命中源,重试批收口会再存一次,把重试挽回的源也纳入缓存)
+            //
+            // ⚠️ 2026-10-18:从"仅整批收口时写"改为"**每批收口都写**"。
+            //
+            // 原实现的条件是 `queuedSourceKeys.isEmpty()`(全部源都问完),而真机上
+            // **用户往往在结果刚出几条时就已经点进去了** —— 那一刻缓存还是空的,
+            // 于是详情页的 `seedCandidatesFromCache` 什么也读不到,只能从零开始
+            // 触发一轮全站搜索(真机《ADN-811》:点了之后 51 秒才收到 1 个候选)。
+            // 用户视角就是"我明明已经搜出来了,点进去它又重搜一遍"。
+            //
+            // 改成每批收口都写:缓存只需比"用户的手指"快一步即可。
+            // 代价是写盘次数变多(每批一次),而 `SearchResultCache.save` 内部是
+            // 整桶序列化 —— 批数有限(每批 50 源),这个量级可接受。
+            SearchResultCache.save(
+                SearchSettings.normalizedTitle(searchedTitle.value),
+                results.value.mapNotNull { r -> if (r.videos.isEmpty()) null else r.sourceKey to r.videos }.toMap(),
+            )
             if (isRetry) {
                 // 重试批收口:不管成败都回到既有续批节奏,重试不再嵌套重试
                 maybeContinueBatching()
