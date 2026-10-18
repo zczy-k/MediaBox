@@ -15,6 +15,7 @@ import com.github.tvbox.osc.bean.Movie;
 import com.github.tvbox.osc.bean.SourceBean;
 import com.github.tvbox.osc.util.LOG;
 import com.github.tvbox.osc.util.LanguageManager;
+import com.github.tvbox.osc.util.MagnetSourceMemory;
 import com.github.tvbox.osc.util.thunder.Thunder;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
@@ -186,7 +187,26 @@ final class PushDetailResolver {
         // 现在的做法:不再调 Thunder.parse,把磁力条目**摘掉** —— 该源还有普通线路就照常播;
         // 全是磁力就走既有"空详情"处理(记一次源失败 → 换源),而不是留一条打不开的假线路。
         // 注意字幕那条「迅雷字幕」是另一条通路(直挂字幕文件,不走种子下载),不受影响。
-        dropMagnetLines(data);
+        //
+        // ⚠️ 2026-10-18 补:**"摘空 ⇒ 视同没这部片"这一步原先没接上**。
+        // 原 dropMagnetLines 只清 beanList 与 urls 字符串,**不删 urlInfo 本身**,
+        // 于是 movie/videoList 依然完整 ⇒ 走不进 DetailViewModel 的"空详情"分支
+        // (那条要求 videoList 为空),用户会先看到"详情页已就绪、但线路列表空着",
+        // 再在 :1867 才兜底触发换源 —— 等于让用户在磁力上多停一步。
+        // 现在:摘空即把 movie 置 null(复用 createEmptyDetail 的形状),
+        // 与预告片剥离(stripTrailers 返回 false ⇒ handleEmptyDetail)完全同一条口径。
+        boolean noPlayable = !dropMagnetLines(data);
+        if (noPlayable) {
+            // 只清 movie 不动 sourceKey/detailToken:调用方还要靠它们归因
+            // (与 DetailLoader.createEmptyDetail 同形状)
+            if (data != null) {
+                // ⭐ 打标记再清 movie:空态文案要靠它区分
+                // 「该源只给磁力,已自动跳过」vs「这部片真的没资源」。
+                // 不用 msg 携带 —— 非空 msg 会被 isSourceErrorMsg 判成源报错,导致弹 toast 并关页。
+                data.magnetOnlyDropped = true;
+                data.movie = null;
+            }
+        }
         if (index == 0) {
             detailResult.postValue(data);
         }
@@ -197,14 +217,33 @@ final class PushDetailResolver {
      *
      * <p>两个字段都要改:剧集列表读 beanList,而线路映射(seriesMap)是按 urls 字符串建的 ——
      * 只清一边会留下"看得见却点不到"或"点得到却已失效"的不一致。
+     *
+     * <p><b>2026-10-18 三处加固</b>(此前只删条目、留下空壳,导致 UI 上出现点不开的线路分组):
+     * <ol>
+     *   <li><b>删空壳</b>:beanList 被摘空的 urlInfo 连同从 infoList 移除 —— 否则该线路分组
+     *       仍在 UI 上,点开是空的;</li>
+     *   <li><b>记画像</b>:命中"磁力占绝对多数"则记一票到 {@link MagnetSourceMemory}
+     *       —— 后续该源的详情请求会被跳过(省掉注定白等的 20~45 秒);</li>
+     *   <li><b>返回可播性</b>:返回"是否还剩可播线路",供调用方决定要不要走"视同没这部片"。</li>
+     * </ol>
+     *
+     * @return true = 仍有可播线路;false = 已无任何可播线路(调用方应视同"详情为空")
      */
-    private void dropMagnetLines(AbsXml data) {
-        if (data == null || data.movie == null || data.movie.videoList == null) return;
+    private boolean dropMagnetLines(AbsXml data) {
+        if (data == null || data.movie == null || data.movie.videoList == null) return false;
         int dropped = 0;
+        int remaining = 0;
         for (Movie.Video video : data.movie.videoList) {
             if (video == null || video.urlBean == null || video.urlBean.infoList == null) continue;
-            for (Movie.Video.UrlBean.UrlInfo urlInfo : video.urlBean.infoList) {
-                if (urlInfo == null || urlInfo.beanList == null) continue;
+            // 边遍历边删用迭代器(与 beanList 同一口径)
+            Iterator<Movie.Video.UrlBean.UrlInfo> vIt = video.urlBean.infoList.iterator();
+            while (vIt.hasNext()) {
+                Movie.Video.UrlBean.UrlInfo urlInfo = vIt.next();
+                if (urlInfo == null || urlInfo.beanList == null) {
+                    // 本来就是空的:一并清掉,不留在 UI 上占位
+                    vIt.remove();
+                    continue;
+                }
                 boolean changed = false;
                 Iterator<Movie.Video.UrlBean.UrlInfo.InfoBean> it = urlInfo.beanList.iterator();
                 while (it.hasNext()) {
@@ -215,17 +254,39 @@ final class PushDetailResolver {
                         dropped++;
                     }
                 }
-                if (!changed) continue;
-                List<String> kept = new ArrayList<>();
-                for (Movie.Video.UrlBean.UrlInfo.InfoBean bean : urlInfo.beanList) {
-                    if (bean != null) kept.add(bean.name + "$" + bean.url);
+                if (urlInfo.beanList.isEmpty()) {
+                    // ⭐ 摘空了:连这个线路分组本身一起删(否则 UI 留一个点不开的空分组)
+                    vIt.remove();
+                    continue;
                 }
-                urlInfo.urls = TextUtils.join("#", kept);
+                if (changed) {
+                    List<String> kept = new ArrayList<>();
+                    for (Movie.Video.UrlBean.UrlInfo.InfoBean bean : urlInfo.beanList) {
+                        if (bean != null) kept.add(bean.name + "$" + bean.url);
+                    }
+                    urlInfo.urls = TextUtils.join("#", kept);
+                }
+                remaining += urlInfo.beanList.size();
             }
         }
         if (dropped > 0) {
-            LOG.i("echo-thunder disabled reason=magnet-lines dropped=" + dropped);
+            LOG.i("echo-thunder disabled reason=magnet-lines dropped=" + dropped
+                    + " remaining=" + remaining);
+            // 画像记账:本次详情"磁力占绝对多数"⇒ 该源基本不给正常内容,后续跳过它的详情请求。
+            // totalLines 用 dropped + remaining(摘除前的全部可播条目数)。
+            // ⚠️ 这里**只记画像、不记源失败**:摘空是行为特征不是故障,
+            //    记进 SourceHealthMemory 会让该源凑够门槛被误封(见 MagnetSourceMemory 的 KDoc)。
+            MagnetSourceMemory.record(data.sourceKey, dropped, dropped + remaining);
+        } else {
+            // 本次回包**一条磁力都没有** ⇒ 该源在正常交付内容,画像作废。
+            //
+            // ⚠️ 判据是"这份回包里有没有磁力",**不是**"有没有内容"。
+            // 一个源可以"10 条磁力 + 1 条正常线路"(实测 avgood):它有内容,
+            // 但磁力仍占绝对多数 —— 放"有内容就 clear"会把刚记的证据无条件擦掉,
+            // 画像永远攒不够门槛。故 clear 必须与同类证据放在同一处判定。
+            MagnetSourceMemory.clear(data.sourceKey);
         }
+        return remaining > 0;
     }
 
 

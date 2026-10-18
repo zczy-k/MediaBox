@@ -11,6 +11,7 @@ import com.github.tvbox.osc.util.LanguageManager
 import com.github.tvbox.osc.util.AvailabilityMemory
 import com.github.tvbox.osc.util.CompletenessMemory
 import com.github.tvbox.osc.util.DetailNoListMemory
+import com.github.tvbox.osc.util.MagnetSourceMemory
 import com.github.tvbox.osc.util.SearchSettings
 import com.github.tvbox.osc.util.SearchResultCache
 import com.github.tvbox.osc.util.NoHitSourceCache
@@ -1507,7 +1508,15 @@ class DetailViewModel : ViewModel() {
                 // S2 升级判据(2026-10-09):配置没声明但**实测行为就是索引型**的源
                 // (回包是合法 JSON 却缺 list,30 天内 ≥2 次,见 DetailNoListPolicy)
                 // 也按索引型对待 —— js_douban 这类"漏声明"的源不再白等一轮详情超时。
-                indexSource = sourceBean?.isIndexSource() == true || DetailNoListMemory.isIndexLike(sourceKey),
+                //
+                // S3 升级判据(2026-10-18):**实测"只给磁力"的源**同样早退。
+                // 该源的详情注定只会再给磁力(而磁力在本 App 恒不可播,见 MagnetSourcePolicy),
+                // 摘除后必为空 ⇒ 白等一轮 20~45 秒才走到换源。按磁力源对待即直接走聚合搜索。
+                // ⚠️ 与 DetailNoListMemory 同一分工:这是**行为画像**不是失败台账,
+                //    跳过详情不影响搜索通道,源改版后仍能被搜到并经详情回包洗白。
+                indexSource = sourceBean?.isIndexSource() == true
+                    || DetailNoListMemory.isIndexLike(sourceKey)
+                    || MagnetSourceMemory.isMagnetOnly(sourceKey),
             )
         ) {
             onDetailUnavailable()
@@ -1699,6 +1708,10 @@ class DetailViewModel : ViewModel() {
             // 这是画像唯一的"恢复"通道:此刻 sourceKey 还是请求时的 key(重赋值在后面),
             // 清的正是这份回包归属的源。空详情不清 —— 空详情正是证据本身。
             DetailNoListMemory.clear(sourceKey)
+            // ⚠️ 磁力画像的 clear **不在这里** —— 判据不是"有没有内容",而是"内容里有没有磁力"。
+            // 一个源可以"10 条磁力 + 1 条正常线路"(实测 avgood 就是这种):它有内容、
+            // 但磁力仍占绝对多数,画像必须留住。放在这里会被无条件清掉,等于永远攒不够证据。
+            // 该判据连同证据一起留在 PushDetailResolver.dropMagnetLines(dropped == 0 才清)。
             // 自动换源全程静默(用户要的是"无感播放"):不再提示"站点切换至X" ——
             // 那既暴露了当前用的是哪个站,对用户也是纯噪音。真失败时另有终局提示兜底。
             if (isSourceErrorMsg(absXml.msg)) {
@@ -1917,6 +1930,10 @@ class DetailViewModel : ViewModel() {
         }
         // 空详情(非站点报错)= 这个源这一场没交付出内容,与超时/不可播同一条事实口径。
         markCurrentSourceGaveNothing("detail-empty")
+        // 摘磁力摘空的回包打有 magnetOnlyDropped 标记:换源链完全不变(与"源真没这部片"同一条),
+        // 只在**空态文案**上区分 —— 用户需要知道"是这个来源只给磁力、已跳过",
+        // 否则他会反复点同一部片、以为功能坏了。标记为真时这句文案才有意义。
+        val emptyMsg = if (data?.magnetOnlyDropped == true) str(R.string.detail_magnet_only_skipped) else null
         if (fallbackActive) {
             fallbackLoadingCandidate = false
             loadNextFallbackCandidate()
@@ -1926,7 +1943,7 @@ class DetailViewModel : ViewModel() {
             // 表现就是"详情空 → 停在暂无片源,不自动换源"(只有底部候选列表在动)。
             ensureSourceSearchRunning()
             if (!startFallbackIfNeeded(auto = true)) {
-                if (!rollbackManualSwitch()) enterEmpty()
+                if (!rollbackManualSwitch()) enterEmpty(emptyMsg)
             }
         }
     }
@@ -2006,6 +2023,10 @@ class DetailViewModel : ViewModel() {
             hasWeightOf = { weightScores.containsKey(it) },
             // 快搜源整层排在前:首轮 1/3 与慢源无关 ⇒ 纳入慢源不拖慢第一次出候选
             quickSearchOf = { it.isQuickSearch() },
+            // 磁力源整层沉底(2026-10-18):已知"详情只给磁力"的源排在所有正常源之后。
+            // **不排除** —— 同源可能既有磁力又有正常线路,排除会丢内容;沉底只是不占顺位。
+            // 层级紧邻 home:放权重之后的话,高权重磁力源仍会压过低权重正常源。
+            magnetOnlyOf = { MagnetSourceMemory.isMagnetOnly(it.key) },
         )
         // 2026-10-14 用户定案:**「换源」点击后就要并行找到所有符合本片名的源**。
         // 旧口径下手动换源仍走 1/3→1/2→2/3 三道**波间屏障**(每波要 awaitAll 全部收口才投下一波),
@@ -3551,6 +3572,13 @@ class DetailViewModel : ViewModel() {
         // detail-unavailable` —— 豆瓣本来就没有正片,而它连号都没分到(不在表里),这条 🟡 纯脏账。
         val bean = ApiConfig.get().getSource(sourceKey)
         if (bean == null || bean.isIndexSource() || DetailNoListMemory.isIndexLike(sourceKey)) return
+        // 磁力源(2026-10-18):该源"详情只给磁力"是**交付形态**不是故障 ——
+        // 磁力在本 App 恒不可播(迅雷任务恒停 TASK_IDLE,见 MagnetSourcePolicy),
+        // 摘空后走空详情是**我们主动的处置**,不是"这个源放不出这部片"。
+        // 不跳过的话,同一个磁力源反复被点几次就会在健康台账里凑够门槛,
+        // 被误封 6 小时 —— 而它可能只是"这几部片恰好只有磁力"。
+        // 与上面 indexSource 同一条口径:路由造成的"没内容"不记源账。
+        if (MagnetSourceMemory.isMagnetOnly(sourceKey)) return
         recordBoardFailure(fallbackAutoSwitch, reason)
     }
 
@@ -3572,11 +3600,18 @@ class DetailViewModel : ViewModel() {
                 changeable = currentSource?.isChangeable() ?: true,
                 // 与 loadDetail 的 indexSource 判据**完全一致**:两处口径不同会让"该早退的没早退"
                 // 或"该放行的被拦住",而这正是本条修复要消灭的那类不一致。
-                indexLike = currentSource?.isIndexSource() == true || DetailNoListMemory.isIndexLike(sourceKey),
+                //
+                // 磁力源(2026-10-18):第三个判据与 loadDetail 同步加上 —— 理由同索引型源。
+                // 磁力源的 `changeable=0` 同样是"站内没有可换线路"(它只有磁力,而磁力恒不可播),
+                // 不是"不许去别处取内容"。拦住它 ⇒ 用户在一个注定播不了的源上停在空态;
+                // 放行 ⇒ 直接走聚合搜索拿别的源。这正是磁力减扰要的"自动减少"。
+                indexLike = currentSource?.isIndexSource() == true
+                    || DetailNoListMemory.isIndexLike(sourceKey)
+                    || MagnetSourceMemory.isMagnetOnly(sourceKey),
                 onChain = fallbackActive,
             )
         ) {
-            LOG.i("echo-fallback no-start reason=entry-blocked changeable=" + (currentSource?.isChangeable() ?: true) + " indexLike=" + (currentSource?.isIndexSource() == true || DetailNoListMemory.isIndexLike(sourceKey)) + " onChain=" + fallbackActive)
+            LOG.i("echo-fallback no-start reason=entry-blocked changeable=" + (currentSource?.isChangeable() ?: true) + " indexLike=" + (currentSource?.isIndexSource() == true || DetailNoListMemory.isIndexLike(sourceKey) || MagnetSourceMemory.isMagnetOnly(sourceKey)) + " onChain=" + fallbackActive)
             return false
         }
         // 已在换源链上又收到"线路耗尽" ⇒ 刚切换过去那个候选站也挂了,必须继续往下取候选。

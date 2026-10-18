@@ -563,6 +563,7 @@
     <string name="player_get_url_timeout">Timed out getting the playback URL</string>
     <string name="player_play_timeout">Playback timed out</string>
     <string name="player_play_failed_all">This title is currently unavailable</string>
+    <string name="detail_magnet_only_skipped">This source only offers magnet links, skipped automatically</string>
     <string name="player_play_timeout_dominant">Most sources did not respond (network or site issue), try again later</string>
     <string name="player_get_info_error">Failed to get playback info</string>
     <string name="player_getting_info">Getting playback info</string>

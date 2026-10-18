@@ -234,11 +234,24 @@ internal object SearchBatchPolicy {
          * 默认 `{ true }` = 不分层,搜索页行为一字不变。
          */
         quickSearchOf: (SourceBean) -> Boolean = { true },
+        /**
+         * 磁力源分层(2026-10-18,详情页换源用):true = 已知"详情只给磁力"的源。
+         *
+         * <p>磁力在本 App 恒不可播(迅雷任务恒停 TASK_IDLE,见 MagnetSourcePolicy),
+         * 但**不能排除**它 —— 同源可能既有磁力又有正常线路(实测 avgood),排除会丢内容。
+         * 故整层沉底:正常源全部用过之后才轮到它兜底。
+         *
+         * <p>层级位置**仅次于 home**:若放在权重之后,一个权重 100 的磁力源仍会排在
+         * 权重 50 的正常源之前,"减少干扰"就落空了。
+         * 默认 `{ false }` = 不分层,搜索页与既有单测行为一字不变。
+         */
+        magnetOnlyOf: (SourceBean) -> Boolean = { false },
     ): List<SourceBean> {
         if (sources.size < 2) return sources
         // 稳定排序:同层内保留原到达序(无权重源据此保持自然序)。
         return sources.sortedWith(
             compareByDescending<SourceBean> { it.key == homeKey }
+                .thenByDescending { !magnetOnlyOf(it) }
                 .thenByDescending { quickSearchOf(it) }
                 .thenByDescending { hasWeightOf(it.key) }
                 .thenByDescending { if (hasWeightOf(it.key)) weightOf(it.key) else 0 },
