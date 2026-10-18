@@ -102,6 +102,10 @@
         <activity
             android:name=".ui.activity.ConfigManageActivity" />
         <activity
+            android:name=".ui.activity.WebInteractionActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
             android:name=".ui.activity.PlaySettingsActivity" />
         <activity
             android:name=".ui.activity.PreferenceSettingsActivity" />

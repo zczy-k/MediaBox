@@ -12,6 +12,8 @@ import com.github.tvbox.osc.api.ApiConfig;
 import com.github.tvbox.osc.api.DanmakuApi;
 import com.github.tvbox.osc.bean.VodInfo;
 import com.github.tvbox.osc.sourcedata.SourceViewModel;
+import com.github.tvbox.osc.ui.activity.WebInteractionActivity;
+import com.github.tvbox.osc.util.AppManager;
 import com.github.tvbox.osc.util.FileUtils;
 import com.github.tvbox.osc.util.LOG;
 import com.github.tvbox.osc.util.PlayerHelper;
@@ -72,6 +74,20 @@ final class PlaybackFetch {
     /** 取消在途取流请求 */
     void cancelPlayRequest() {
         if (sourceViewModel != null) sourceViewModel.cancelPlayRequest();
+    }
+
+    /**
+     * Web 交互页的顶部标题:用当前片名,便于用户在登录页上确认"我在给哪部片登录"。
+     * 取不到返回 null(页面会退回用网页自身的 title)。
+     */
+    private String vodNameForWebPage() {
+        try {
+            com.github.tvbox.osc.bean.VodInfo v = controller.vod();
+            if (v == null || TextUtils.isEmpty(v.name)) return null;
+            return v.name;
+        } catch (Throwable th) {
+            return null;
+        }
     }
 
     private void handlePlayResult(JSONObject info) {
@@ -147,6 +163,31 @@ final class PlaybackFetch {
                 String msg = info.optString("msg", "");
                 if (!TextUtils.isEmpty(msg)) {
                     controller.handleResolvePlayUrlFailed(msg);
+                    return;
+                }
+                // 网页型取流结果(2026-10-18):spider 通过 proxy?do= 端点返回的其实是**HTML 页面**
+                // (典型场景 = 网盘扫码登录:二维码由 spider 用 HTML 画)。此时不能再交给播放器 ——
+                // ExoPlayer 拿到 text/html 必然失败。改为打开 Web 交互页,让用户完成登录/交互。
+                //
+                // 标记由 PlayLoader.markIfWebPage 打(判据与理由见该方法):只在 proxy?do= 且
+                // 非 go= / 非视频格式时置位,故不会误伤 proxy?go=bom 这类既有视频代理。
+                //
+                // ⚠️ 这里**不取消**换线看门狗之外的状态:登录页不是"播放失败",不该记线路失败账
+                // (记了会把一个正常的网盘源标成坏线)。取消取流超时即可 —— 结果已到手。
+                if (info.optBoolean("needWebPage", false)) {
+                    LOG.i("echo-webpage consume url=" + url);
+                    controller.cancelResolvePlayUrlTimeout();
+                    if (view != null) view.showParse(false);
+                    // 用 view 的 context(即承载播放的 Activity);view 为空时退回当前 Activity ——
+                    // 登录页必须挂在 Activity 上(WebView 需要窗口),Application context 起不来
+                    android.content.Context ctx = view != null
+                            ? view.context()
+                            : AppManager.getInstance().currentActivity();
+                    if (ctx != null) {
+                        WebInteractionActivity.start(ctx, url, vodNameForWebPage());
+                    } else {
+                        LOG.i("echo-webpage no-context url=" + url);
+                    }
                     return;
                 }
                 // 取流成功,手动选线标记完成使命,后续失败恢复走正常自动策略

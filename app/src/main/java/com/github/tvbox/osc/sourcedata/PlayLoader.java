@@ -305,6 +305,7 @@ final class PlayLoader {
                 url = DefaultConfig.checkReplaceProxy(url);
                 result.put("url", url);
                 result.put("parse", 0);
+                markIfWebPage(result, url);
             } else if (playUrl.length() == 0
                     && DefaultConfig.isVideoFormat(url)
                     && !result.has("parse")
@@ -315,6 +316,49 @@ final class PlayLoader {
             LOG.e("SourceViewModel", th);
         }
         return result;
+    }
+
+    /**
+     * 判断"这条 spider 返回的 proxy 地址其实是一个**网页**"并打标记(2026-10-18)。
+     *
+     * <p>## 为什么需要
+     * spider 没有任何原生 UI 能力({@code Spider.java} / {@code SpiderApi.java} 全部方法只返回
+     * String/JSONObject),但**能通过 {@code proxy?do=xxx} 本地端点吐出一整个 HTML 页面** ——
+     * 网盘扫码登录就是这么做的:二维码由 spider 用 HTML 画,App 只需提供显示容器。
+     *
+     * <p>不打标记的后果:这个 HTML 地址会被直接交给 ExoPlayer,而播放器拿到 text/html 必然失败,
+     * 表现为"点了网盘线路就报错"。
+     *
+     * <p>## 判据(为什么这样取)
+     * <ul>
+     *   <li>地址含 {@code proxy?} 且带 {@code do=} 参数 —— 这是 spider 自定义端点的形态;</li>
+     *   <li>**排除 {@code go=}**:{@code proxy?go=bom} / {@code proxy?go=live} 是既有视频代理
+     *       (见 {@code WebParseUseCase} / {@code Proxy.java}),把它们判成网页会把能播的
+     *       视频流拦下来变弹窗 —— 那是最糟的误伤;</li>
+     *   <li>**排除已知视频后缀**:万一站点把 {@code do=} 也用于视频代理,后缀判据兜一层。</li>
+     * </ul>
+     *
+     * <p>⚠️ 本判据是**约定式**的(靠地址形态推断)。之所以够用:TVBox 生态的网盘 spider
+     * 一律走 {@code proxy://do=...} 这个约定。若将来遇到不守约定的源,可在播放侧补一次
+     * Content-Type 探测作为加固(本轮不做,避免多一次网络往返)。
+     *
+     * <p>打的是 {@code needWebPage} 键,由
+     * {@link com.github.tvbox.osc.player.PlaybackFetch} 消费。
+     */
+    private void markIfWebPage(JSONObject result, String url) {
+        try {
+            if (result == null || TextUtils.isEmpty(url)) return;
+            if (!url.contains("proxy?")) return;
+            if (!url.contains("do=")) return;
+            // go= 是视频代理,不是 spider 自定义端点
+            if (url.contains("go=")) return;
+            // 已知视频后缀兜底:命中即按视频处理,不弹页
+            if (DefaultConfig.isVideoFormat(url)) return;
+            result.put("needWebPage", true);
+            LOG.i("echo-webpage mark url=" + url);
+        } catch (Throwable th) {
+            LOG.e("SourceViewModel", "markIfWebPage failed", th);
+        }
     }
 
     private void mergeSiteHeaders(JSONObject result, SourceBean sourceBean) {
