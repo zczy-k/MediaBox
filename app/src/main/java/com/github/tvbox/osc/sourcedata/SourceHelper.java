@@ -95,6 +95,16 @@ final class SourceHelper {
             for (Movie.Video video : data.movie.videoList) {
                 if (video.urlBean != null && video.urlBean.infoList != null) {
                     for (Movie.Video.UrlBean.UrlInfo urlInfo : video.urlBean.infoList) {
+                        // ⚠️ 2026-10-18:空串必须是**零条线路**,不能照旧拆。
+                        // `"".split("\\$", 2)` 得到 `[""]`(长度 1),后续会给它造一条
+                        // `InfoBean("1", "")` —— 一条 url 为空的**假线路**,点下去必然报错。
+                        // 空串的来源是 Thunder.parse:磁力/种子整路解析失败时它会显式回空串,
+                        // 让这一路从 UI 消失(见 Thunder.ParseTask 的 urlMap.put(idx, ""))。
+                        if (urlInfo == null) continue;
+                        if (TextUtils.isEmpty(urlInfo.urls)) {
+                            urlInfo.beanList = new ArrayList<>();
+                            continue;
+                        }
                         String[] str = null;
                         if (urlInfo.urls.contains("#")) {
                             str = urlInfo.urls.split("#");

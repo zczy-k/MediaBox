@@ -24,7 +24,6 @@ import com.lzy.okgo.model.Response;
 import java.io.UnsupportedEncodingException;
 import java.net.URLDecoder;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -178,53 +177,90 @@ final class PushDetailResolver {
 
 
     void checkThunder(AbsXml data, int index) {
-        // 2026-10-16:**磁力/种子通路整条停用**。理由不是"实现不好",是通路本身给不出可用体验:
-        // 迅雷 SDK 只给 3 秒取种子元数据(Thunder.java 的 30×100ms 轮询),而 DHT 拿到一份 .torrent
-        // 常常要 10~60 秒 ⇒ 云库没命中的(冷门、老片、刚出)几乎必败;更糟的是失败那一路
-        // `if (!isParse) playList.add(name + "$" + url)` 会把**裸 magnet 当可播线路**塞回列表,
-        // 用户点下去必然报错。手机在 NAT 后、无端口映射、后台被限流,退回 P2P 也补不回这个体验。
-        // 现在的做法:不再调 Thunder.parse,把磁力条目**摘掉** —— 该源还有普通线路就照常播;
-        // 全是磁力就走既有"空详情"处理(记一次源失败 → 换源),而不是留一条打不开的假线路。
-        // 注意字幕那条「迅雷字幕」是另一条通路(直挂字幕文件,不走种子下载),不受影响。
-        dropMagnetLines(data);
-        if (index == 0) {
-            detailResult.postValue(data);
-        }
-    }
-
-    /**
-     * 摘掉详情里所有磁力/迅雷/种子条目,并同步重建该线路的 urls 字符串。
-     *
-     * <p>两个字段都要改:剧集列表读 beanList,而线路映射(seriesMap)是按 urls 字符串建的 ——
-     * 只清一边会留下"看得见却点不到"或"点得到却已失效"的不一致。
-     */
-    private void dropMagnetLines(AbsXml data) {
-        if (data == null || data.movie == null || data.movie.videoList == null) return;
-        int dropped = 0;
-        for (Movie.Video video : data.movie.videoList) {
-            if (video == null || video.urlBean == null || video.urlBean.infoList == null) continue;
-            for (Movie.Video.UrlBean.UrlInfo urlInfo : video.urlBean.infoList) {
-                if (urlInfo == null || urlInfo.beanList == null) continue;
-                boolean changed = false;
-                Iterator<Movie.Video.UrlBean.UrlInfo.InfoBean> it = urlInfo.beanList.iterator();
-                while (it.hasNext()) {
-                    Movie.Video.UrlBean.UrlInfo.InfoBean bean = it.next();
-                    if (bean != null && bean.url != null && Thunder.isSupportUrl(bean.url)) {
-                        it.remove();
-                        changed = true;
-                        dropped++;
+        // 2026-10-18:**磁力/种子通路恢复**(此前 2026-10-16 由 d719b108 整条停用)。
+        //
+        // 恢复的前提是三个缺陷已修(缺一不可,原停用理由正是它们):
+        //   ① 失败时把裸 magnet 塞回列表 ⇒ 已改为丢弃并记 `dropped-unplayable`;
+        //   ② `case 1/4/2` 合并处理导致"下载中"也交地址(边下边播)⇒ 已拆开,只认 case 2;
+        //   ③ 无进度回调 ⇒ `status(code>=0, ...)` 现在会回报"正在下载 Ns"。
+        // 另把播放等待窗口从 30s 放宽到 180s —— 30s 对"下载完才能播"必然超时。
+        //
+        // 注意:字幕那条「迅雷字幕」是另一条通路(直挂字幕文件,不走种子下载),不受影响。
+        boolean thunderParse = false;
+        if (data.movie != null && data.movie.videoList != null && data.movie.videoList.size() == 1) {
+            Movie.Video video = data.movie.videoList.get(0);
+            if (video != null && video.urlBean != null && video.urlBean.infoList != null) {
+                boolean hasThunder = false;
+                thunderLoop:
+                for (int idx = 0; idx < video.urlBean.infoList.size(); idx++) {
+                    Movie.Video.UrlBean.UrlInfo urlInfo = video.urlBean.infoList.get(idx);
+                    if (urlInfo == null || urlInfo.beanList == null) continue;
+                    for (Movie.Video.UrlBean.UrlInfo.InfoBean infoBean : urlInfo.beanList) {
+                        if (infoBean != null && infoBean.url != null && Thunder.isSupportUrl(infoBean.url)) {
+                            hasThunder = true;
+                            break thunderLoop;
+                        }
                     }
                 }
-                if (!changed) continue;
-                List<String> kept = new ArrayList<>();
-                for (Movie.Video.UrlBean.UrlInfo.InfoBean bean : urlInfo.beanList) {
-                    if (bean != null) kept.add(bean.name + "$" + bean.url);
+                if (hasThunder) {
+                    thunderParse = true;
+                    Thunder.parse(App.getInstance(), video.urlBean, new Thunder.ThunderCallback() {
+                        @Override
+                        public void status(int code, String info) {
+                            if (code >= 0) {
+                                // 进度(修复 ③):非错误码,只记日志,不污染首集名
+                                LOG.i("echo-thunder progress " + info);
+                            } else {
+                                // 这个回调在线程池线程上跑,越界/空指针会直接崩进程:源结构不完整时只放弃改首集名
+                                Movie.Video.UrlBean.UrlInfo first = video.urlBean.infoList.isEmpty() ? null : video.urlBean.infoList.get(0);
+                                if (first != null && first.beanList != null && !first.beanList.isEmpty()) {
+                                    first.beanList.get(0).name = info;
+                                }
+                                detailResult.postValue(data);
+                            }
+                        }
+
+                        @Override
+                        public void list(Map<Integer, String> urlMap) {
+                            for (int key : urlMap.keySet()) {
+                                if (key < 0 || key >= video.urlBean.infoList.size()) continue;
+                                Movie.Video.UrlBean.UrlInfo urlInfo = video.urlBean.infoList.get(key);
+                                if (urlInfo == null) continue;
+                                String playList = urlMap.get(key);
+                                urlInfo.urls = playList;
+                                List<Movie.Video.UrlBean.UrlInfo.InfoBean> infoBeanList = new ArrayList<>();
+                                // ⚠️ 2026-10-18:空串 = "这一路磁力全部不可播",必须是**零条线路**。
+                                // 不能往下走 split:那样会造出 url 为空的假线路(点了必报错)。
+                                if (TextUtils.isEmpty(playList)) {
+                                    urlInfo.beanList = infoBeanList;
+                                    continue;
+                                }
+                                String[] str = playList.split("#");
+                                for (String s : str) {
+                                    if (s.contains("$")) {
+                                        String[] ss = s.split("\\$", 2);
+                                        if (ss.length >= 2) {
+                                            infoBeanList.add(new Movie.Video.UrlBean.UrlInfo.InfoBean(ss[0], ss[1]));
+                                        } else if (ss.length == 1) {
+                                            infoBeanList.add(new Movie.Video.UrlBean.UrlInfo.InfoBean((infoBeanList.size() + 1) + "", ss[0]));
+                                        }
+                                    }
+                                }
+                                urlInfo.beanList = infoBeanList;
+                            }
+                            detailResult.postValue(data);
+                        }
+
+                        @Override
+                        public void play(String url) {
+                            // 详情侧不接管起播:地址由播放侧按线路点击时现取(见 PlaybackController)
+                        }
+                    });
                 }
-                urlInfo.urls = TextUtils.join("#", kept);
             }
         }
-        if (dropped > 0) {
-            LOG.i("echo-thunder disabled reason=magnet-lines dropped=" + dropped);
+        if (!thunderParse && index == 0) {
+            detailResult.postValue(data);
         }
     }
 

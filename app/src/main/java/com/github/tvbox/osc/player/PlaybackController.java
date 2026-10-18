@@ -1354,15 +1354,29 @@ public class PlaybackController {
             }
             return;
         }
-        // 磁力/种子通路已整条停用(判据与理由见 PushDetailResolver.checkThunder)。
-        // 详情侧已经把磁力条目摘掉了,还能走到这里说明是别的路径递进来的(历史遗留线路表、
-        // 推送一条裸 magnet、缓存里的旧详情)—— 一律按"这条线路不可播"收口:走既有
-        // 失败链(降档→换线→换源),绝不给迅雷起下载任务,也不让它把地址交给内核。
-        if (vs.url != null && (Thunder.isSupportUrl(vs.url)
-                || vs.url.startsWith("tvbox-torrent:") || vs.url.startsWith("tvbox-oth:"))) {
-            LOG.i("echo-thunder disabled reason=play-attempt");
+        // 磁力/种子取流是异步的(可能数十秒,种子下载完才交地址),故带发起时的代际:
+        // 回调里 playUrl(thunderGen, ...) 会校验这一代是否仍是当前代,切集/换线后旧地址不得起播。
+        //
+        // 2026-10-18:此块由 d719b108 的停用版恢复。恢复的前提是 Thunder 侧三个缺陷已修
+        // (细节见 Thunder.ParseTask / Thunder.play 注释),否则重蹈"点了必报错的假线路"。
+        final int thunderGen = resolver.currentGen();
+        if (Thunder.play(vs.url, new Thunder.ThunderCallback() {
+            @Override
+            public void status(int code, String info) {
+                // code >= 0 是"非错误"的进度回报(如"正在下载 Ns"),据此决定提示样式
+                if (view != null) view.showTip(info, code >= 0, code < 0);
+            }
+
+            @Override
+            public void list(Map<Integer, String> urlMap) {
+            }
+
+            @Override
+            public void play(String url) {
+                playUrl(thunderGen, url, null);
+            }
+        })) {
             if (view != null) view.showParse(false);
-            handleResolvePlayUrlFailed(str(R.string.thunder_error_invalid_url));
             return;
         }
 
