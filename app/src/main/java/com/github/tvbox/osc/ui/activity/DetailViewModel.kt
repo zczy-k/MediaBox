@@ -2058,10 +2058,11 @@ class DetailViewModel : ViewModel() {
         //
         // 分档的分母 = 本场定死的"排序后全池"(见 [sessionPlanTotal]);
         // 零命中短路只从**这一档实际投出的源**里扣,不挪档的边界。
-        // ⚠️ 分母**不能**改成 `askablePool.size`(试过,已回退):那份通过名单会在第一档里边搜边长,
-        // 按它重算会让后面几档的边界跟着漂,最终把第 2、3 档并成一档跑完
-        // —— 用户要的"点两次推进两档"变成一次([sessionPlanTotal] 的 KDoc 有真机现场)。
-        // 账目对不上(缺陷 F)要修的是**档宽与已投源的比较方式**,不是这个分母。
+        // ⚠️ 分母**不能**改成"扣过短路的池子大小"(2026-10-18 修正,原实现正是这么错的):
+        // 那份通过名单会在第一档里边搜边长,更致命的是 —— 真机《潜伏6》里
+        // 池子 317、已知零命中 259 ⇒ 扣完只剩 58 ⇒ **`waveCount(58) = 1`**
+        // ⇒ "分三档"的计划整个塌成一档,用户永远点不出第 2、3 档。
+        // 所以分母必须是**未扣短路的全池**(= [sessionPlanTotal])。
         if (sessionPlanTotal == 0) sessionPlanTotal = orderedPool.size
         val effectiveTotal = sessionPlanTotal
         // 每档问多少由分档计划定,**不再区分"手动就一次投满全池"**(2026-10-17):
@@ -2069,7 +2070,11 @@ class DetailViewModel : ViewModel() {
         sourcePoolTotal.value = effectiveTotal
         sourceSearchAsked.value = searchedSourceKeys.size
         val roundSize = roundPoolSize(effectiveTotal)
-        val sources = askablePool.take(roundSize)
+        // 这一档**本波**要投的源(只服务日志与"有没有源可搜"的判断)。
+        // 短路过滤(`knownAbsent`)在这里扣掉 —— 真正决定"投不投"的是下面波次循环里的 `wave`,
+        // 两处口径必须一致,否则日志与实际投出的数会对不上。
+        val sources = orderedPool.take(roundSize)
+            .filter { it.key !in searchedSourceKeys && it.key !in knownAbsent }
         // 这一档正在跑 ⇒ 页面上不该同时出现「继续找源」(点了也没意义,档内还在收口)
         canContinueSourceSearch.value = false
         // 诊断包靠这行判断"预热到底有没有触发、候选池多大" —— 真机日志被 ROM 屏蔽时,
@@ -2172,7 +2177,15 @@ class DetailViewModel : ViewModel() {
             // 322 个源全部答话、0 命中)。预算用完后其余源只问原词一次 ⇒ 变体收益集中在前几十个源,
             // 因为片名写法差异通常在权重最高的那批源里就能补回来。
             val variantAsks = java.util.concurrent.atomic.AtomicInteger()
-            val poolView = askablePool.take(effectiveTotal)  // 本轮有效范围(按权重降序);每波只 take 前 N 个并滤掉已投
+            // 本轮有效范围(按权重降序);每波只 take 前 N 个并滤掉已投。
+            //
+            // ⚠️ 2026-10-18:这里用 **orderedPool**(全池),让档宽基准(见 `total`/`waveSize`)
+            // 不被短路扣减 —— 否则"该问 106 个"会静默变成"只问 58 个"。
+            //
+            // **短路过滤移到下面的 `wave` 里**(那才是真正决定投不投的地方)。
+            // 曾经把短路写在 `poolView` 上,结果就是档宽被缩水;而若只在 `sources` 上过滤,
+            // 又完全不起作用(投源走的是 poolView)。两处都错,唯一正确的位置是 `wave`。
+            val poolView = orderedPool.take(effectiveTotal)
             // 查询变体(原词 + 去分隔符 + 去年份 + 去季/版本后缀 + 简繁互转),用于"该源零候选时补发一次"
             val searchVariants = SearchSettings.queryVariants(title)
             var waveSize = roundSize    // 当前波宽度(首轮 = 外层算好的 roundSize)
@@ -2186,7 +2199,13 @@ class DetailViewModel : ViewModel() {
                 // [searchedSourceKeys] 的 add 移到每个源**真正投出**(进入 withPermit)时逐条执行,
                 // 并逐条 publishSearchProgress ⇒ 分子一条一条 +1(受信号量 12 限流分批),
                 // 且分母仍是全量 total,最终**走满 322**。这同时满足"逐条真实"与"走满"。
-                val wave = poolView.take(waveSize).filter { it.key !in searchedSourceKeys }
+                // ⚠️ 2026-10-18:短路过滤(`knownAbsent`)加在这里 —— 这是**唯一**正确的位置。
+                //   - 写在 `poolView` 上 ⇒ 档宽基准被扣减(`total` 变小)⇒ "该问 106 个"变成 58 个;
+                //   - 只写在 `sources` 上 ⇒ 完全不起作用(投源走的是本行的 `poolView`)。
+                // 放在这里的效果:档的规模不变(仍按全池算 106),只是被短路的那几个源不重问
+                // —— 它们的名额由后面的源自然顶上(因为 take 的是前 waveSize 个,过滤后剩下的仍从池头开始算)。
+                val wave = poolView.take(waveSize)
+                    .filter { it.key !in searchedSourceKeys && it.key !in knownAbsent }
                 val waveSizeBefore = doneCount.get()
                 // 并发度**每波重新生效**:Semaphore 没有"改容量"的接口,所以按当前值新建
                 // (旧波的许可随旧波 awaitAll 结束一起消失,不会有两套额度并存)。
