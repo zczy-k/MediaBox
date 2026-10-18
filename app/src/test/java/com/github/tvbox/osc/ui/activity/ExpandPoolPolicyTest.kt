@@ -112,4 +112,77 @@ class ExpandPoolPolicyTest {
         assertEquals(105, ExpandPoolPolicy.remainingFor(315, 2))
         assertEquals(0, ExpandPoolPolicy.remainingFor(315, 3))
     }
+
+    // ==================== shouldAutoAdvanceOnExhaustion ====================
+
+    /**
+     * 2026-10-18 新增判据的**核心不变量**:兜底链在"候选全失败"时才会自动推进。
+     *
+     * 真机《怦然心动》现场:源池 317,自动链只跑第 1 档(106 个),9 个候选全失败
+     * 就报「视频播放出错」—— 而剩余 211 个源从未被问过,搜索 9 秒后才跑完第一档。
+     * 这个判据就是为了让兜底链**把没问过的源问完**。
+     */
+    @Test
+    fun `候选全失败且还有档时才自动推进`() {
+        // 该推进:三条闸全开
+        assertTrue(
+            ExpandPoolPolicy.shouldAutoAdvanceOnExhaustion(
+                allCandidatesFailed = true, hasMoreWave = true,
+                autoAdvancedWaves = 0, maxAutoWaves = 3,
+            )
+        )
+        assertTrue(
+            ExpandPoolPolicy.shouldAutoAdvanceOnExhaustion(
+                allCandidatesFailed = true, hasMoreWave = true,
+                autoAdvancedWaves = 2, maxAutoWaves = 3,
+            )
+        )
+    }
+
+    @Test
+    fun `还有候选没试完就不推进`() {
+        // 候选表里还有没试过的源 ⇒ 先继续试候选,不必再搜新源
+        assertFalse(
+            ExpandPoolPolicy.shouldAutoAdvanceOnExhaustion(
+                allCandidatesFailed = false, hasMoreWave = true,
+                autoAdvancedWaves = 0, maxAutoWaves = 3,
+            )
+        )
+    }
+
+    @Test
+    fun `池子已经问尽就不推进`() {
+        // 没有下一档可跑 ⇒ 该给结论了(继续"推进"只会在原地打转)
+        assertFalse(
+            ExpandPoolPolicy.shouldAutoAdvanceOnExhaustion(
+                allCandidatesFailed = true, hasMoreWave = false,
+                autoAdvancedWaves = 0, maxAutoWaves = 3,
+            )
+        )
+    }
+
+    @Test
+    fun `推进次数达到上限就停`() {
+        // ⚠️ 这条是防"无限重搜"的关键(2026-10-13 真机:token=13→14 反复,用户看到"卡死无举动")
+        assertFalse(
+            ExpandPoolPolicy.shouldAutoAdvanceOnExhaustion(
+                allCandidatesFailed = true, hasMoreWave = true,
+                autoAdvancedWaves = 3, maxAutoWaves = 3,
+            )
+        )
+        // 超过上限同样不能推进(防御性:计数只增,不该出现 >max 的合法值)
+        assertFalse(
+            ExpandPoolPolicy.shouldAutoAdvanceOnExhaustion(
+                allCandidatesFailed = true, hasMoreWave = true,
+                autoAdvancedWaves = 9, maxAutoWaves = 3,
+            )
+        )
+    }
+
+    @Test
+    fun `上限取3正好能把三档池问完`() {
+        assertEquals(3, ExpandPoolPolicy.MAX_AUTO_ADVANCE_WAVES)
+        // >300 的池子分三档 ⇒ 上限 3 恰好覆盖"自动把全池问一遍"
+        assertEquals(3, ExpandPoolPolicy.waveCount(317))
+    }
 }

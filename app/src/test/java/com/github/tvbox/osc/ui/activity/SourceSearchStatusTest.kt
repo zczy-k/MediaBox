@@ -54,4 +54,47 @@ class SourceSearchStatusTest {
         // 补的角落:搜完 0 个,点了只是再问一批,不该再写"换源"
         assertEquals(true, SourceSearchStatus.useSearchVerb(searchedOnce = true, found = 0))
     }
+
+    // ==================== emptyReason(2026-10-18) ====================
+
+    /**
+     * 空态说"没有"还是"没问到"。真机《怦然心动》问过 58 个源、其中 49 个超时、
+     * 只有 1 个答话,却统一报「此影片暂无法播放」—— 用户读到的是"这片不存在",
+     * 而该做的事其实是换个网络/时段重试。
+     */
+    @Test
+    fun `多数源超时要说没问到`() {
+        // 真机现场:58 问 / 49 超时
+        assertEquals(
+            SourceSearchStatus.EmptyReason.TIMEOUT_DOMINANT,
+            SourceSearchStatus.emptyReason(asked = 58, timedOut = 49),
+        )
+        // 恰好一半也算(判据是 timedOut*2 >= asked)
+        assertEquals(
+            SourceSearchStatus.EmptyReason.TIMEOUT_DOMINANT,
+            SourceSearchStatus.emptyReason(asked = 10, timedOut = 5),
+        )
+    }
+
+    @Test
+    fun `源都答了话确实没有就说没有`() {
+        // 过半超时才算"没问到";低于这个比例说明源确实答了话、只是没有这部片
+        assertEquals(
+            SourceSearchStatus.EmptyReason.NO_SOURCE,
+            SourceSearchStatus.emptyReason(asked = 10, timedOut = 4),
+        )
+        assertEquals(
+            SourceSearchStatus.EmptyReason.NO_SOURCE,
+            SourceSearchStatus.emptyReason(asked = 100, timedOut = 0),
+        )
+    }
+
+    @Test
+    fun `一个源都没问过时按没有处理`() {
+        // asked=0 说明还没开始问,不能说"多数超时";且这条路径本来也不该走到空态
+        assertEquals(
+            SourceSearchStatus.EmptyReason.NO_SOURCE,
+            SourceSearchStatus.emptyReason(asked = 0, timedOut = 0),
+        )
+    }
 }

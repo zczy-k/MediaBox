@@ -63,4 +63,45 @@ class NoHitSourcePolicyTest {
     fun `空名单不假装有过结论`() {
         assertEquals(emptyList<String>(), NoHitSourcePolicy.merge(emptyList(), emptyList()))
     }
+
+    // ==================== shouldBypassShortCircuit(2026-10-18) ====================
+
+    /**
+     * 跳过比例过大时整轮放弃短路。真机《怦然心动》:源池 317、已知零命中 259 =
+     * 只问 58 个(18%),而那是热门片 —— 短路把机会先掐掉了。
+     * 它否定的已不是"重复劳动",而是"这部片到底有没有"这个结论的可信度。
+     */
+    @Test
+    fun `跳过比例过高时绕过短路`() {
+        // 真机现场:259/317 = 82%
+        assertTrue(NoHitSourcePolicy.shouldBypassShortCircuit(259, 317))
+        // 恰好在阈值上(70%)
+        assertTrue(NoHitSourcePolicy.shouldBypassShortCircuit(70, 100))
+    }
+
+    @Test
+    fun `跳过比例正常时不绕过`() {
+        // 60% 仍属"省掉大部分重复"的合理区间
+        assertFalse(NoHitSourcePolicy.shouldBypassShortCircuit(60, 100))
+        assertFalse(NoHitSourcePolicy.shouldBypassShortCircuit(0, 317))
+    }
+
+    @Test
+    fun `阈值与边界`() {
+        assertEquals(70, NoHitSourcePolicy.BYPASS_RATIO_PERCENT)
+        // 空池/负数一律不绕过(没有"跳过太多"可言,也避免除零)
+        assertFalse(NoHitSourcePolicy.shouldBypassShortCircuit(0, 0))
+        assertFalse(NoHitSourcePolicy.shouldBypassShortCircuit(5, 0))
+        assertFalse(NoHitSourcePolicy.shouldBypassShortCircuit(-1, 100))
+        // 全部跳过 ⇒ 必然绕过
+        assertTrue(NoHitSourcePolicy.shouldBypassShortCircuit(100, 100))
+    }
+
+    @Test
+    fun `小订阅不被同一阈值误伤`() {
+        // 判据是**比例**而非绝对数:池子本来只有 30 个源时,
+        // "跳过 21 个"同样算比例过高(该重问),而"跳过 10 个"不该绕
+        assertTrue(NoHitSourcePolicy.shouldBypassShortCircuit(21, 30))
+        assertFalse(NoHitSourcePolicy.shouldBypassShortCircuit(10, 30))
+    }
 }
