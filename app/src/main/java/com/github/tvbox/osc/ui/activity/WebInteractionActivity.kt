@@ -78,7 +78,18 @@ class WebInteractionActivity : BaseActivity() {
         /** 顶部标题(可选);为空则用页面 title */
         private const val EXTRA_TITLE = "title"
 
-        fun start(context: Context, url: String, title: String? = null) {
+        /**
+         * 打开 Web 交互页。
+         *
+         * <p>⚠️ 参数**刻意不给默认值**:本方法会被 Java 侧调用
+         * ({@code PlaybackFetch}),而 Kotlin companion object 的默认参数
+         * 不会为 Java 生成重载 —— 带默认值时 Java 只能看到完整签名,且可空性注解
+         * 会让 `String?` 实参匹配失败(真机 CI 已实测:
+         * `cannot find symbol: method start(Context,String,String)`)。
+         * 需要"不传标题"时显式传 null。
+         */
+        @JvmStatic
+        fun start(context: Context, url: String, title: String?) {
             if (url.isEmpty()) return
             context.startActivity(
                 Intent(context, WebInteractionActivity::class.java)
@@ -146,12 +157,15 @@ private fun WebInteractionPage(
 ) {
     var pageTitle by remember { mutableStateOf(initialTitle) }
     var progress by remember { mutableStateOf(0) }
-    var webView by remember { mutableStateOf<WebView?>(null) }
+    // ⚠️ WebView 用**普通持有器**而不是 `mutableStateOf`:
+    // factory/update 是组合期回调,在那里写 Compose state 会触发"组合期状态写入",
+    // 可能引起重组循环(BackHandler 需要它,但 BackHandler 读的是最新值,不需要触发重组)。
+    val holder = remember { arrayOfNulls<WebView>(1) }
     val host = remember { Uri.parse(url).host.orEmpty() }
 
     // 系统返回:能回退就回退页面历史,否则关页(用户预期:返回键先退网页)
     BackHandler(enabled = true) {
-        val wv = webView
+        val wv = holder[0]
         if (wv != null && wv.canGoBack()) wv.goBack() else onClose()
     }
 
@@ -236,11 +250,11 @@ private fun WebInteractionPage(
                                 t?.takeIf { it.isNotBlank() }?.let { pageTitle = it }
                             }
                         }
-                        webView = this
+                        holder[0] = this
                         loadUrl(url)
                     }
                 },
-                update = { wv -> webView = wv },
+                update = { wv -> holder[0] = wv },
             )
             if (progress in 0..0) {
                 CircularProgressIndicator(
