@@ -101,6 +101,14 @@ public class SourceViewModel extends ViewModel {
                     try {
                         Spider sp = ApiConfig.get().getCSP(sourceBean);
                         String json = sp.action(action);
+                        // 埋点(2026-10-18):action 的原始返回此前**从未落盘** ——
+                        // 而网盘扫码登录的入口正是 action(实测 MDrive 源返回 action=LoginShow)。
+                        // 消费方(HomeViewModel/PartitionListViewModel)只读 msg 字段,
+                        // 其余字段(登录页地址/二维码)全被丢弃;要补齐就必须先看清 spider 返回什么。
+                        // 打印原始 JSON 便于确定字段名,不改任何行为。
+                        LOG.i("echo-action source=" + sourceKey + " action=" + action
+                                + " len=" + (json == null ? 0 : json.length())
+                                + " raw=" + json);
                         actionResult.postValue(TextUtils.isEmpty(json) ? null : new JSONObject(json));
                     } catch (Throwable th) {
                         LOG.e("SourceViewModel", th);
