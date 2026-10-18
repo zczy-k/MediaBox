@@ -83,7 +83,6 @@
     <string name="update_download_failed">下載失敗，網路連線錯誤</string>
     <string name="update_no_apk">該版本沒有可下載的安裝檔</string>
     <string name="update_close">關閉</string>
-    <string name="web_interaction_close">關閉</string>
     <string name="force_update_title">發現新版本</string>
     <string name="force_update_message">目前版本 v%1$s，必須更新到 v%2$s 後才能繼續使用</string>
     <string name="force_update_now">立即更新</string>

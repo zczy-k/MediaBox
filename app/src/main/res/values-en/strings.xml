@@ -83,7 +83,6 @@
     <string name="update_download_failed">Download failed, network error</string>
     <string name="update_no_apk">This release has no downloadable APK</string>
     <string name="update_close">Close</string>
-    <string name="web_interaction_close">Close</string>
     <string name="force_update_title">Update available</string>
     <string name="force_update_message">You are on v%1$s. Version v%2$s is required to keep using the app.</string>
     <string name="force_update_now">Update now</string>
