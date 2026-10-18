@@ -536,7 +536,7 @@
     <string name="settings_source_unblock_all">Unblock all</string>
     <string name="settings_buffer_time">Buffer Time</string>
     <string name="settings_search_threads">Sources Searched At Once</string>
-    <string name="settings_search_threads_subtitle">Caps both finding titles and switching sources</string>
+    <string name="settings_search_threads_subtitle">Searching uses all threads; switching uses half (max 16)</string>
 
     <!-- Settings: secondary page group labels -->
     <string name="settings_group_play_picture">Engine &amp; Picture</string>

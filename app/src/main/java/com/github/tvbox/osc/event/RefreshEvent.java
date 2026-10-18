@@ -89,6 +89,26 @@ public class RefreshEvent {
      * 撤销要的是画面凭据，所以这里给一条独立的、语义明确的事件（编号不复用 29 之前的空洞）。
      */
     public static final int TYPE_PLAYBACK_PICTURE_UP = 30;
+
+    /**
+     * **首帧真的渲染出来了**（media3 {@code onRenderedFirstFrame}），由 {@code ExoPlayer} 发出。
+     *
+     * <p>这是"起播成功"唯一**及时**的证据，也是本 App 里"该让路了"的最早可用时点。
+     * 详情页据此做两件事：启动源内画质扫描、让后台聚合搜索收手。
+     *
+     * <p>## 为什么不能复用现有两条事件
+     * <ul>
+     *   <li>{@link #TYPE_PLAYBACK_STARTED}：判据是播放头推进到"真看进去了"的阈值
+     *       （{@code WatchProgressRules.MIN_RESUME_MS = 30s}），语义是"看过 ⇒ 落观看历史"。
+     *       拿它当"起播"用，画质标签和让路都会**晚 30 秒**——这正是历史实现的实际形态。</li>
+     *   <li>{@link #TYPE_PLAYBACK_PICTURE_UP}：判据同样是首帧，但**发出时机**在
+     *       {@code onPlaybackConfirmedRealPlay()}（连续真播 60 秒）之后，只用于撤销源标记。</li>
+     * </ul>
+     *
+     * <p>换集/换线时 {@code firstRenderedAtMs} 会归零，所以本事件**每集发一次**，
+     * 且始终指"当前这一集/这一条线路"的首帧，不会拿上一集的画面上屏来冒充。
+     */
+    public static final int TYPE_PLAYBACK_FIRST_FRAME = 31;
     public int type;
     public Object obj;
 

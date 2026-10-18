@@ -239,12 +239,17 @@ class DetailViewModel : ViewModel() {
     private var probeExhausted = false
 
     /**
-     * 起播后"源内有界扫描"的每片会话闩(键 = 站点|片id)。
+     * 起播后"源内有界扫描"的**进度**(键 = 站点|片id + 已测成功的线路名集合)。
      *
-     * <p>同一部片每会话只扫一次:扫描会真实解析爬虫线路(一次 API 调用/条),
-     * 反复扫既浪费又会触发源站风控。换片自然失效(键不同)。
+     * <p>为什么不是"扫过/没扫过"的布尔:扫描可能在中途被播放压力打断(见
+     * [sweepSourceLinesForQuality] 的让路判据)。用布尔的话,中断即等于"这轮扫过了",
+     * 这部片在本会话里**永远不会再扫**,画质标签永久缺失。记进度则可以从断点续扫。
+     *
+     * <p>只记**测成功的**线路:失败(超时/解析不出/读不到尺寸)的线路下次仍值得重试,
+     * 它们的重复次数由 [ProbeRoundPolicy] 另行兜住,不在这里管。
      */
-    private var sourceSweepDoneKey = ""
+    private var sourceSweepKey = ""
+    private val sourceSweepDoneFlags = HashSet<String>()
 
     /** 当前片当前源是否已收敛(sweep 已出 verdict、不会再自动升档)。跨源提示只在收敛后出场。 */
     private var sourceConverged = false
@@ -571,10 +576,29 @@ class DetailViewModel : ViewModel() {
      * (真机实测:js_douban 缺 list 字段那次,看门狗布防 2 次从未触发)。
      * 预算计时器则**不因回包而撤**,只在离开 Loading 时自然失效(到点后先查 pageState)。
      *
-     * <p>取 15s 的依据:详情侧并发 12、单源 8s ⇒ 首屏一批 24 源的最坏耗时 ≈ 16s,
-     * 预算取整对齐;再短会让"慢但能用"的源来不及回话。
+     * <p>取 15s 的依据:详情侧并发上限 16(默认线程 32 打对折,见
+     * [SearchBatchPolicy.detailConcurrencyCap])、单源超时 8s ⇒ 首屏一批 24 源最坏 ≈ 16s。
+     * 预算取 15s **略小于**最坏值,是刻意取舍:宁可早 1 秒给出确定画面,
+     * 也不让用户对着转圈把最坏情况等满。
      */
     private val loadingBudget = Runnable { onLoadingBudgetExpired() }
+
+    /**
+     * 候选站详情超时(3s):换源链里当前候选迟迟不回包时,跳到下一个候选。
+     *
+     * <p>**必须是具名字段,不能写成匿名 lambda**。它和 [detailWatchdog]、[loadingBudget]
+     * 共用同一个 [mainHandler],而 [cancelDetailTimeout] 要能**精确地只撤自己布防的任务** ——
+     * 匿名 lambda 拿不到引用,只能退化成 `removeCallbacksAndMessages(null)`,
+     * 那会把同一 Handler 上别人的任务一并清掉(历史上就是这样误撤了加载预算)。
+     */
+    private val candidateDetailTimeout = Runnable {
+        detailTimeoutScheduled = false
+        if (fallbackLoadingCandidate) {
+            fallbackLoadingCandidate = false
+            OkGo.getInstance().cancelTag("detail")
+            loadNextFallbackCandidate()
+        }
+    }
 
     private class SwitchSnapshot(
         val vodInfo: VodInfo,
@@ -1081,10 +1105,11 @@ class DetailViewModel : ViewModel() {
      *       升档要等看门狗下一个富余周期,真机上往往错过(用户已经换片了)。</li>
      * </ul>
      *
-     * <p>**不阻塞首帧**:只在 `TYPE_PLAYBACK_STARTED`(起播成功)之后跑,每片每会话最多一次。
+     * <p>**不阻塞首帧**:只在**首帧渲染之后**跑([onPlaybackFirstFrame],由
+     * `TYPE_PLAYBACK_FIRST_FRAME` 驱动),每片每会话按线路累计一次(见 [sourceSweepDoneFlags])。
      * 切入时间也不早于 [QualityGovernor.MIN_REMEDY_DELAY_MS] —— 刚看到画面就黑屏一次最刺眼。
      *
-     * <p>⚠️ 尚未实现"让路":播放卡顿时暂停扫描,需要把看门狗的劣质信号广播到 VM
+     * <p>⚠️ 尚未实现"播放卡顿时暂停扫描":需要把看门狗的劣质信号广播到 VM
      * (现有两条探测路径同样没有,属同类欠账)。
      */
     private fun sweepSourceLinesForQuality() {
@@ -1093,7 +1118,11 @@ class DetailViewModel : ViewModel() {
         val vod = vodId
         if (siteKey.isEmpty() || vod.isEmpty()) return
         val sweepKey = "$siteKey|$vod"
-        if (sourceSweepDoneKey == sweepKey) return
+        // 换片/换源 ⇒ 进度作废(键不同,顺手把上一部的集合清掉,免得越攒越大)
+        if (sourceSweepKey != sweepKey) {
+            sourceSweepKey = sweepKey
+            sourceSweepDoneFlags.clear()
+        }
         // 速度优先:用户明确不要这类额外请求(与起播前探测同一口径)
         val mode = DeviceCapability.effectiveMode()
         if (!mode.shouldProbeOnFirstWatch) return
@@ -1149,6 +1178,13 @@ class DetailViewModel : ViewModel() {
             LOG.i("echo-quality sweep skip: nothing missing")
             return
         }
+        // 断点续扫:本会话已经**测成功**的线路不再重测。
+        // 若这一批全都在已完成集合里 ⇒ 本轮无事可做(不是"永久不再扫",下一集/换线后集合可能变化)。
+        val remaining = missing.filter { it !in sourceSweepDoneFlags }
+        if (remaining.isEmpty()) {
+            LOG.i("echo-quality sweep skip: all-probed n=${missing.size} site=$siteKey vod=$vod")
+            return
+        }
         // 重复探测的上限(2026-10-15 用户定案):当前源所有线路探一遍之后,最多再重复两遍,
         // 三遍都没测出新东西就认"这条片这个源确实探不到",不再每次进详情页重烧一遍带宽。
         // 真机触发点:《狮子王》那个源 4 条线路有 3 条永远测不出(其中一条是 AES 加密分片列表,
@@ -1159,14 +1195,18 @@ class DetailViewModel : ViewModel() {
             LOG.i("echo-quality sweep skip: probe-rounds=" + doneRounds + " site=" + siteKey + " vod=" + vod)
             return
         }
-        sourceSweepDoneKey = sweepKey
+        // ⚠️ 这里**不写**"扫过了"的标记。标记的语义是"进度"(见 [sourceSweepDoneFlags]):
+        // 每测成功一条就加一个 flag,全部完成才等价于"扫完了"。
+        // 旧实现在**循环开始前**就把布尔标记写上,于是中途被压力/换片打断时,
+        // 这部片在本会话里永远不会再扫 —— 用户只是恰好卡了一下,画质标签就永久缺失。
         // 不再按 currentFlag 取集号:统一解析路径自己定位集号(resolveTargetForProbe → probeIndexOf),
         // 因为探测地址与"当前线路"无关(旧代码用当前线路的 index 去取别条线路的 series.url,本身就是近似)
         val headers = probeHeaders(siteKey)
         val probe = VideoQualityProbe()
         val token = detailBuildToken
         LOG.i(
-            "echo-quality sweep start missing=" + missing.size + " lines=" + siteOrder.size +
+            "echo-quality sweep start missing=" + missing.size +
+                " remaining=" + remaining.size + " lines=" + siteOrder.size +
                 " cap=" + cap + " mode=" + mode.name +
                 " anchorSkipLower=" + meetsAnchorNow + " saver=" + trafficSaver
         )
@@ -1183,14 +1223,14 @@ class DetailViewModel : ViewModel() {
             //
             // 成本由 SourceSweepBudget.totalMs(45s)统一兜底:预算耗尽即停,并记下还剩几条没跑。
             // 条数**不设上限**(旧的 maxLines/deepProbeMax 两个魔法数字已删)。
-            LOG.i("echo-quality deep-probe plan=" + missing.size + " (budget-bound, no quota)")
+            LOG.i("echo-quality deep-probe plan=" + remaining.size + " (budget-bound, no quota)")
             val deepProbed = ArrayList<VideoQualityPolicy.Variant>()
             var viaSpider = 0
             var viaDirect = 0
-            for (i in missing.indices) {
-                val flag = missing[i]
+            for (i in remaining.indices) {
+                val flag = remaining[i]
                 if (System.currentTimeMillis() - startedAt > SourceSweepBudget.totalMs) {
-                    LOG.i("echo-quality deep-probe budget-out skipped=" + (missing.size - i))
+                    LOG.i("echo-quality deep-probe budget-out skipped=" + (remaining.size - i))
                     break
                 }
                 // ⚠️ "解析失败" 与 "探测失败" 必须分开记。
@@ -1229,6 +1269,9 @@ class DetailViewModel : ViewModel() {
                     probeNegativeAt[flag] = System.currentTimeMillis()
                     continue
                 }
+                // 这一条**测成功**了 ⇒ 记进进度集合。中断(压力/换片/预算)后重进时不再重测它,
+                // 于是"被打断"只损失当次进度,不会让整片永远停在开头几条线路上。
+                sourceSweepDoneFlags.add(flag)
                 if (via == "direct") viaDirect++ else viaSpider++
                 LOG.i(
                     "echo-quality deep-probe ok flag=" + flag +
@@ -1702,7 +1745,9 @@ class DetailViewModel : ViewModel() {
                 // P-完整性起播决策:记忆已知当前源"严重不全"(如 1/50)⇒ 不起播它,留在 Loading
                 // 走换源链(候选已按完整度排序,最全候选先试);链收口无果时回退起播当前源
                 // (见 finishFallbackWithoutResult 的 pendingCompletenessSkip 分支)。
-                // 权威未知 / 非"严重不全"档:照常秒开,聚合在播放中并行,不受影响。
+                // 权威未知 / 非"严重不全"档:照常秒开。
+                // ⚠️ 起播后聚合搜索会被 [freezeFallbackSearch] 冻结(只保留在途回包),
+                // **不是**"在播放中并行"—— 后台搜索只存在于详情失败/用户换源这两条路上。
                 val confirmedSet = CompletenessMemory.confirmedSet(completenessTitleKey)
                 if (SourceCompletenessPolicy.tier(completenessOwnSet, confirmedSet) ==
                     SourceCompletenessPolicy.Tier.BACKUP
@@ -2145,6 +2190,13 @@ class DetailViewModel : ViewModel() {
                 // 问过多少个:每档收口就入账。放在"让路 return"之前 —— 被冻结/换片打断的那一档
                 // 同样真的问过这些源,那一行的数字不该退回 0。
                 sourceSearchAsked.value = searchedSourceKeys.size
+                // ⚠️ 「继续找源」的入口也必须在让路 return **之前**置位。
+                // 旧实现只在下面正常收口分支里设置,于是"搜索被冻结打断"这条路上
+                // 入口永远不出现 —— 用户明明还有 2/3 池没问,却没有任何地方能推进。
+                // (这条路径长期被 manualSwitchActive 闩锁掩盖着,闩锁修好后就会暴露。)
+                if (tokenStr == currentTokenStr()) {
+                    canContinueSourceSearch.value = ExpandPoolPolicy.hasNextWave(total, poolRound)
+                }
                 // 让路:换片/冻结后立即停(别再投下一波、也别走收口)
                 if (!searchActive(tokenStr)) return@launch
                 // 扩档判定(2026-10-17 用户定案):**自动链只跑第 1 档**,跑完就停下给结论;
@@ -2186,13 +2238,24 @@ class DetailViewModel : ViewModel() {
                 "echo-source-search all-done done=${doneCount.get()}" +
                     " total=${total} searched=${searchedSourceKeys.size} frozen=$searchFrozen token=$myToken"
             )
-            // 「不冻结」闩锁到此解除(2026-10-14 审查修正):manualSwitchActive 旧实现只在**换片**时复位,
-            // 于是用户点过一次「换源」之后,这部片**每一次**起播成功都不再冻结搜索 ——
-            // v1.1.4 想消灭的"边播边狂搜几百个源"会换个形式回来。
-            // 只在"确实把源投尽了"时解除;中途被冻结/换片打断的半轮仍保留意图,下次续搜接着跑全量。
-            if (searchedSourceKeys.size >= total && manualSwitchActive) {
+            // 「不冻结」闩锁到此解除。
+            //
+            // 历史:旧实现只在"把整池源都问尽"(searchedSourceKeys.size >= total)时解除,
+            // 而 2026-10-17 定案"一次点击只推进一档"(一档 = 1/3 池) ⇒ **这个条件永远不成立**
+            // ⇒ 用户点过一次「换源」后,这部片的起播冻结**永久失效**,搜索会一直跑到用户离开。
+            //
+            // 现在:一轮手动搜索走到收口(一档跑完 / 投尽全池)就算完成使命,立刻释放。
+            // ⚠️ 刻意**不**按"起播后 N 秒"提前释放:用户点一次换源,期待的是这一档搜完,
+            // 中途掐断只会让他拿到 1/3 档的结果 —— 那是更差的体验。
+            if (manualSwitchActive) {
                 manualSwitchActive = false
-                LOG.i("echo-source-switch manual pass complete, re-arm freeze token=$myToken")
+                // 短路判定按场缓存,而它的输入里有 manualSwitchActive(见 shortCircuitThisSession)。
+                // 不同步清掉缓存的话,闩锁释放了、短路却仍然永久失效 —— 一个闩锁两处伤害的另一半。
+                noHitShortCircuit = null
+                LOG.i(
+                    "echo-source-switch manual round done, re-arm freeze token=$myToken" +
+                        " searched=" + searchedSourceKeys.size + " total=$total"
+                )
             }
             // 源问尽了就没有"下一档"可言:按钮不该再挂着
             sourceSearchAsked.value = searchedSourceKeys.size
@@ -2755,9 +2818,6 @@ class DetailViewModel : ViewModel() {
             sourceBoard.ordinalOf(sourceKey) - 1,
             str(R.string.common_source_anonymous_prefix),
         )
-
-    /** 详情页候选源那一行的分区标题。同样不能带任何源身份信息。 */
-    fun sourceSectionTitle(): String = str(R.string.detail_switch_source)
 
     fun candidateForKey(key: String): Movie.Video? =
         synchronized(fallbackCandidates) { fallbackCandidates.firstOrNull { it.sourceKey == key } }
@@ -3535,21 +3595,17 @@ class DetailViewModel : ViewModel() {
     private fun scheduleDetailTimeout() {
         if (detailTimeoutScheduled) return
         detailTimeoutScheduled = true
-        mainHandler.postDelayed({
-            detailTimeoutScheduled = false
-            if (fallbackLoadingCandidate) {
-                fallbackLoadingCandidate = false
-                OkGo.getInstance().cancelTag("detail")
-                loadNextFallbackCandidate()
-            }
-        }, DETAIL_FALLBACK_DETAIL_TIMEOUT_MS)
+        mainHandler.postDelayed(candidateDetailTimeout, DETAIL_FALLBACK_DETAIL_TIMEOUT_MS)
     }
 
     private fun cancelDetailTimeout() {
         detailTimeoutScheduled = false
-        // 与候选站超时共用同一个 Handler:这把会一并摘掉详情看门狗,标记必须同步归零
-        detailWatchdogToken = 0
-        mainHandler.removeCallbacksAndMessages(null)
+        // ⚠️ 只撤**自己布防的两个**任务,绝不能用 `removeCallbacksAndMessages(null)`:
+        // 同一个 Handler 上还挂着 [loadingBudget] —— 那是"页面停在 Loading 超过 15s
+        // 必须给用户一个确定画面"的最后一道保险。一并摘掉的表现就是:详情慢或压根不回包时,
+        // 页面无限转圈、看门狗也不再报,用户只能退出重进。
+        mainHandler.removeCallbacks(candidateDetailTimeout)
+        disarmDetailWatchdog()
     }
 
     private fun captureFallbackEpisode() {
@@ -4181,6 +4237,10 @@ class DetailViewModel : ViewModel() {
             revokeBoardMarkWithPicture()
             return
         }
+        if (event.type == RefreshEvent.TYPE_PLAYBACK_FIRST_FRAME) {
+            onPlaybackFirstFrame()
+            return
+        }
         // 实测画质写进记忆了:重算一次「线路N · 1080P」。不发这个事件的话,
         // 标签本次会话永远刷不出来 —— 探测跑在独立作用域上,这是它唯一的回传途径。
         if (event.type == RefreshEvent.TYPE_LINE_QUALITY_MEASURED) {
@@ -4237,6 +4297,45 @@ class DetailViewModel : ViewModel() {
         }
     }
 
+    /**
+     * 首帧已渲染:这是"起播成功"**最早也最准**的时点(media3 `onRenderedFirstFrame`)。
+     *
+     * <p>## 为什么单独一条通路
+     * 挂在这里的两件事此前都挂在 [onPlaybackStarted] 上,而那个函数由
+     * `TYPE_PLAYBACK_STARTED` 驱动 —— 它的判据是播放头推进到
+     * [com.github.tvbox.osc.util.WatchProgressRules.MIN_RESUME_MS](30 秒)。
+     * 于是:
+     * <ul>
+     *   <li>源内画质扫描要等 30 秒才启动 ⇒ 看短剧/看几分钟就走的用户,画质标签永远出不来;</li>
+     *   <li>后台聚合搜索要等 30 秒才让路 ⇒ 首帧与起播缓冲期完全没人让,那正是最该让的时段。</li>
+     * </ul>
+     * 迁移到首帧后,两者都提前到约 1~3 秒。
+     *
+     * <p>## 一致性
+     * 守卫沿用四元组(内容 id + 源 + 线路 + 集):换源/切集交错的瞬间,
+     * 迟到的首帧属于**上一内容**,不许给当前这一行改状态。
+     */
+    private fun onPlaybackFirstFrame() {
+        val info = vodInfo ?: return
+        val playing = App.getInstance().vodInfo ?: return
+        if (playing.id != info.id || playing.sourceKey != info.sourceKey) return
+        if (playing.playFlag != info.playFlag || playing.playIndex != info.playIndex) return
+        LOG.i(
+            "echo-play-first-frame key=$sourceKey id=$vodId" +
+                " flag=${info.playFlag} idx=${info.playIndex}"
+        )
+        // 画面已出 ⇒ 允许"打开线路面板时按需探爬虫型线路"这类后置探测
+        playbackStartedHere = true
+        publishLineQualityHeights()
+        // 源内有界扫描:每片每会话一次(内部自带闩与取消域,幂等)
+        sweepSourceLinesForQuality()
+        // 画面已经出来了 ⇒ 后台聚合搜索到此为止。
+        // 是"冻结"不是"取消":在途的照收(证据不丢);这条源一旦放不出来,
+        // 换源链会重新发起一轮新搜索([ensureSourceSearchRunning] 只看 sourcesSearching)。
+        // 用户主动换源期间由 [freezeFallbackSearch] 内部的 manualSwitchActive 早退豁免。
+        freezeFallbackSearch()
+    }
+
     private fun onPlaybackStarted() {
         val info = vodInfo ?: return
         val playing = App.getInstance().vodInfo ?: return
@@ -4255,17 +4354,15 @@ class DetailViewModel : ViewModel() {
         // **一次都不看画面**;把它当"这源能放"的证据 ⇒ 真机那种整段黑屏只有声音的源,
         // 一次就把自己洗白,而源加分却要真播 60 秒(隐藏严、撤销松,状态被抖来抖去)。
         // 撤销现在只走 [revokeBoardMarkWithPicture] —— 凭据是画面真的上过屏。
-        // 首帧已出 ⇒ 允许"打开线路面板时按需探爬虫型线路"这类后置探测
+        //
+        // ⚠️ 源内画质扫描与后台搜索冻结**不在这里**做(2026-10-18 迁移)。
+        // 本函数由 TYPE_PLAYBACK_STARTED 触发,而它的判据是播放头推进到
+        // WatchProgressRules.MIN_RESUME_MS(30 秒) —— 把"该让路"和"该探画质"挂在这上面,
+        // 等于两者都要等 30 秒才启动。现在它们改由 [onPlaybackFirstFrame] 驱动(首帧即触发)。
+        //
+        // 这里补一次 [playbackStartedHere] 是**兜底**:纯音频 / 判不了画面的内容永远等不到
+        // 首帧事件,不补的话"打开线路面板时按需探爬虫型线路"对它们会永久失效。
         playbackStartedHere = true
-        // 起播成功后启动"源内有界扫描"(见《选线机制设计》附录 G)。**放在这里而非起播前**,
-        // 是为了不占用首帧:起播前只做 ≤1~2s 的直链轻探,重活(全源扫描 + 爬虫深探)全部后置。
-        // 每片每会话只跑一次(内部有闩),幂等且自带取消域。
-        sweepSourceLinesForQuality()
-        // 画面已经出来了 ⇒ 后台聚合搜索到此为止(2026-10-13,P1):不再为"可能需要的候选"
-        // 把剩下上百个源搜完 —— 那些请求正在跟刚开始缓冲的播放流抢带宽。
-        // 是"冻结"不是"取消":在途的照收(证据不丢),而且这条源一旦放不出来,
-        // 换源链会重新发起一轮新搜索([ensureSourceSearchRunning] 只看 sourcesSearching)。
-        freezeFallbackSearch()
     }
 
     private fun syncPlayingVodInfo(playing: VodInfo) {

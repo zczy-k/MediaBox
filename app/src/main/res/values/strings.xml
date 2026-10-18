@@ -551,7 +551,7 @@
     <string name="settings_source_unblock_all">全部解除</string>
     <string name="settings_buffer_time">缓冲时间</string>
     <string name="settings_search_threads">同时搜索的源数</string>
-    <string name="settings_search_threads_subtitle">找片和换源都用它当上限</string>
+    <string name="settings_search_threads_subtitle">找片用全量；换源打对折（最多 16）</string>
 
     <!-- 设置:二级页分组小标题 -->
     <string name="settings_group_play_picture">内核与画面</string>

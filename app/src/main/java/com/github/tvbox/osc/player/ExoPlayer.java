@@ -9,6 +9,7 @@ import android.view.SurfaceHolder;
 
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.base.App;
+import com.github.tvbox.osc.event.RefreshEvent;
 import com.github.tvbox.osc.player.effect.PictureEffects;
 import com.github.tvbox.osc.player.effect.RedrawPolicy;
 import com.github.tvbox.osc.player.effect.ReplayableCacheVideoRenderer;
@@ -18,6 +19,7 @@ import com.github.tvbox.osc.util.LOG;
 import com.github.tvbox.osc.util.KV;
 import com.github.tvbox.osc.util.LanguageManager;
 import com.github.tvbox.osc.util.PlayerHelper;
+import org.greenrobot.eventbus.EventBus;
 import androidx.media3.common.C;
 import androidx.media3.common.ColorInfo;
 import androidx.media3.common.Effect;
@@ -295,6 +297,12 @@ public class ExoPlayer extends ExoMediaPlayer {
             public void onRenderedFirstFrame() {
                 if (firstRenderedAtMs == 0L) {
                     firstRenderedAtMs = android.os.SystemClock.elapsedRealtime();
+                    // 首帧 = "画面真的上屏"，是本 App 里最早可用的"起播成功"证据。
+                    // 详情页据此启动源内画质扫描、并让后台聚合搜索收手。
+                    // ⚠️ 不要改用 TYPE_PLAYBACK_STARTED：那个要等播放头推进 30 秒
+                    // （观看历史判据），会让画质标签与让路都晚 30 秒。
+                    EventBus.getDefault().post(
+                            new RefreshEvent(RefreshEvent.TYPE_PLAYBACK_FIRST_FRAME));
                 }
             }
 
