@@ -486,6 +486,17 @@ class DetailViewModel : ViewModel() {
     private val searchedSourceKeys = HashSet<String>()
 
     /**
+     * 本场**判定为超时**的源数([SourceSearchStatus.emptyReason] 的唯一入参来源)。
+     *
+     * <p>只服务一件事:换源链收口进空态时决定说"这部片没有"还是"多数源没答上"。
+     * 真机《潜伏6》收口时问过 58 个源、其中 49 个超时,却统一报"此影片暂无法播放" ——
+     * 那句话把"网络/源站问题"说成了"片子不存在",用户该做的事完全不同。
+     *
+     * <p>随 [searchedSourceKeys] 一起在换片时复位([startSourceSearch] 的 title 变化处)。
+     */
+    private var timedOutSourceCount = 0
+
+    /**
      * 本轮已经写过**降权证据**的源(2026-10-14):同一轮内每源只记一次。
      *
      * <p>为什么必须去重:同一源可能因重试轮/慢速回包被判定多次,不去重就会把"一次没答话"
@@ -1775,8 +1786,11 @@ class DetailViewModel : ViewModel() {
                     // 一个调用点,于是"详情能播、不搜"这条路上它永远不执行 —— 缓存明明在硬盘上,
                     // 却没人去读,用户看到的列表照样是空的。
                     //
-                    // 为什么不放在 requestPlay() 之前:它要读 MMKV + Gson 解析(最多 20 个词条 ×
-                    // 每源 30 条),压在起播前面会让点卡片多卡一下。播放永远优先。
+                    // ⚠️ 2026-10-18 修正:它内部读 MMKV + 解析整个缓存桶,**必须走 IO**
+                    // (该函数已改成挂起,内部 withContext(Dispatchers.IO))。
+                    // 早先的注释说"放在 requestPlay() 之后就能让播放优先"是**错的** ——
+                    // playSignal 由 Compose 在主线程消费,同一派发内 playCurrent() 只能等本协程块
+                    // 结束,灌种照样挡在起播前面。现在真的不挡了。
                     //
                     // 零网络:只读本地缓存。失效由 [SearchResultCache] 的 24h TTL 兜底,
                     // 可疑源由 publishSourceChips 里的 sourceBoard 标记兜底。
@@ -1856,6 +1870,8 @@ class DetailViewModel : ViewModel() {
             noHitShortCircuit = null
             sessionPlanTotal = 0
             searchedSourceKeys.clear()
+            // 换片 ⇒ 超时计数归零(它是空态文案的判据,必须与"这一场的已问源"同步生命周期)
+            timedOutSourceCount = 0
             // 换片:上一部的零命中名单在函数开头的 flushFallbackHitsSave() 里已按**旧片名**落盘,
             // 这里清空才不会把 A 片的"没有"记到 B 片头上
             pendingNoHitSources.clear()
@@ -1916,10 +1932,28 @@ class DetailViewModel : ViewModel() {
         //   ① 只有"确实答过话"才入账,超时/异常/解析崩绝不进 —— 那是源的耐心问题,不是它有没有;
         //   ② 用户主动点「换源」或手动那一轮**一律穿透**,他的意图就是"还要继续找",
         //      用缓存少给几个源只会让他认为功能坏了。
-        val knownAbsent = if (shortCircuitThisSession(userInitiated)) {
-            NoHitSourceCache.knownAbsent(SearchSettings.normalizedTitle(title))
-        } else {
-            emptySet()
+        //
+        // ⚠️ 第三条(2026-10-18 新增):**跳过比例过大时整轮放弃短路**。
+        // 真机《潜伏6》:源池 317、已知零命中 259 ⇒ 只问 58 个(18%),而那是部热门片,
+        // 理论上很多源都该有。短路把机会先掐掉,且掐得越多、名单越长、下轮剩余越少
+        // —— "越搜越少"的自我强化。此时它否定的已不是"重复劳动",而是"这部片有没有"这个结论。
+        val shortCircuitAllowed = shortCircuitThisSession(userInitiated)
+        val rawKnownAbsent =
+            if (shortCircuitAllowed) {
+                NoHitSourceCache.knownAbsent(SearchSettings.normalizedTitle(title))
+            } else {
+                emptySet()
+            }
+        val bypassShortCircuit =
+            NoHitSourcePolicy.shouldBypassShortCircuit(rawKnownAbsent.size, orderedPool.size)
+        val knownAbsent = if (bypassShortCircuit) emptySet() else rawKnownAbsent
+        if (bypassShortCircuit) {
+            LOG.i(
+                "echo-source-search known-absent-bypass n=" + rawKnownAbsent.size +
+                    " total=" + orderedPool.size +
+                    " ratio=" + (rawKnownAbsent.size * 100 / orderedPool.size.coerceAtLeast(1)) + "%" +
+                    " title=" + title + " token=$myToken"
+            )
         }
         val askablePool = if (knownAbsent.isEmpty()) orderedPool else orderedPool.filter { it.key !in knownAbsent }
         if (knownAbsent.isNotEmpty()) {
@@ -2005,8 +2039,14 @@ class DetailViewModel : ViewModel() {
             effectiveTotal,
         )
         // 历史命中先灌一批候选(2026-10-13)。
-        // ⚠️ 必须在调用方(startFallbackIfNeeded → loadNextFallbackCandidate)之前:
-        //    它随后取候选时就能直接命中,不必等聚合搜索的首批收口(实测 9.8~10.8s)。
+        //
+        // ⚠️ 2026-10-18 修正:灌种现在是**异步**的(内部走 IO,见 [seedCandidatesFromCache]),
+        // 所以"必须在调用方取候选之前完成"这条旧约束**不再成立** —— 灌种完成时,
+        // 调用方可能已经跑过 `loadNextFallbackCandidate()` 并因候选为空而收口了。
+        //
+        // 因此灌种完成时会自己补一次接管检查(见该函数末尾的 `shouldAutoTakeOver`)。
+        // 这比"依赖调用顺序"更稳:无论灌种先完成还是后完成,候选进了表就一定会被消费,
+        // 不会出现"缓存里有货、链却因为取候选那一刻表还空着而提前判死"。
         fallbackSearchHits.clear()
         seedCandidatesFromCache(title)
         if (sources.isEmpty()) return
@@ -2345,7 +2385,18 @@ class DetailViewModel : ViewModel() {
         // 它会把候选取完再走 [finishFallbackWithoutResult],那时才该进空态。
         if (fallbackActive) return
         LOG.i("echo-detail-empty-settle key=$sourceKey id=$vodId")
-        enterEmpty(str(R.string.player_play_failed_all))
+        // 与 [finishFallbackWithoutResult] 同一判据:多数源超时 ≠ 这部片不存在
+        enterEmpty(
+            str(
+                if (SourceSearchStatus.emptyReason(searchedSourceKeys.size, timedOutSourceCount) ==
+                    SourceSearchStatus.EmptyReason.TIMEOUT_DOMINANT
+                ) {
+                    R.string.player_play_timeout_dominant
+                } else {
+                    R.string.player_play_failed_all
+                }
+            )
+        )
     }
 
     @Subscribe(threadMode = ThreadMode.MAIN)
@@ -2505,6 +2556,9 @@ class DetailViewModel : ViewModel() {
         if (!evidenceRecordedKeys.add(key)) return
         SourceWeightMemory.record(key, kind)
         SourceWeightMemory.markSearched(key)
+        // 会话级计数:只用来决定**空态该说什么话**(见 [SourceSearchStatus.emptyReason])。
+        // 不加锁也不清(换片时随 searchedSourceKeys 一起复位)。
+        if (kind == SourceWeightPolicy.EvidenceKind.SEARCH_TIMEOUT) timedOutSourceCount++
     }
 
     /**
@@ -2605,27 +2659,59 @@ class DetailViewModel : ViewModel() {
             SearchSettings.intentModifier(intent, video.name, video.year)
     }
 
+    /**
+     * 从命中缓存灌一批候选(见调用点)。
+     *
+     * <p>⚠️ **自己起协程,调用方不必是挂起上下文**(2026-10-18,缺陷 M)。
+     * 它要读 MMKV 并把**整个缓存桶**解析出来 —— `SearchResultCache.load` 会把桶里所有词条的
+     * JSON 都读一遍(只有命中词条才做 Gson),理论最坏约 9600 次 `fromJson`。
+     * 跑在主线程上会直接卡住首帧渲染,而它恰好在"详情就绪、刚起播"这个最敏感的时刻被调用。
+     *
+     * <p>早先的注释说"放在 requestPlay() 之后就能让播放优先"是**错的** ——
+     * `playSignal` 由 Compose 在主线程消费,同一派发内 `playCurrent()` 必须等当前协程块结束,
+     * 灌种照样挡在起播前面。现在整段挪到 IO,主线程只做最后的候选表写入与 UI 刷新。
+     *
+     * <p>**线程安全**:`appendCandidates` 内部对候选表加锁;`publishSourceChips` /
+     * `sortFallbackCandidatesByCompleteness` 改 StateFlow,所以必须回到主线程执行 —— 用
+     * `withContext(Dispatchers.Main)` 明确切回,不依赖调用方所在线程。
+     */
     private fun seedCandidatesFromCache(title: String) {
         val normalized = SearchSettings.normalizedTitle(title)
         if (normalized.isEmpty()) return
-        val cached = SearchResultCache.load(normalized)
-        if (cached.isEmpty()) return
-        val fresh = ArrayList<Movie.Video>()
-        for ((_, videos) in cached) {
-            for (v in videos) {
-                if (v.id.isNullOrEmpty()) continue
-                if (!CandidateMatchPolicy.isSameTitleScore(candidateRelevance(v, title))) continue
-                // 2026-10-15:这里**不再**按"当前源/已用过的源"筛掉条目(与 onSearchResultEvent 同口径)。
-                // 灌种的是"上次这部片由哪些源收录"这个事实,把它丢掉就等于把可切回的源抹掉;
-                // 当前源不该出现在那一行,由 [CandidatePager.pageableSources] 在视图层排除。
-                fresh.add(v)
+        viewModelScope.launch {
+            val fresh = withContext(Dispatchers.IO) {
+                val cached = SearchResultCache.load(normalized)
+                if (cached.isEmpty()) return@withContext emptyList<Movie.Video>()
+                val out = ArrayList<Movie.Video>()
+                for ((_, videos) in cached) {
+                    for (v in videos) {
+                        if (v.id.isNullOrEmpty()) continue
+                        if (!CandidateMatchPolicy.isSameTitleScore(candidateRelevance(v, title))) continue
+                        // 2026-10-15:这里**不再**按"当前源/已用过的源"筛掉条目(与 onSearchResultEvent 同口径)。
+                        // 灌种的是"上次这部片由哪些源收录"这个事实,把它丢掉就等于把可切回的源抹掉;
+                        // 当前源不该出现在那一行,由 [CandidatePager.pageableSources] 在视图层排除。
+                        out.add(v)
+                    }
+                }
+                out
+            }
+            if (fresh.isEmpty()) return@launch
+            withContext(Dispatchers.Main) {
+                val seeded = appendCandidates(fresh)
+                if (seeded.isEmpty()) return@withContext
+                sortFallbackCandidatesByCompleteness()
+                publishSourceChips()
+                LOG.i("echo-source-search cache-seed title=" + title + " n=" + seeded.size)
+                // 灌种是异步的 ⇒ 可能晚于调用方的取候选时机。若那时链已因"表里没货"提前收口,
+                // 这批候选就白灌了。所以在这里补一次接管检查:只在"确实该接管且还没接管"时生效
+                // ([shouldAutoTakeOver] 的判据是 fallbackAutoSwitch || currentSourceConfirmedEmpty,
+                // 正常能播的片两者皆假 ⇒ 不会误触发换源)。
+                if (shouldAutoTakeOver()) {
+                    LOG.i("echo-source-search cache-seed take-over n=" + seeded.size)
+                    loadNextFallbackCandidate()
+                }
             }
         }
-        val seeded = appendCandidates(fresh)
-        if (seeded.isEmpty()) return
-        sortFallbackCandidatesByCompleteness()
-        publishSourceChips()
-        LOG.i("echo-source-search cache-seed title=" + title + " n=" + seeded.size)
     }
 
     /**
@@ -2655,6 +2741,18 @@ class DetailViewModel : ViewModel() {
     private fun normalizedSearchTitle(): String = SearchSettings.normalizedTitle(searchTitle)
 
     /** 当前源 + 已返回的同名影片候选源;不等待仍在进行的搜索,未知候选不增加起播延迟。 */
+    /**
+     * 此刻"已知收录这部片"的源数(候选表里的不同 sourceKey + 当前源自己)。
+     *
+     * <p>用于 [LineQualitySelector.shouldPreflightQuality] 判断"要不要为画质多等 1 秒" ——
+     * 只有多个源都有这部片时才值得预检(单源/单线路直接起播)。
+     *
+     * <p>⚠️ **它读的是"当刻"的候选表,而灌种(见 [seedCandidatesFromCache])是异步的**
+     * (2026-10-18 起走 IO)。所以本函数的结果**可能还没包含这次灌种的源**。
+     * 这是刻意保留的:灌种源是**历史缓存**,而预检问的是"这次实打实发现了几个源";
+     * 用历史数据去抬高这个计数,结果就是"冷启动时明明只有一个真源,却因为缓存里有 3 条,
+     * 白白多等一轮画质探测"——与本功能"播放优先"的初衷相反。
+     */
     private fun knownMatchingSourceCount(currentSourceKey: String): Int {
         val keys = synchronized(fallbackCandidates) {
             LinkedHashSet<String>().also { found ->
@@ -2808,6 +2906,7 @@ class DetailViewModel : ViewModel() {
         noHitShortCircuit = null
         sessionPlanTotal = 0
         searchedSourceKeys.clear()
+        timedOutSourceCount = 0
         manualSwitching.value = true
         manualSwitchActive = true
         LOG.i("echo-source-switch restart title=$searchTitle total=${sourcePoolTotal.value}")
@@ -3627,8 +3726,29 @@ class DetailViewModel : ViewModel() {
         resetEngineState(keepChips = true)
         if (!keep && rollbackManualSwitch()) return
         if (!keep && pageState.value != PageState.Ready) {
-            // 候选与搜索都已尽:页面留在空态,文案必须让用户看懂是"没有可用的源",而不是页面加载失败
-            enterEmpty(str(R.string.player_play_failed_all))
+            // 候选与搜索都已尽:页面留在空态。
+            // 文案必须区分两种情况(见 [SourceSearchStatus.emptyReason]):
+            //   - 源都答了话、确实没有 ⇒「此影片暂无法播放」
+            //   - 多数源超时/没答上   ⇒「多数片源没答上…可稍后重试」
+            // 真机《潜伏6》:问过 58 个源、49 个超时、只有 1 个答话,却统一报前者 ——
+            // 用户读到的是"这片不存在",而该做的事其实是换个网络/时段重试。
+            val reason = SourceSearchStatus.emptyReason(
+                asked = searchedSourceKeys.size,
+                timedOut = timedOutSourceCount,
+            )
+            LOG.i(
+                "echo-fallback empty-reason reason=$reason asked=${searchedSourceKeys.size}" +
+                    " timeout=$timedOutSourceCount"
+            )
+            enterEmpty(
+                str(
+                    if (reason == SourceSearchStatus.EmptyReason.TIMEOUT_DOMINANT) {
+                        R.string.player_play_timeout_dominant
+                    } else {
+                        R.string.player_play_failed_all
+                    }
+                )
+            )
         }
     }
 

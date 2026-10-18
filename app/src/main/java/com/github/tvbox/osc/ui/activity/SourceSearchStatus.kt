@@ -68,6 +68,38 @@ object SourceSearchStatus {
     }
 
     /**
+     * 换源链彻底收口、页面进空态时,那句话该说"没有"还是"没问到"。
+     *
+     * <p>## 要解决的毛病(2026-10-18 真机现场)
+     * 《潜伏6》收口的文案是「此影片暂无法播放」—— 而真实情况是:
+     * 问过 58 个源、其中 **49 个超时**、33 个返回空响应、**只有 1 个答过话**。
+     * 用户读到的意思接近"这部片不存在",而事实是"绝大多数源根本没被问到/没答上"。
+     * 两者该做的事完全不同:前者只能换片,后者值得换个网络/时段重试。
+     *
+     * <p>判据只看**已问过的源里超时占了多大比例**,不看源池大小:
+     * 源池大小与本轮失败无关("池子只有 20 个"不是失败的原因)。
+     *
+     * @param asked 本轮真正问过的源数
+     * @param timedOut 其中判定为超时的源数(与权重台账同一口径:原词没答话)
+     */
+    @JvmStatic
+    fun emptyReason(asked: Int, timedOut: Int): EmptyReason = when {
+        asked <= 0 -> EmptyReason.NO_SOURCE
+        // 过半超时 ⇒ 明显是"没问到",而不是"问到了都说没有"
+        timedOut * 2 >= asked -> EmptyReason.TIMEOUT_DOMINANT
+        else -> EmptyReason.NO_SOURCE
+    }
+
+    /** 空态该说哪一种话 */
+    enum class EmptyReason {
+        /** 源都答了话、确实没有这部片 */
+        NO_SOURCE,
+
+        /** 多数源超时/没答上 —— 网络或源站问题,不是"没有" */
+        TIMEOUT_DOMINANT,
+    }
+
+    /**
      * 那颗按钮该写「换源」还是「搜源」。
      *
      * <p>按钮**从不"换"**什么 —— 换是点下面芯片做的([DetailViewModel.switchSource]),

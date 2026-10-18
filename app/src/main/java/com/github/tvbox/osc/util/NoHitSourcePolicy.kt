@@ -49,6 +49,37 @@ object NoHitSourcePolicy {
         !userInitiated && !fullPoolPass
 
     /**
+     * 跳过比例**过大**时是否应该整轮放弃短路。
+     *
+     * <p>## 为什么需要这条闸(2026-10-18 真机现场)
+     * 《潜伏6》那次:源池 317、已知零命中 259 ⇒ **只问 58 个(18%)**。而这部片是热门片,
+     * 理论上应该在很多源上都有 —— 短路把机会先掐掉了,而且掐得越多次、名单越长、
+     * 下一轮剩余越少,**形成自我强化**:"越搜越少"。
+     *
+     * <p>短路的初衷是"省掉那些确实问过、确实没有的源",但当它开始否定**绝大多数**源时,
+     * 它否定的已经不是"重复劳动",而是"这部片到底有没有"这个结论的可信度。
+     * 此时宁可多花一次网络,也要把池子重新问一遍。
+     *
+     * <p>判据是**比例**而非绝对数:源池本来就只有几十个的订阅,不该被同一个阈值误伤。
+     *
+     * @param knownAbsentCount 本轮命中的零命中名单大小
+     * @param poolSize 未过滤前的可问池大小
+     */
+    @JvmStatic
+    fun shouldBypassShortCircuit(knownAbsentCount: Int, poolSize: Int): Boolean {
+        if (poolSize <= 0 || knownAbsentCount <= 0) return false
+        return knownAbsentCount * 100 >= poolSize * BYPASS_RATIO_PERCENT
+    }
+
+    /**
+     * 触发绕过的跳过比例阈值(%)。
+     *
+     * <p>取 70 的依据:真机那次是 82%(259/317),明显过高;而 70 以下仍属"省掉大部分重复"
+     * 的合理区间。这个值是**经验起始点**,后续按真机数据调整。
+     */
+    const val BYPASS_RATIO_PERCENT = 70
+
+    /**
      * 把新增的零命中源并进已有名单:去重、**最近的排最后**、超上限时先丢最旧的。
      *
      * <p>丢最旧而不是丢最新:这份名单的用途是"别重问已经问过很久的",刚记下的那条恰恰最该挡住重问。
