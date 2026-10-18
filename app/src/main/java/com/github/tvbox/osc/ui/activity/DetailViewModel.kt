@@ -17,6 +17,7 @@ import com.github.tvbox.osc.util.NoHitSourceCache
 import com.github.tvbox.osc.util.NoHitSourcePolicy
 import com.github.tvbox.osc.util.PlayTitleMatch
 import com.github.tvbox.osc.util.SourceCompletenessPolicy
+import com.github.tvbox.osc.util.TitleIndexMemory
 import com.github.tvbox.osc.util.QualityLabelPolicy
 import com.github.tvbox.osc.util.EpisodeMatcher
 import com.github.tvbox.osc.util.EpisodeNormalizer
@@ -1813,6 +1814,16 @@ class DetailViewModel : ViewModel() {
                 // 把**当前这个源自己**补进换源候选表(用户 2026-10-15 指出的缺口,见函数注释)
                 ensureCurrentSourceCandidate(mVideo)
                 recordCompleteness(info)
+                // 详情片名回写**本地拼音索引**(2026-10-18)。
+                //
+                // 原来只有三个录入点:搜索结果返回时、写入观看历史时、收藏时。
+                // 于是"没搜过、没看过、没收藏过"的片(例如从首页卡片点进来的)
+                // **进不了索引** ⇒ 用户用首字母搜它必然落空(《每时每刻》输 `msmk` 搜不到)。
+                //
+                // 详情就绪是"用户已明确关注这部片"的最早时点,在这里录入能让
+                // 索引覆盖从"搜过"扩到"看过详情",且**成本极低**
+                // (索引内部对纯英文片名会跳过,且按批合并落盘)。
+                info.name?.takeIf { it.isNotBlank() }?.let { TitleIndexMemory.record(listOf(it)) }
                 publishLineQualityHeights()
                 // 详情就绪即探一次未测线路:第一次观看也有画质标签(这里不做"有记忆才探"的 gating)
                 probeMissingLineQualities()

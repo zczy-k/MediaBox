@@ -55,6 +55,22 @@ object SearchSettings {
     /** 英数番号查询判定:如 MIAA-195 / FC2-PPV-4925855。仅限 ASCII 字母数字与常见分隔符。 */
     private val NUMBERED_CODE_PATTERN = Regex("(?i)^[a-z0-9]+(?:[-_.\\s]+[a-z0-9]+)*$")
 
+    /**
+     * "片名 + 4 位年份"的形态(如 `IT 1990`)—— 用于把这类查询**排除出番号语义**(2026-10-18)。
+     *
+     * <p>## 为什么需要它(真机缺陷)
+     * `extractCode` 的判据是"字母数字 + 分隔符",而 `IT 1990` 恰好满足 ⇒ 被判成番号
+     * ⇒ `matches` 短路进 `matchesCode` ⇒ 要求标题里出现带边界检查的 `it1990`。
+     * 但标题通常是 `IT (1990) 小丑回魂`,归一化时会**把括号连同年份一起删掉** ⇒
+     * 标题变成 `it小丑回魂`,不含 `it1990` ⇒ **判不匹配、结果丢失**。
+     *
+     * <p>"片名 + 年份"是**最常见的人类输入形式之一**,被误判成番号是纯粹的损失。
+     *
+     * <p>判据:结尾是 4 位数字(1900~2099)且**前面还有非数字内容**。
+     * `ADN-811`(结尾 811,3 位)不匹配;`FC2-PPV-4925855`(结尾 7 位)不匹配 ⇒ 不受影响。
+     */
+    private val TITLE_WITH_YEAR_PATTERN = Regex("(?i)^.*[^0-9].*?(19|20)\\d{2}$")
+
     private val ASCII_LETTER_PATTERN = Regex("[a-z]", RegexOption.IGNORE_CASE)
 
     private val ASCII_DIGIT_PATTERN = Regex("[0-9]")
@@ -135,6 +151,84 @@ object SearchSettings {
         return normalized
     }
 
+    /** 变体缓存的独立容量;与 [normalizeCache] 分开,避免互相挤出对方的条目 */
+    private const val VARIANT_CACHE_CAPACITY = 512
+
+    private val variantCache = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
+
+    /**
+     * [normalize] 的**双变体**版本(2026-10-18)。
+     *
+     * <p>## 解决的问题(真机最典型的一类漏搜)
+     * [normalize] 会把括号**连内容一起删掉**([BRACKET_PATTERN]),于是:
+     * <pre>
+     *   标题「三体（2023）」  → normalize → "三体"
+     *   查询「三体 2023」     → normalize → "三体2023"
+     *   contains 判定          → "三体".contains("三体2023") = false  ⇒ 搜不到
+     * </pre>
+     * 用户在标题里看到年份、照抄进搜索框，**反而搜不到**。
+     *
+     * <p>## 为什么用"双变体"而不是"改成保留括号内容"
+     * 改成保留会**改变现有判定**：标题「三体（2023）」归一化成 `三体2023` 后，
+     * 搜「三体2023」时对「三体（2024）」这类别的版本判定可能翻转。
+     * 双变体是**纯增量** —— 只是多给一个命中机会，不改变任何既有判定结果。
+     *
+     * <p>返回顺序有语义:第一个是**去括注**的旧形式(与 [normalizeCached] 一致),
+     * 第二个是**保留括注内容**的新形式。调用方任一命中即算命中。
+     * 两者相同(没有括号 / 括号内容为空)时只返回一个,避免重复比较。
+     *
+     * <p>⚠️ 性能:与 [normalizeCached] 同样带缓存(独立容量),因为它在**逐条结果**上被调用
+     * (单次搜索上千条)。无括号的常见情形走第一步就返回,不产生第二次正则开销。
+     */
+    fun normalizeVariants(text: String?): List<String> {
+        if (text.isNullOrEmpty()) {
+            val one = normalize(text)
+            return if (one.isEmpty()) emptyList() else listOf(one)
+        }
+        variantCache[text]?.let { return it }
+        // ① 旧形式:删括号(调用方最常用,也是现有行为的基线)
+        val stripped = normalize(text)
+        // ② 新形式:把括号内容**拼进来**再归一化,即"保留括注"
+        val withBrackets = normalize(
+            BRACKET_PATTERN.replace(text) { m -> " " + m.value.trim('（', '(', '[', '【', '）', ')', ']', '】') + " " }
+        )
+        val out = when {
+            stripped.isEmpty() && withBrackets.isEmpty() -> emptyList()
+            withBrackets.isEmpty() || withBrackets == stripped -> listOf(stripped).filter { it.isNotEmpty() }
+            stripped.isEmpty() -> listOf(withBrackets)
+            else -> listOf(stripped, withBrackets)
+        }
+        if (variantCache.size >= VARIANT_CACHE_CAPACITY) variantCache.clear()
+        variantCache[text] = out
+        return out
+    }
+
+    /**
+     * 两个文本的归一化变体**是否存在命中关系**(任一变体互相包含即算命中)。
+     *
+     * <p>这是 [matches] 的 Smart 档与 [relevanceScore] 的"包含"档应该用的判据 ——
+     * 它比单形式 `contains` 多考虑"括注内容",从而修掉「三体 2023」那类搜漏,
+     * 同时因为是**互相包含**而非单向,不会引入新的误收。
+     */
+    private fun variantsContain(title: String?, normalizedKeyword: String): Boolean {
+        if (normalizedKeyword.isEmpty()) return false
+        return normalizeVariants(title).any { it.contains(normalizedKeyword) }
+    }
+
+    /** 标题侧变体里,是否有任一变体**以**关键词开头/相等([relevanceScore] 的前两档用) */
+    private fun variantsRelation(title: String?, normalizedKeyword: String): Int {
+        if (normalizedKeyword.isEmpty()) return 0
+        var best = 0
+        for (v in normalizeVariants(title)) {
+            when {
+                v == normalizedKeyword -> return 5
+                v.startsWith(normalizedKeyword) -> best = maxOf(best, 4)
+                v.contains(normalizedKeyword) -> best = maxOf(best, 3)
+            }
+        }
+        return best
+    }
+
 
     fun isExactMatchEnabled(): Boolean = KV.get(KEY_EXACT_MATCH, false)
 
@@ -187,14 +281,24 @@ object SearchSettings {
         // ⚠️ 必须**短路**,不能"番号不中再落回通用包含" —— 否则 `ADN-81` 会经由
         // Smart 的 `normalize(name).contains(k)` 命中 `ADN-811`(裸子串包含),
         // 短号误命中长号的老问题原样回来。番号有明确边界语义,就该用它自己的判据。
-        if (extractCode(keyword).isNotEmpty()) {
+        //
+        // ⚠️ 2026-10-18 收紧:必须先确认"这**真的是**番号查询"。原实现只要 `extractCode`
+        // 非空就短路,而 `IT 1990`(片名+年份)也满足番号格式 ⇒ 被误判 ⇒ 走番号语义
+        // ⇒ 标题归一化后年份被括号删除 ⇒ 判不匹配。见 [looksLikeCodeQuery]。
+        if (looksLikeCodeQuery(keyword)) {
             return matchesCode(name, alias, keyword)
         }
         return when (mode) {
             MatchMode.All -> true
             MatchMode.Smart -> {
                 val k = normalizeCached(keyword)
-                k.isNotEmpty() && (normalizeCached(name).contains(k) || aliasesContain(alias, k) || auxContains(name, k))
+                // ⚠️ 2026-10-18:标题侧改用**变体包含**(`variantsContain`),
+                // 而不是裸 `normalizeCached(name).contains(k)`。
+                // 修的是"搜「三体 2023」命中不了标题「三体（2023）」"——
+                // 后者归一化时年份被括号一起删掉,单形式 contains 必然不成立。
+                // 变体形式同时保留"三体2023"与"三体"两种,任一命中即算通过。
+                // 别名与长音符两条保持原样:它们不涉及括注问题。
+                k.isNotEmpty() && (variantsContain(name, k) || aliasesContain(alias, k) || auxContains(name, k))
             }
             // 精准文本仍要求全标题相等；但番号查询的“精准”应命中标题开头完整的番号 token，
             // 例如搜 MIAA-195 要能命中“ MIAA-195 + 标题”，不能要求整条影片标题只剩番号。
@@ -217,6 +321,42 @@ object SearchSettings {
     private fun aliasesContain(alias: String?, normalizedKeyword: String): Boolean {
         if (alias.isNullOrEmpty() || normalizedKeyword.isEmpty()) return false
         return alias.split(ALIAS_SPLIT_PATTERN).any { normalizeCached(it).contains(normalizedKeyword) }
+    }
+
+    /**
+     * 这个查询**是否真的该按番号语义处理**(2026-10-18)。
+     *
+     * <p>## 为什么要单独一条判据
+     * 原实现用 `extractCode(keyword).isNotEmpty()` 当开关，但 `extractCode` 的判据只是
+     * "字母数字 + 分隔符"，于是 `IT 1990`(片名+年份)这类查询**也被判成番号**，
+     * 短路进 `matchesCode` 后走的是"标题里必须出现带边界检查的番号主体"，
+     * 而它的标题形态完全不同 ⇒ **必然判不匹配、结果丢失**。
+     *
+     * <p>后果链路(以 `IT 1990` 为例):
+     * ```
+     * 查询 IT 1990 → extractCode=it1990 → 短路走 matchesCode
+     * 标题「IT (1990) 小丑回魂」→ 归一化时括号连同年份被删 → it小丑回魂
+     * 不含 it1990 ⇒ 判不匹配 ⇒ 源站给的结果被丢掉
+     * ```
+     *
+     * <p>## 只加**一条**收紧条件
+     * 只排除"片名 + 4 位年份"(见 [TITLE_WITH_YEAR_PATTERN])。
+     *
+     * <p>⚠️ **刻意不加"数字至少 N 位"这条**(曾试过、已撤回):
+     * 它会把 `ADN-81` 这类短号**踢出番号语义**，而番号语义的 `containsCode`
+     * 带有"命中位置之后不能再是数字"的边界检查 —— 一旦改走通用匹配的裸 `contains`，
+     * `ADN-81` 就会命中 `ADN-811`，**"短号误命中长号"的老问题原样回来**
+     * (这正是 2026-10-12 引入番号短路要消灭的缺陷)。
+     * 短号查询虽然少见，但判错的代价(串到别人的片)远大于收益。
+     */
+    fun looksLikeCodeQuery(keyword: String?): Boolean {
+        val raw = keyword?.trim().orEmpty()
+        if (raw.isEmpty()) return false
+        if (!NUMBERED_CODE_PATTERN.matches(raw)) return false
+        if (extractCode(raw).isEmpty()) return false
+        // "片名 + 年份"不是番号:它的标题形态与番号完全不同,走番号语义必然判不匹配
+        if (TITLE_WITH_YEAR_PATTERN.matches(raw)) return false
+        return true
     }
 
 
@@ -375,12 +515,15 @@ object SearchSettings {
         val n = normalizeCached(name)
         val k = normalizeCached(keyword)
         if (k.isEmpty()) return 0
+        // ⚠️ 2026-10-18:标题侧前两档改用**变体关系**(`variantsRelation`),
+        // 而不是只拿单一 normalizeCached(name) 比 —— 后者因"括号内容被删"而漏掉
+        // 「三体（2023）」这类标题(查询归一化成 `三体2023` 时 contains 不成立)。
+        // 变体关系返回 5/4/3,与原有档位语义完全一致,只是多考虑了括注形式。
+        val variantScore = variantsRelation(name, k)
         var base = if (n.isEmpty()) {
             aliasScore(alias, k)
         } else when {
-            n == k -> 5
-            n.startsWith(k) -> 4
-            n.contains(k) -> 3
+            variantScore > 0 -> variantScore
             else -> {
                 val tokens = keyword.orEmpty().trim().split(WHITESPACE_PATTERN)
                     .map { normalizeCached(it) }

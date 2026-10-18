@@ -39,14 +39,34 @@ class PinyinQueryTest {
     /**
      * 超过 [PinyinQuery.MAX_INITIALS_LEN] 的字母串不再当拼音。
      *
-     * <p>既然只匹配首字母,合法输入就是"2~6 个字母";更长的更可能是
-     * 用户在敲英文片名(`thematrix`)或误粘了东西 —— 去拼音索引试也几乎必然落空。
+     * <p>⚠️ 2026-10-18 上限从 6 提到 12，本用例随之调整：原值 6 会硬性挡掉
+     * **7 字以上片名的首字母输入**（《寂静之地入侵日》=`jjzdrqr`），而中文片名超 6 字很常见。
+     *
+     * <p>上调的代价可接受：真把长英文（`thematrixreloaded`）当拼音去索引试一次，
+     * 结果也只是"索引里没有 ⇒ 落空 ⇒ 回落普通搜索"，与现在同一条路，只多一次无效查表。
      */
     @Test
     fun `过长的字母串不算首字母输入`() {
         assertFalse(PinyinQuery.looksLikePinyin("qianjunyifa"))
         assertFalse(PinyinQuery.looksLikePinyin("qian jun yi fa"))
-        assertFalse(PinyinQuery.looksLikePinyin("thematrix"))
+        // 14 个字母，超出 12 的上限
+        assertFalse(PinyinQuery.looksLikePinyin("thematrixreloaded"))
+    }
+
+    /**
+     * 2026-10-18：上限从 6 提到 12，**7~12 个字母的片名首字母现在能用了**。
+     *
+     * <p>这是本次改动的直接目的：《寂静之地入侵日》=`jjzdrqr`（7 字母）
+     * 在旧上限下被判成"不是首字母输入"⇒ 按字面问源站 ⇒ 源站不认 ⇒ 搜不到。
+     */
+    @Test
+    fun `七到十二个字母的首字母输入现在被接受`() {
+        assertTrue(PinyinQuery.looksLikePinyin("jjzdrqr"))          // 寂静之地入侵日 (7)
+        assertTrue(PinyinQuery.looksLikePinyin("casesc"))           // 长安十二时辰 (6, 原本也在边界内)
+        assertTrue(PinyinQuery.looksLikePinyin("kldby"))            // 快乐大本营 (5)
+        assertTrue(PinyinQuery.looksLikePinyin("abcdefghijkl"))     // 恰好 12
+        assertFalse(PinyinQuery.looksLikePinyin("abcdefghijklm"))   // 13 超过上限
+        assertEquals(12, PinyinQuery.MAX_INITIALS_LEN)
     }
 
     /**

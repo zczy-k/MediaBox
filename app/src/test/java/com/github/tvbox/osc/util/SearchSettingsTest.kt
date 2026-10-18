@@ -279,4 +279,112 @@ class SearchSettingsTest {
         // 重复调用要命中缓存并给出一致结果
         assertEquals(SearchSettings.normalizeCached("庆余年(2019)"), SearchSettings.normalizeCached("庆余年(2019)"))
     }
+
+    // ==================== 归一化双变体(2026-10-18) ====================
+
+    /**
+     * 双变体要同时给出"去括注"与"保留括注"两种形式。
+     *
+     * <p>这是修「搜『三体 2023』命中不了标题『三体（2023）』」的关键：
+     * 前者归一化成 `三体2023`，而单形式的后者被删成 `三体`，contains 必然不成立。
+     */
+    @Test
+    fun `双变体同时给出删括注与保括注两种形式`() {
+        assertEquals(
+            listOf("三体", "三体2023"),
+            SearchSettings.normalizeVariants("三体（2023）"),
+        )
+        // 第一个变体必须与旧的 normalizeCached 一致(保证纯增量、不破坏既有判定)
+        assertEquals(SearchSettings.normalizeCached("三体（2023）"), SearchSettings.normalizeVariants("三体（2023）").first())
+    }
+
+    @Test
+    fun `没有括号时只返回一个变体`() {
+        assertEquals(listOf("三体"), SearchSettings.normalizeVariants("三体"))
+        assertEquals(listOf("qianjunyifa"), SearchSettings.normalizeVariants("qianjunyifa"))
+    }
+
+    @Test
+    fun `空输入返回空列表`() {
+        assertEquals(emptyList<String>(), SearchSettings.normalizeVariants(null))
+        assertEquals(emptyList<String>(), SearchSettings.normalizeVariants(""))
+        // 纯标点归一化后为空 ⇒ 也给空
+        assertEquals(emptyList<String>(), SearchSettings.normalizeVariants("（）"))
+    }
+
+    /** 核心验收：搜「三体 2023」能命中标题「三体（2023）」 */
+    @Test
+    fun `搜带年份的关键词能命中括注年份的标题`() {
+        assertEquals(
+            true,
+            SearchSettings.matches("三体（2023）", null, "三体 2023", SearchSettings.MatchMode.Smart),
+        )
+        // 不回归：搜「三体」照旧命中
+        assertEquals(
+            true,
+            SearchSettings.matches("三体（2023）", null, "三体", SearchSettings.MatchMode.Smart),
+        )
+        // 年份不同不该命中（`三体2023` vs `三体2019`）
+        assertEquals(
+            false,
+            SearchSettings.matches("三体（2019）", null, "三体 2023", SearchSettings.MatchMode.Smart),
+        )
+    }
+
+    /** 相关度也要跟着双变体走，否则会"准入通过但分数为 0" */
+    @Test
+    fun `双变体下的相关度不为零`() {
+        assertEquals(
+            true,
+            SearchSettings.relevanceScore("三体（2023）", null, "三体 2023", null) > 0,
+        )
+        // ⚠️ 实际给的是 **5（全等）**，不是 3（包含）——
+        // 因为「三体（2023）」的第二个变体就是 `三体2023`，与查询归一化结果**完全相等**。
+        // 这比"包含"更准：搜「三体 2023」时，标题「三体（2023）」确实就是同一部片，
+        // 而不只是"标题里恰好含这几个字"。
+        assertEquals(
+            5,
+            SearchSettings.relevanceScore("三体（2023）", null, "三体 2023", null),
+        )
+    }
+
+    // ==================== 番号判据收紧(2026-10-18) ====================
+
+    /**
+     * 「片名 + 年份」不是番号。
+     *
+     * <p>旧实现只要 `extractCode` 非空就短路进番号语义，于是 `IT 1990` 被判成番号
+     * ⇒ 要求标题里出现带边界检查的 `it1990`，而标题「IT (1990) 小丑回魂」归一化后
+     * 年份被括号删掉 ⇒ 必然判不匹配、结果丢失。
+     */
+    @Test
+    fun `片名加年份不算番号查询`() {
+        assertEquals(false, SearchSettings.looksLikeCodeQuery("IT 1990"))
+        assertEquals(false, SearchSettings.looksLikeCodeQuery("IT1990"))
+        // 真番号照旧
+        assertEquals(true, SearchSettings.looksLikeCodeQuery("ADN-811"))
+        assertEquals(true, SearchSettings.looksLikeCodeQuery("ADN811"))
+        assertEquals(true, SearchSettings.looksLikeCodeQuery("MIAA-195"))
+        assertEquals(true, SearchSettings.looksLikeCodeQuery("FC2-PPV-4925855"))
+        // 短号**必须仍走番号语义** —— 否则番号语义的边界检查失效，
+        // `ADN-81` 会经通用匹配的裸 contains 命中 `ADN-811`（老缺陷回归）
+        assertEquals(true, SearchSettings.looksLikeCodeQuery("ADN-81"))
+        // 中文查询不是番号
+        assertEquals(false, SearchSettings.looksLikeCodeQuery("三体"))
+        assertEquals(false, SearchSettings.looksLikeCodeQuery("三体 2023"))
+    }
+
+    /** 短号误命中长号必须继续被挡住（这是番号语义存在的理由） */
+    @Test
+    fun `短号不误命中长号`() {
+        assertEquals(
+            false,
+            SearchSettings.matches("ADN-811", null, "ADN-81", SearchSettings.MatchMode.Smart),
+        )
+        // 版本后缀不参与匹配
+        assertEquals(
+            true,
+            SearchSettings.matches("ADN-811", null, "ADN-811-RM", SearchSettings.MatchMode.Smart),
+        )
+    }
 }
