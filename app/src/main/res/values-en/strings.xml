@@ -607,13 +607,15 @@
     <string name="thunder_error_parse">Parsing failed</string>
     <string name="thunder_error_download">Download error</string>
     <string name="thunder_error_timeout">Download timed out</string>
-    <string name="thunder_error_name_too_long">File name too long</string>
     <string name="thunder_error_path_too_long">File path too long</string>
     <string name="thunder_error_file_too_small">File too small</string>
     <string name="thunder_error_no_space">Not enough disk space</string>
     <string name="thunder_error_network_refused">Connection refused</string>
     <string name="thunder_error_buffer">Buffer too small</string>
-    <string name="thunder_error_copyright">Copyright restricted: download not allowed</string>
+    <string name="thunder_error_bad_param">Invalid file parameter</string>
+    <string name="thunder_error_torrent_unavailable">Torrent is no longer available, try another source</string>
+    <string name="thunder_error_torrent_parse">Failed to parse torrent</string>
+    <string name="thunder_error_emule_unavailable">This link is not a magnet/torrent</string>
     <string name="thunder_error_invalid_url">Invalid URL</string>
     <string name="danmu_search_api_empty">Danmaku search API is empty</string>
     <string name="danmu_url_empty">Danmaku URL is empty</string>

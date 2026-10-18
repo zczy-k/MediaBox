@@ -622,13 +622,15 @@
     <string name="thunder_error_parse">解析异常</string>
     <string name="thunder_error_download">下载出错</string>
     <string name="thunder_error_timeout">解析下载超时</string>
-    <string name="thunder_error_name_too_long">文件名太长</string>
     <string name="thunder_error_path_too_long">文件路径太长</string>
     <string name="thunder_error_file_too_small">文件太小</string>
     <string name="thunder_error_no_space">磁盘空间不足</string>
     <string name="thunder_error_network_refused">拒绝的网络连接</string>
     <string name="thunder_error_buffer">缓冲区不足</string>
-    <string name="thunder_error_copyright">版权限制：无权下载</string>
+    <string name="thunder_error_bad_param">文件参数非法</string>
+    <string name="thunder_error_torrent_unavailable">种子已失效，换个源试试</string>
+    <string name="thunder_error_torrent_parse">种子解析失败</string>
+    <string name="thunder_error_emule_unavailable">该链接不是磁力/种子</string>
     <string name="thunder_error_invalid_url">无效链接</string>
     <string name="danmu_search_api_empty">弹幕搜索接口为空</string>
     <string name="danmu_url_empty">弹幕地址为空</string>
