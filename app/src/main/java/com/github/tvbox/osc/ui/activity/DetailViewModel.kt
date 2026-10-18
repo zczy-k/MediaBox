@@ -1,6 +1,7 @@
 package com.github.tvbox.osc.ui.activity
 
 import android.content.Intent
+import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.github.tvbox.osc.api.ApiConfig
@@ -406,6 +407,18 @@ class DetailViewModel : ViewModel() {
     private var completenessOwnSet: Set<Int> = emptySet()
     /** 起播跳过当前源(记忆已知严重不全)后等待换源链结果;链收口无果回退起播当前源 */
     private var pendingCompletenessSkip = false
+
+    /**
+     * [pendingCompletenessSkip] 的置位时刻(0 = 未置位)。
+     *
+     * <p>## 为什么要记时刻(2026-10-18,缺陷 I)
+     * 这个标记的唯一兑现出口是 [finishFallbackWithoutResult],而那条路只有在"换源链收口"时才走到。
+     * 而链在**搜索仍在跑**时会一直让路([loadNextFallbackCandidate] 的 `if (!sourcesSearching)`)——
+     * 若搜索因任何原因迟迟不收口,标记就永远兑现不了,页面**永久停在 Loading**:
+     * 当前源被主动跳过了、候选又没试完、两边都不给结论。
+     * 记时刻是为了让 [onLoadingBudgetExpired] 能识别"跳过后等太久",主动兑现一次回退。
+     */
+    private var pendingCompletenessSkipAt = 0L
     /** 播放中纠偏每部片只触发一次,防止候选事件反复引发切换 */
     private var completenessCorrected = false
     private val candidateKeys = HashSet<String>()
@@ -1512,6 +1525,28 @@ class DetailViewModel : ViewModel() {
             loadNextFallbackCandidate()
             return
         }
+        // ⚠️ 2026-10-18(缺陷 I):"跳过了当前源、却在等链收口"这种局面必须有时间上限。
+        //
+        // [pendingCompletenessSkip] 的唯一兑现出口是 [finishFallbackWithoutResult],
+        // 而链在"搜索仍在跑"时会一直让路(见下面那段 defer-to-fallback)—— 如果搜索因
+        // 任何原因迟迟不收口(慢源、超时率高、被中断后没重启),标记就永远兑现不了:
+        // 当前源被主动跳过了、候选又没试完,页面**永久停在 Loading**。
+        // 这里补一道保险:跳过之后等够 [COMPLETENESS_SKIP_MAX_WAIT_MS] 就强制回退起播当前源
+        // —— "有得播总比一直转圈好",这正是该标记的原始承诺。
+        if (pendingCompletenessSkip && vodInfo != null &&
+            SystemClock.elapsedRealtime() - pendingCompletenessSkipAt >= COMPLETENESS_SKIP_MAX_WAIT_MS
+        ) {
+            LOG.i(
+                "echo-completeness skip-timeout forced-exit waited=" +
+                    (SystemClock.elapsedRealtime() - pendingCompletenessSkipAt) +
+                    "ms key=$sourceKey id=$vodId"
+            )
+            pendingCompletenessSkip = false
+            pendingCompletenessSkipAt = 0L
+            pageState.value = PageState.Ready
+            requestPlay()
+            return
+        }
         // ⚠️ 换源链还在跑(fallbackActive)时**绝不**提前宣布"暂无片源"(2026-10-09 真机实测修正)。
         //
         // 15s 预算只是"当前源"的体验预算,不是给整条换源链判死刑的 —— 实测 js_douban
@@ -1764,6 +1799,7 @@ class DetailViewModel : ViewModel() {
                     SourceCompletenessPolicy.Tier.BACKUP
                 ) {
                     pendingCompletenessSkip = true
+                    pendingCompletenessSkipAt = SystemClock.elapsedRealtime()
                     LOG.i(
                         "echo-completeness skip-origin own=${completenessOwnSet.size}" +
                             " auth=${confirmedSet.size}"
@@ -2482,10 +2518,26 @@ class DetailViewModel : ViewModel() {
                     if (shouldAutoTakeOver()) loadNextFallbackCandidate()
                 }
             }
+            // 相关推荐 = "不够格当候选"的条目。
+            //
+            // ⚠️ 2026-10-18(缺陷 L):判据里必须**同时**包含"被 [appendCandidates] 的二次否决剔掉的"
+            // 那一类。两层判据原本不同源:
+            //   - 这里用 [CandidateMatchPolicy.verdictOf] == CANDIDATE(相关度分档);
+            //   - [appendCandidates] 内部又用 [PlayTitleMatch.isDifferentFilm] 再否决一次(片名逐字比对)。
+            // 一条 `verdict==CANDIDATE` 却被 `isDifferentFilm` 判成异片的条目,于是
+            // **候选表进不去、相关推荐也不收** —— 两个列表都不在,静默消失。
+            // 用户侧看不到任何痕迹,只在日志里留下一行 rejected=。
+            //
+            // 现在:凡"够格当候选"的,要么进候选表(未被二次否决),要么进相关推荐(被否掉了)。
             val related = videos.filter {
                 !it.id.isNullOrEmpty()
-                    && CandidateMatchPolicy.verdictOf(candidateRelevance(it)) != CandidateMatchPolicy.Verdict.CANDIDATE
                     && !(it.sourceKey == sourceKey && it.id == vodId)
+                    && (
+                        CandidateMatchPolicy.verdictOf(candidateRelevance(it)) !=
+                            CandidateMatchPolicy.Verdict.CANDIDATE
+                            // 二次否决的落选者:它的分数够,只是片名比对没过 —— 归到"相关"
+                            || PlayTitleMatch.isDifferentFilm(it.name, entryTitle)
+                        )
             }
             if (related.isNotEmpty()) {
                 val seen = relatedVideos.value.mapTo(HashSet()) { candidateKey(it) }
@@ -3717,6 +3769,7 @@ class DetailViewModel : ViewModel() {
         // —— 有得播总比空态好;"跳过"只承诺"先试更全的",不承诺"当前源不能用"
         if (pendingCompletenessSkip && vodInfo != null) {
             pendingCompletenessSkip = false
+            pendingCompletenessSkipAt = 0L
             LOG.i("echo-completeness skip-exhausted fallback-to-origin")
             resetEngineState(keepChips = true)
             pageState.value = PageState.Ready
@@ -3870,6 +3923,7 @@ class DetailViewModel : ViewModel() {
         sourceConverged = false
         crossSourceHint.value = null
         pendingCompletenessSkip = false
+        pendingCompletenessSkipAt = 0L
         completenessCorrected = false
         // 2026-10-13(问题 17c):切换内容键。**仅当片名真的变了才清**短期失败记忆 ——
         // 换源时片名不变,记忆必须保留(否则"跳过本会话失败过的源"立刻失效);
@@ -4689,6 +4743,17 @@ class DetailViewModel : ViewModel() {
         private const val PANEL_PROBE_LINES = 6
         /** 单个候选站的同名搜索超时。原 30s:聚合订阅动辄数百站,单站卡住会拖垮整轮候选收集 */
         private const val SOURCE_SEARCH_TIMEOUT_MS = 8_000L
+
+        /**
+         * 「跳过了当前源、在等换源链收口」的最长等待(2026-10-18,缺陷 I)。
+         *
+         * <p>超过它就在 [onLoadingBudgetExpired] 里强制回退起播当前源 —— 见该处说明。
+         *
+         * <p>取 45s 的依据:换源链正常收口约需 20~45s(详情看门狗按站点限时算,
+         * 上限就是这个量级);超过它还没结论,说明链卡住了,继续等只会让用户对着转圈。
+         * 而"回退起播当前源"正是 [pendingCompletenessSkip] 建立时就承诺的兜底。
+         */
+        private const val COMPLETENESS_SKIP_MAX_WAIT_MS = 45_000L
 
         /**
          * 命中回存的**合并窗口**(2026-10-13)。
