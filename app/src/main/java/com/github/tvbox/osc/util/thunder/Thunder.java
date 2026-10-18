@@ -103,19 +103,6 @@ public class Thunder {
         void play(String url);
     }
 
-    /**
-     * 兜底建池:{@link #threadPool} 在 {@link #parse} 里建立,而 {@link #stop(boolean) stop(true)}
-     * 会把它置 null。但取流请求可能早于 parse 到达(历史遗留线路表 / 旧缓存详情 / 推送的地址,
-     * 见 {@code PlaybackController} 与 {@code PushDetailResolver.checkThunder})。没有这一步,
-     * {@code threadPool.execute} 会 NPE —— 调用方是播放线程,直接崩进程。
-     */
-    private static void ensurePool() {
-        if (threadPool == null) {
-            init(AppContextHolder.context());
-            threadPool = Executors.newSingleThreadExecutor();
-        }
-    }
-
     private static ArrayList<String> playList = null;
     private static ArrayList<String> ed2kList = null;
     public static void parse(Context context, Movie.Video.UrlBean urlBean, ThunderCallback callback) {
@@ -134,8 +121,6 @@ public class Thunder {
         private final Movie.Video.UrlBean urlBean;
         private final Map<Integer, String> urlMap;
         private final ThunderCallback callback;
-        /** 解析失败(拿不到地址)因而被丢弃的条目数 —— 只用于日志,证明"假线路"没有被塞回列表 */
-        private int droppedUnplayable = 0;
 
         ParseTask(Movie.Video.UrlBean urlBean, Map<Integer, String> urlMap, ThunderCallback callback) {
             this.urlBean = urlBean;
@@ -147,29 +132,14 @@ public class Thunder {
         public void run() {
             for (int idx=0;idx<urlBean.infoList.size();idx++) {
                 Movie.Video.UrlBean.UrlInfo urlInfo = urlBean.infoList.get(idx);
-                // ⚠️ 2026-10-18:`beanList` 为 null 必须跳过,不能直接 for-each。
-                // 前置扫描(checkThunder)有这道护栏,这里原先没有 —— 一旦某个 urlInfo 的
-                // beanList 为 null,整条 ParseTask 抛 NPE 直接死掉,**list / status 两个回调
-                // 都不会发生** ⇒ 详情侧不替换 beanList ⇒ 裸 magnet 留在 UI 上(点了必报错)。
-                if (urlInfo != null && urlInfo.beanList != null) {
+                if (urlInfo != null) {
                     String url="";
-                    // 这一路(urlInfo)是否含磁力/种子类条目 —— 用于结尾判断"整路都是磁力且全不可播"
-                    boolean idxHadThunder = false;
                     for (Movie.Video.UrlBean.UrlInfo.InfoBean infoBean : urlInfo.beanList) {
                         boolean isParse=false;
                         url=infoBean.url;
                         if (isMagnet(url) || isThunder(url) || isTorrent(url)) {
-                            idxHadThunder = true;
-                            // thunder:// 先解成 http,后续统一当磁力/种子处理
-                            // (下面 isMagnet(url) 用的是解出的地址,故必须先赋值回 url)
-                            //
-                            // ⚠️ 2026-10-18:原实现是两行 ——
-                            //   `if(isThunder(url)) url = parserThunderUrl(url);`
-                            //   `String link = isThunder(url) ? parserThunderUrl(url) : url;`
-                            // 第二行的 `isThunder(url)` 在第一行赋值后**必然为 false**(url 已是 http),
-                            // 于是 link 恒等于 url —— 是条走不进去的死分支,留着会让人以为"要再解析一次"。
-                            if (isThunder(url)) url = XLDownloadManager.getInstance().parserThunderUrl(url);
-                            String link = url;
+                            if(isThunder(url) )url=XLDownloadManager.getInstance().parserThunderUrl(url);
+                            String link = isThunder(url) ? XLDownloadManager.getInstance().parserThunderUrl(url) : url;
                             Uri p = Uri.parse(link);
                             if (p == null) {
                                 continue;
@@ -251,39 +221,15 @@ public class Thunder {
                                 isParse=true;
                             }
                         }
-                        if (!isParse) {
-                            // ⚠️ 2026-10-18 修复(原实现是无条件 `playList.add(infoBean.name + "$" + infoBean.url)`)
-                            //
-                            // 要区分两类"没解析成功":
-                            //  · **普通线路**(http/m3u8 等):本来就能直接播,必须原样保留 ——
-                            //    checkThunder 只要在 urlBean 里发现**一条**磁力就把整包交给 parse,
-                            //    同一包里的普通线路会走到这里。丢弃它们会**凭空弄丢可用线路**。
-                            //  · **磁力/种子类**(magnet / thunder: / .torrent)却没解析出可播地址:
-                            //    这类正是 d719b108 点名的"点了必报错的假线路",**不能再塞回列表**,
-                            //    只计数供日志核对("不可播的条目不出现在 UI",而不是"出现但打不开")。
-                            if (isMagnet(infoBean.url) || isThunder(infoBean.url) || isTorrent(infoBean.url)) {
-                                droppedUnplayable++;
-                            } else {
-                                playList.add(infoBean.name + "$" + infoBean.url);
-                            }
-                        }
+                        if (!isParse)playList.add(infoBean.name + "$" + infoBean.url);
                     }
                     if (playList.size() > 0) {
                         urlMap.put(idx,TextUtils.join("#", playList));
                         playList.clear();
-                    } else if (idxHadThunder) {
-                        // ⚠️ 2026-10-18:整路都是磁力且**全部解析失败** —— 这里必须显式回一个空串,
-                        // 否则该 idx 根本不进 urlMap,消费方(PushDetailResolver.checkThunder / SourceHelper)
-                        // 会 `continue` 跳过替换,于是**裸 magnet 原样留在列表里**,又变回"点了必报错的假线路"。
-                        // 空串会被消费方解析成空 beanList ⇒ 这一路从 UI 消失(而不是留下打不开的条目)。
-                        urlMap.put(idx, "");
                     }
                 }
             }
 
-            if (droppedUnplayable > 0) {
-                LOG.i("echo-thunder parse dropped-unplayable=" + droppedUnplayable);
-            }
             if (urlMap.size() > 0) {
                 callback.list(urlMap);
             } else {
@@ -295,18 +241,7 @@ public class Thunder {
 
     public static boolean play(String url, ThunderCallback callback) {
         if (url.startsWith("tvbox-torrent:")) {
-            // ⚠️ 2026-10-18:`threadPool` 由 parse 建立,但 stop(true) 会把它置 null。
-            // 取流地址并不一定来自 parse —— 历史遗留线路表、旧缓存详情、推送进来的地址
-            // 都会把 `tvbox-torrent:` / `tvbox-oth:` 直接递到这里。此时 `threadPool.execute`
-            // 会 NPE,而调用方是播放线程 ⇒ 直接崩进程。原先只有 ed2k/ftp 分支有兜底。
-            ensurePool();
             int idx = Integer.parseInt(url.substring(14));
-            // 台账已被 stop(true) 清空、或索引越界 ⇒ 这是**过期地址**(旧详情的线路表),
-            // 不能 get 出去崩掉:报无效地址,由播放侧走既有失败链。
-            if (torrentFileInfoArrayList == null || idx < 0 || idx >= torrentFileInfoArrayList.size()) {
-                callback.status(-1, str(R.string.thunder_error_invalid_url));
-                return true;
-            }
             TorrentFileInfo info = torrentFileInfoArrayList.get(idx);
             if (currentTask > 0) {
                 XLTaskHelper.instance().stopTask(currentTask);
@@ -318,84 +253,27 @@ public class Thunder {
                     String torrentName = new File(info.torrentPath).getName();
                     String cache = cacheRoot + File.separator + torrentName.substring(0, torrentName.lastIndexOf("."));
                     currentTask = XLTaskHelper.instance().addTorrentTask(info.torrentPath, cache, info.mFileIndex);
-                    // ⚠️ 2026-10-18 修复:原实现报完错**不 return**,继续往下拿负数 taskId 去
-                    // `getBtSubTaskInfo(currentTask, ...)` —— 任务根本没建起来,这个循环只会
-                    // 空转 180 秒再报"超时",把"建任务失败"的真实原因彻底掩盖掉。
-                    if (currentTask < 0) {
-                        LOG.i("echo-thunder play add-task-failed ret=" + currentTask
-                                + " file=" + info.mFileName + " idx=" + info.mFileIndex);
+                    if (currentTask < 0)
                         callback.status(-1, str(R.string.thunder_error_download));
-                        return;
-                    }
-                    // ⚠️ 2026-10-18:等待窗口从 30s 放宽到 180s(原 30 × sleep(1000))。
-                    //
-                    // 30 秒对"下载完才能播"这件事太短:种子即使能连上,把首个可播片段拉到
-                    // 本地也要远超 30 秒。原窗口的后果是**必然超时**(用户看到的永远是
-                    // thunder_error_timeout),这正是停用整条通路时的实测结论之一。
-                    int count = 180;
-                    int waited = 0;
-                    // 最近一次读到的任务状态 —— 只用于超时日志(区分"卡在哪个状态")
-                    int lastStatus = -1;
+                    int count = 30;
                     while (true) {
                         count--;
                         if (count <= 0) {
-                            // 埋点:超时也要能区分"卡在哪个状态"。waited 只统计 case1/4,
-                            // 若 waited 远小于 180 说明大部分时间落在了别的状态上(如 taskInfo 为 null)。
-                            LOG.i("echo-thunder play timeout waited=" + waited + "s lastStatus="
-                                    + lastStatus + " file=" + info.mFileName);
                             callback.status(-1, str(R.string.thunder_error_timeout));
                             break;
                         }
                         XLTaskInfo taskInfo = XLTaskHelper.instance().getBtSubTaskInfo(currentTask, info.mFileIndex).mTaskInfo;
-                        if (taskInfo == null) {
-                            // 埋点:taskInfo 为 null 时下面读 mTaskStatus 会 NPE(线程内崩,不落日志)。
-                            // 原实现没判空 —— 真机上表现为"点了没反应,等到超时",日志一片空白。
-                            LOG.i("echo-thunder play taskInfo-null waited=" + waited + "s");
-                            try {
-                                Thread.sleep(1000);
-                            } catch (InterruptedException e) {
-                                LOG.e("Thunder", e);
-                            }
-                            continue;
-                        }
-                        lastStatus = taskInfo.mTaskStatus;
-                        // ⚠️ 2026-10-18 修复:原实现把 `case 1 / case 4 / case 2` **合并**处理,
-                        // 三个状态都直接 `callback.play(getLoclUrl(...))` —— 于是"**下载中**"
-                        // 也把本地地址交给播放器,表现为**边下边播、缓冲反复中断**。
-                        // 这不是"下载完再播"该有的样子,且用户完全无法理解为什么一直卡。
-                        //
-                        // 现在只认 `case 2`(下载完成)才交地址;`case 1 / 4`(未开始/下载中)
-                        // **继续等**,并每 5 秒回报一次进度(让界面有反馈,不再死寂)。
-                        switch (lastStatus) {
+                        switch (taskInfo.mTaskStatus) {
                             case 3: {
-                                // 埋点(2026-10-18 补):**必须把原始码落盘**。
-                                // 此前这里只把 mErrorCode 译成中文交给 UI,码值本身没有任何记录 ——
-                                // 真机看到"版权限制"时无法反推到底是 hub 连不上、种子拿不到还是不完整,
-                                // 排查只能靠猜。现在 raw 码 + 译后文案一起落,一眼可辨。
-                                LOG.i("echo-thunder play failed status=" + lastStatus
-                                        + " errorCode=" + taskInfo.mErrorCode
-                                        + " msg=" + errorInfo(taskInfo.mErrorCode));
                                 callback.status(-1, errorInfo(taskInfo.mErrorCode));
                                 return;
                             }
-                            case 2: { // 下载完成:这才可以交给播放器
+                            case 1:
+                            case 4: // 下载中
+                            case 2: { // 下载完成
                                 String pUrl = XLTaskHelper.instance().getLoclUrl(cache + File.separator + info.mFileName);
-                                LOG.i("echo-thunder play ready waited=" + waited + "s url="
-                                        + (pUrl == null ? "null" : ("len=" + pUrl.length())));
                                 callback.play(pUrl);
                                 return;
-                            }
-                            case 1:
-                            case 4: { // 未开始 / 下载中:继续等,不交地址
-                                waited++;
-                                if (waited % 5 == 0) {
-                                    // 进度(第一个参数 >= 0 是"非错误"的约定,调用方据此区分提示样式)
-                                    callback.status(waited, "正在下载 " + waited + "s / " +
-                                            (taskInfo.mDownloadSize > 0
-                                                    ? (taskInfo.mDownloadSize / 1048576L) + "MB"
-                                                    : "…"));
-                                }
-                                break;
                             }
                         }
                         try {
@@ -409,14 +287,8 @@ public class Thunder {
             return true;
         }
         if (url.startsWith("tvbox-oth:")) {
-            ensurePool();
             stop(false);
             int idx = Integer.parseInt(url.substring(10));
-            // 同 torrent 分支:台账被 stop(true) 清空(idx=-1)或索引越界都是**过期地址**
-            if (ed2kList == null || idx < 0 || idx >= ed2kList.size()) {
-                callback.status(-1, str(R.string.thunder_error_invalid_url));
-                return true;
-            }
             task_url=ed2kList.get(idx);
             name = XLTaskHelper.instance().getFileName(task_url);
             localPath = (new File(cacheRoot+File.separator+"temp",FileUtils.getFileNameWithoutExt(name)))+"/";
@@ -430,14 +302,11 @@ public class Thunder {
                     while (true) {
                         count--;
                         if (count <= 0) {
-                            // 埋点:ed2k/ftp 的 20 秒盲等同样要留痕(此前超时后日志空白)
-                            LOG.i("echo-thunder oth timeout task=" + currentTask + " file=" + name);
                             callback.status(-1, str(R.string.thunder_error_timeout));
                             break;
                         }
                         String playUrl=getPlayUrl();
                         if(playUrl != null && !playUrl.isEmpty()){
-                            LOG.i("echo-thunder oth ready waited=" + (20 - count) + "s");
                             callback.play(playUrl);
                             return;
                         }
@@ -452,7 +321,10 @@ public class Thunder {
             return true;
         }
         if (isEd2k(url) || isFtp(url)) {
-            ensurePool();
+            if(threadPool==null){
+                init(AppContextHolder.context());
+                threadPool = Executors.newSingleThreadExecutor();
+            }
             if (currentTask > 0) {
                 XLTaskHelper.instance().stopTask(currentTask);
                 currentTask = 0L;
@@ -492,66 +364,32 @@ public class Thunder {
     }
 
 
-    /**
-     * 迅雷错误码 → 用户可读文案。
-     *
-     * <p>⚠️ 2026-10-18 **整表重写**:原实现把 114001/114004/114005/114006/114007/114011/9304/111154
-     * 八个码一律译成「版权限制：无权下载」。经查 {@code thunder.jar} 自带的官方码表
-     * ({@code com/xunlei/downloadlib/parameter/ErrorCodeToMsg.class},共 145 个码),
-     * **这八个码没有任何一个与版权有关**,全是「hub 查询 / 种子获取解析」失败族;
-     * 而且 114011 / 111154 / 9125 **根本不在官方表内**(是凭空写的)。
-     *
-     * <p>为什么必须改:用户看到「版权限制」会以为内容被版权方封禁而直接放弃,
-     * 实际原因多为「种子已失效 / 连不上 tracker」—— 换个种子往往就能播。
-     * 错误文案把用户导向错误的下一步动作,比不提示更糟。
-     *
-     * <p>分组原则:按**用户能采取的动作**归类,而不是按 SDK 的模块分层。
-     * 同一组内的码对用户是同一件事(换个种子 / 等一会儿 / 清磁盘)。
-     *
-     * <p>码表来源与核对方式见 {@code .workbuddy-ai/memory/2026-10-18.md} 同名小节。
-     */
     private static String errorInfo(int code) {
         switch (code) {
-            // ---- 文件系统类:用户可自行处理 ----
-            case 111085: // INSUFFICIENT_DISK_SPACE
-                return str(R.string.thunder_error_no_space);
-            case 111129: // FILE_PATH_TOO_LONG
+            case 9125:
+                return str(R.string.thunder_error_name_too_long);
+            case 111120:
                 return str(R.string.thunder_error_path_too_long);
-            case 111142: // FILE_SIZE_TOO_SMALL
+            case 111142:
                 return str(R.string.thunder_error_file_too_small);
-            case 111120: // ALLOC_INVALID_SIZE(原误译为"文件路径太长")
-                return str(R.string.thunder_error_bad_param);
-
-            // ---- 网络类 ----
-            case 111171: // NET_CONNECTION_REFUSED
+            case 111085:
+                return str(R.string.thunder_error_no_space);
+            case 111171:
                 return str(R.string.thunder_error_network_refused);
-
-            // ---- 缓冲/资源类 ----
-            case 9301: // XL_NO_ENOUGH_BUFFER
+            case 9301:
                 return str(R.string.thunder_error_buffer);
-
-            // ---- 种子元数据获取失败:最可能是种子已失效(死种) ----
-            // 114004 QUERY_BT_HUB_FAILED / 114006 GET_TORRENT_FAILED / 9304 TORRENT_IMCOMPLETE
-            // 这三类对用户是同一件事:拿不到这个种子的元数据 ⇒ 建议换源或换种子。
+            case 114001:
             case 114004:
-            case 114006:
-            case 9304:
-                return str(R.string.thunder_error_torrent_unavailable);
-
-            // ---- 种子解析失败:拿到了文件但读不出结构(损坏/格式不支持) ----
-            // 114005 PARSE_TORRENT_FAILED / 114007 SAVE_TORRENT_FAILED
             case 114005:
+            case 114006:
             case 114007:
-                return str(R.string.thunder_error_torrent_parse);
-
-            // ---- emule 专用:本 App 的磁力/BT 通路不走 emule,出现即资源形态不符 ----
-            case 114001: // QUERY_EMULE_HUB_FAILED
-                return str(R.string.thunder_error_emule_unavailable);
-            case 114101: // TASK_FAILURE_EMULE_NO_RECORD(原误译为"无效链接")
-                return str(R.string.thunder_error_emule_unavailable);
-
+            case 114011:
+            case 9304:
+            case 111154:
+                return str(R.string.thunder_error_copyright);
+            case 114101:
+                return str(R.string.thunder_error_invalid_url);
             default:
-                // 不再兜底成某个"像样"的中文:未知码原样暴露,便于真机排查时直接读码。
                 return "ErrorCode=" + code;
         }
     }
@@ -560,26 +398,6 @@ public class Thunder {
     public static boolean isSupportUrl(String url) {
 //        return isMagnet(url) || isThunder(url) || isEd2k(url) || isFtp(url);
         return isMagnet(url) || isThunder(url) || isTorrent(url);
-    }
-
-    /**
-     * 这条地址的取流是否需要**长等待**(磁力/种子/ed2k/ftp 都算)。
-     *
-     * <p>存在的理由:磁力/种子的取流本质是"先把文件下到本地",远超 HTTP 直连的秒级窗口。
-     * 播放侧那道 {@code MAX_RESOLVE_PLAY_URL_TIMEOUT_MS} 上界是为 HTTP 取流设的 ——
-     * 不区分就会**先于** {@link #play} 内部的等待窗口落下,导致它的长窗口永远等不到
-     * (实测:9 秒总闸先到,180 秒窗口形同虚设,表现和"没恢复通路"一样)。
-     *
-     * <p>注意覆盖范围要**与 {@link #play} 实际处理的地址形态一致**:那里处理
-     * {@code tvbox-torrent:} / {@code tvbox-oth:} / ed2k / ftp,而 {@link #isSupportUrl}
-     * 只认 magnet/thunder/.torrent。两类合起来才是"取流要走 Thunder"的全集 ——
-     * 少了 {@code tvbox-torrent:}(parse 阶段替换进列表的派生地址),长等待就不会生效。
-     */
-    public static boolean needsLongResolveWindow(String url) {
-        if (url == null) return false;
-        return isSupportUrl(url)
-                || isEd2k(url) || isFtp(url)
-                || url.startsWith("tvbox-torrent:") || url.startsWith("tvbox-oth:");
     }
 
     private static boolean isMagnet(String url) {
