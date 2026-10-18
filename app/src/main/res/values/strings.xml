@@ -164,7 +164,7 @@
     <string name="search_stats_network_hint">多数来源没有响应，可能与当前网络有关</string>
     <string name="search_load_more">更多来源</string>
     <string name="search_progress">已搜 %1$d/%2$d 源</string>
-    <string name="search_all_sources_done">已搜完全部 %1$d 源</string>
+    <string name="search_all_sources_done">已问过 %1$d 个源，暂无可问的新源</string>
     <!-- 2026-10-08:进度区分"已发起"与"已完成"。
          原先只有一个"已搜索 x/y",数字在批次启动时就 +N,用户会以为"搜完了这么多",
          实际其中几十个还转着圈 —— 与站点栏里几十个源一起闪的观感一致,像卡死。 -->

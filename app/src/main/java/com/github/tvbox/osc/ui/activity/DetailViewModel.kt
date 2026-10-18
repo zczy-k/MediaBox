@@ -1975,7 +1975,10 @@ class DetailViewModel : ViewModel() {
             searchProgress.value = null
             publishSourceChips()
             if (userInitiated) {
-                toastEvent.value = str(R.string.search_all_sources_done, effectiveTotal)
+                // ⚠️ 数字必须是**真正问过的源数**,不是 [effectiveTotal](全池 300+)。
+                // 走到这里说明"这一档可问的源都问过了",而那些因零命中被跳过的源
+                // 根本没发过请求 —— 报全池数会让用户以为"300 多个源全搜完了"。
+                toastEvent.value = str(R.string.search_all_sources_done, searchedSourceKeys.size)
             }
             settleDeferredEmpty()
             return

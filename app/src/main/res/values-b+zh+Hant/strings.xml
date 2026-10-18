@@ -162,7 +162,7 @@
     <string name="search_stats_network_hint">多數來源沒有回應，可能與目前的網路有關</string>
     <string name="search_load_more">更多來源</string>
     <string name="search_progress">已搜 %1$d/%2$d 源</string>
-    <string name="search_all_sources_done">已搜完全部 %1$d 源</string>
+    <string name="search_all_sources_done">已問過 %1$d 個源，暫無可問的新源</string>
     <string name="search_progress_settled">已搜 %1$d/%2$d 源</string>
     <string name="search_progress_timeout">%1$d 源逾時</string>
     <string name="search_pinyin_resolved">已按「%1$s」搜尋</string>

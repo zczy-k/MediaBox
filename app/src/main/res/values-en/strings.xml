@@ -162,7 +162,7 @@
     <string name="search_stats_network_hint">Most sources did not respond. This may be a network issue.</string>
     <string name="search_load_more">More sources</string>
     <string name="search_progress">%1$d/%2$d sources searched</string>
-    <string name="search_all_sources_done">All %1$d sources done</string>
+    <string name="search_all_sources_done">Asked %1$d sources, none left to try</string>
     <string name="search_progress_settled">%1$d/%2$d sources searched</string>
     <string name="search_progress_timeout">%1$d timed out</string>
     <string name="search_pinyin_resolved">Searched as \"%1$s\"</string>
