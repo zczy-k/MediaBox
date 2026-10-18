@@ -895,6 +895,21 @@ public class PlaybackController {
     private static final long MAX_RESOLVE_PLAY_URL_TIMEOUT_MS = 9 * 1000L;
 
     /**
+     * 磁力/种子类取流的等待上界。
+     *
+     * <p>⚠️ 2026-10-18:这条上界是为"恢复磁力通路"补的。{@link #MAX_RESOLVE_PLAY_URL_TIMEOUT_MS}
+     * 是 9 秒 —— 它服务的是 HTTP 直连取流(拿到地址就能播)。而磁力/种子的取流本质是
+     * **先把文件下到本地**,9 秒必然落空:实测真机日志
+     * {@code echo-resolvePlayUrl timeout ... stage=spider-wait waited=9008},
+     * 于是 {@code Thunder.play} 内部那条 180 秒等待窗口**永远等不到**,
+     * 表现与"通路没恢复"完全一样(点磁力线路 → 9 秒后换线 → all lines exhausted)。
+     *
+     * <p>取值与 {@code Thunder.play} 里的下载等待窗口(180 × sleep(1000))对齐并留 30 秒余量:
+     * 那边是"下载完才交地址"的硬等待,外层窗口必须比它长,否则又变成"内层还没等到、外层先判死"。
+     */
+    private static final long MAGNET_RESOLVE_PLAY_URL_TIMEOUT_MS = 210 * 1000L;
+
+    /**
      * 单站取流等待窗口 = max(常量, 站点 timeout + 1),再**封顶** {@link #MAX_RESOLVE_PLAY_URL_TIMEOUT_MS}。
      *
      * <p>为什么要封顶:站点可在配置里声明 timeout(夹在 5~60s),不封顶时一个声明 60 的站
@@ -903,12 +918,36 @@ public class PlaybackController {
      *
      * <p>为什么缺省不再是 16 秒:站点未声明时走 {@code getPlayTimeoutSeconds()} 的缺省值,
      * 而那里是拿"少等"换"少成功"的旋钮,见 SourceBean。
+     *
+     * <p>⚠️ 磁力/种子类线路走单独上界 {@link #MAGNET_RESOLVE_PLAY_URL_TIMEOUT_MS}:
+     * 它们不是"站点答话慢",而是"文件要下完",9 秒封顶对这类取流是必然失败。
+     * 判据由 {@link Thunder#needsLongResolveWindow} 给出 —— 它覆盖 magnet/thunder/.torrent
+     * 与 parse 阶段派生出的 {@code tvbox-torrent:} / {@code tvbox-oth:},与 Thunder.play 的处理集一致。
      */
     private long getResolvePlayUrlTimeoutMs() {
+        if (isMagnetLikeCurrentLine()) return MAGNET_RESOLVE_PLAY_URL_TIMEOUT_MS;
         if (sourceBean() == null) return PlaybackTimeouts.RESOLVE_PLAY_URL_TIMEOUT_MS;
         long fromSource = (sourceBean().getPlayTimeoutSeconds() + 1L) * 1000L;
         return Math.min(MAX_RESOLVE_PLAY_URL_TIMEOUT_MS,
                 Math.max(PlaybackTimeouts.RESOLVE_PLAY_URL_TIMEOUT_MS, fromSource));
+    }
+
+    /**
+     * 当前这一集(线路)的地址是否属于"取流要走 Thunder 且需要长等待"的形态。
+     *
+     * <p>用 {@code vod()}(当前播放内容)而非 {@code sourceBean()} 判:磁力判定看的是**地址**,
+     * 与站点类型无关 —— 同一个站点既可能给 http 线路,也可能给磁力线路(avgood 就是这种)。
+     */
+    private boolean isMagnetLikeCurrentLine() {
+        try {
+            VodInfo vodInfo = vod();
+            if (vodInfo == null) return false;
+            VodInfo.VodSeries cur = currentSeries(vodInfo.playFlag, vodInfo.playIndex);
+            return cur != null && Thunder.needsLongResolveWindow(cur.url);
+        } catch (Throwable th) {
+            // 判定失败按"短窗口"走:宁可退回既有行为,也不因为这里异常把等待拉长
+            return false;
+        }
     }
 
     public void startSwitchLinePlayTimeout() {
@@ -1360,6 +1399,12 @@ public class PlaybackController {
         // 2026-10-18:此块由 d719b108 的停用版恢复。恢复的前提是 Thunder 侧三个缺陷已修
         // (细节见 Thunder.ParseTask / Thunder.play 注释),否则重蹈"点了必报错的假线路"。
         final int thunderGen = resolver.currentGen();
+        // 埋点:证明"这一集确实走进了 Thunder 取流分支",以及外层窗口被设成多长
+        // (没有它就只能看到 9 秒后换线,分不清是"没走 Thunder"还是"窗口太短")
+        if (Thunder.needsLongResolveWindow(vs.url)) {
+            LOG.i("echo-thunder play-attempt kind=" + (vs.url.length() > 24 ? vs.url.substring(0, 24) : vs.url)
+                    + " windowMs=" + getResolvePlayUrlTimeoutMs());
+        }
         if (Thunder.play(vs.url, new Thunder.ThunderCallback() {
             @Override
             public void status(int code, String info) {

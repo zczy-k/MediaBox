@@ -491,6 +491,26 @@ public class Thunder {
         return isMagnet(url) || isThunder(url) || isTorrent(url);
     }
 
+    /**
+     * 这条地址的取流是否需要**长等待**(磁力/种子/ed2k/ftp 都算)。
+     *
+     * <p>存在的理由:磁力/种子的取流本质是"先把文件下到本地",远超 HTTP 直连的秒级窗口。
+     * 播放侧那道 {@code MAX_RESOLVE_PLAY_URL_TIMEOUT_MS} 上界是为 HTTP 取流设的 ——
+     * 不区分就会**先于** {@link #play} 内部的等待窗口落下,导致它的长窗口永远等不到
+     * (实测:9 秒总闸先到,180 秒窗口形同虚设,表现和"没恢复通路"一样)。
+     *
+     * <p>注意覆盖范围要**与 {@link #play} 实际处理的地址形态一致**:那里处理
+     * {@code tvbox-torrent:} / {@code tvbox-oth:} / ed2k / ftp,而 {@link #isSupportUrl}
+     * 只认 magnet/thunder/.torrent。两类合起来才是"取流要走 Thunder"的全集 ——
+     * 少了 {@code tvbox-torrent:}(parse 阶段替换进列表的派生地址),长等待就不会生效。
+     */
+    public static boolean needsLongResolveWindow(String url) {
+        if (url == null) return false;
+        return isSupportUrl(url)
+                || isEd2k(url) || isFtp(url)
+                || url.startsWith("tvbox-torrent:") || url.startsWith("tvbox-oth:");
+    }
+
     private static boolean isMagnet(String url) {
         return url.toLowerCase().startsWith("magnet:");
     }
