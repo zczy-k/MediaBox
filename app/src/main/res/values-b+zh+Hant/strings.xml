@@ -104,6 +104,8 @@
     <!-- 播放容器/播放器提示 -->
     <string name="player_error_sniff">嗅探錯誤</string>
     <string name="player_error_play">影片播放發生錯誤</string>
+    <string name="player_switching_source">正在尋找其他片源…</string>
+    <string name="player_no_valid_source">該影片暫無有效片源</string>
     <string name="player_no_audio_track">沒有音軌</string>
     <string name="player_switch_audio_track">切換音軌</string>
     <string name="player_no_video_track">沒有視訊軌</string>

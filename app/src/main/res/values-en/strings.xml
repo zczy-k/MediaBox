@@ -104,6 +104,8 @@
     <!-- Player container / player tips -->
     <string name="player_error_sniff">Sniffing error</string>
     <string name="player_error_play">Playback error</string>
+    <string name="player_switching_source">Looking for other sources…</string>
+    <string name="player_no_valid_source">No working source for this title</string>
     <string name="player_no_audio_track">No audio track</string>
     <string name="player_switch_audio_track">Switch audio track</string>
     <string name="player_no_video_track">No video track</string>

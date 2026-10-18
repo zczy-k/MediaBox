@@ -152,6 +152,18 @@ class DetailViewModel : ViewModel() {
     val sourcesSearching = MutableStateFlow(false)
 
     /**
+     * 页面侧此刻是否还在为这部片找别的源(2026-10-18)。
+     *
+     * <p>给播放层用:内核报错时决定说「正在查找其他片源…」还是「该影片暂无有效片源」。
+     * 判据 = 搜索在跑 **或** 还有档没跑完 —— 后者覆盖"搜索刚停但兜底链马上要推进"的瞬间,
+     * 避免在那个缝里报"无有效源"(那正是真机《怦然心动》的错误形态)。
+     *
+     * <p>刻意不引用 [fallbackAutoAdvanceWanted] 之类内部标志:对外只承诺"还在找"这一个语义。
+     */
+    fun isSearchingOtherSources(): Boolean =
+        sourcesSearching.value || ExpandPoolPolicy.hasNextWave(sourcePoolTotal.value, poolRound)
+
+    /**
      * **用户主动换源**后、该轮搜索仍在跑的时间窗(2026-10-14 用户反馈 #2 修正)。
      *
      * <p>用于「换源」按钮的置灰判据 —— **只**防"用户自己连点两次换源",
@@ -472,6 +484,34 @@ class DetailViewModel : ViewModel() {
      * null = 本片还没算过第一档。
      */
     private var noHitShortCircuit: Boolean? = null
+
+    /**
+     * 本场**兜底链已自动推进过几档**(2026-10-18)。
+     *
+     * <p>背景:自动链原本"只跑第 1 档",跑完就把结论交给用户 —— 真机《怦然心动》
+     * 源池 317 只问了 106 个、9 个候选全失败就报错,剩下 211 个源从未被问。
+     * 现在兜底链在"所有候选都失败且还有档没跑"时会自动推进
+     * (见 [ExpandPoolPolicy.shouldAutoAdvanceOnExhaustion])。
+     *
+     * <p>这个计数器就是它的上限:[ExpandPoolPolicy.MAX_AUTO_ADVANCE_WAVES]。
+     * 没有它,"推进→失败→再推进"会退化成 2026-10-13 那种无限重搜
+     * (真机 token=13→14 反复,用户看到"卡死无举动")。
+     *
+     * <p>随换片复位(与 [poolRound] 同处)。
+     */
+    private var autoAdvancedWaves = 0
+
+    /**
+     * 兜底链请求"把搜索推到下一档"的信号(2026-10-18)。
+     *
+     * <p>由 [loadNextFallbackCandidate] 在"所有候选都失败"时置位;
+     * 由波次循环消费一次后立即清掉(见 `canExpand` 处的 `autoAdvance` 分支)。
+     *
+     * <p>为什么用"标志 + 消费"而不是直接在这里调 `startSourceSearch`:
+     * 推进必须发生在**正在跑的这轮搜索的波次循环里**(它能复用 `searchedSourceKeys` 去重、
+     * `poolRound` 计数、并发自适应)。在外面另起一轮会把已搜的源重投一遍。
+     */
+    private var fallbackAutoAdvanceWanted = false
 
     /**
      * **本场分档计划的分母**(= 本片第一次算池子时的"排序后全池"大小,整场定死,2026-10-17)。
@@ -1902,6 +1942,8 @@ class DetailViewModel : ViewModel() {
         if (searchTitle != title) {
             poolRound = ExpandPoolPolicy.FIRST_WAVE
             manualWavesQueued = 0
+            // 换片 ⇒ 兜底链的自动推进额度也要重置(它是"本片还没问尽"的计数)
+            autoAdvancedWaves = 0
             canContinueSourceSearch.value = false
             noHitShortCircuit = null
             sessionPlanTotal = 0
@@ -2300,24 +2342,44 @@ class DetailViewModel : ViewModel() {
                 }
                 // 让路:换片/冻结后立即停(别再投下一波、也别走收口)
                 if (!searchActive(tokenStr)) return@launch
-                // 扩档判定(2026-10-17 用户定案):**自动链只跑第 1 档**,跑完就停下给结论;
-                // 要往下一档走必须是他点过「继续找源」(manualWavesQueued),一次点一档。
-                // 命中的档不再往下问(目的已达成),但**手动点过就照点数的推进** —— 他要的就是"再问一批"。
+                // 扩档判定(2026-10-17 用户定案 + 2026-10-18 兜底自动推进补充):
                 //
-                // ⚠️ "还有下一档"是不可绕过的硬边界:若问尽后仍继续 expand ⇒ wave=0 空转、
+                // **用户手动**:一次点击 = 一档(manualWavesQueued),剩下的档由他一档一档点着走
+                //   —— 他要的就是自己决定等多久。
+                //
+                // **兜底链自动**(2026-10-18 新增):当"本场所有候选都试过且都失败"时,
+                //   **自动**推进下一档,不再等用户点击。真机《怦然心动》:源池 317 只跑了第 1 档
+                //   (106 个),9 个候选全失败就报「视频播放出错」,而剩下 211 个源从未被问过 ——
+                //   相当于用 33% 的样本宣布"这部片看不了"。用户已经在等画面了,此时把没问过的源
+                //   晾着不投是纯粹的体验损失;"省流量"在这个场景下是次要的。
+                //   三道闸见 [ExpandPoolPolicy.shouldAutoAdvanceOnExhaustion](上限 3 档,防无限重搜)。
+                //
+                // ⚠️ "还有下一档"始终是不可绕过的硬边界:若问尽后仍继续 expand ⇒ wave=0 空转、
                 //   poolRound 无限自增、日志刷屏、CPU 空转(2026-10-14 v1.0.99 真机死循环现场:
                 //   round 566→576… 每轮 1ms)。
                 val hasMoreWaves = ExpandPoolPolicy.hasNextWave(total, poolRound)
-                val canExpand = hasMoreWaves && manualWavesQueued > 0
+                val autoAdvance = ExpandPoolPolicy.shouldAutoAdvanceOnExhaustion(
+                    allCandidatesFailed = fallbackAutoAdvanceWanted,
+                    hasMoreWave = hasMoreWaves,
+                    autoAdvancedWaves = autoAdvancedWaves,
+                    maxAutoWaves = ExpandPoolPolicy.MAX_AUTO_ADVANCE_WAVES,
+                )
+                val canExpand = hasMoreWaves && (manualWavesQueued > 0 || autoAdvance)
                 if (canExpand) {
-                    manualWavesQueued -= 1
+                    if (autoAdvance) {
+                        autoAdvancedWaves += 1
+                        fallbackAutoAdvanceWanted = false
+                    } else {
+                        manualWavesQueued -= 1
+                    }
                     poolRound += 1
                     waveSize = ExpandPoolPolicy.poolSizeForWave(total, poolRound)
                     LOG.i(
                         "echo-source-search expand round=" + poolRound +
                             " nextSize=" + waveSize + " total=" + total +
                             " searched=" + searchedSourceKeys.size + " token=$myToken" +
-                            " manual=true queued=$manualWavesQueued"
+                            " manual=" + manualWavesQueued + " auto=$autoAdvancedWaves" +
+                            (if (autoAdvance) " reason=all-candidates-failed" else "")
                     )
                     continue  // 继续下一波:只投"新增的"源(searchedSourceKeys 已滤掉已搜的)
                 }
@@ -3683,17 +3745,46 @@ class DetailViewModel : ViewModel() {
         publishSourceChips()
         refreshCrossSourceHint()
         // 2026-10-13 真机修复(问题 17b,失败终态):候选遍历完时,若**当前所有候选源都在本会话失败过**
-        // ⇒ 换源链无路可走,直接收口进空态,**不再触发新一轮重搜**。
-        //
-        // 真机取证(千与千寻):所有源都放不出来时,链路表现为
+        // ⇒ 换源链无路可走。真机取证(千与千寻):所有源都放不出来时,链路表现为
         // "重搜(token=13)→ 换源失败 → 重搜(token=14)→ 换源失败 → …"**无限循环**,
         // 日志里 `source-search all-done ... frozen=false` 后立刻又 `start`,用户看到的就是"卡死无举动"。
-        // 短期失败记忆让这里能判定"确实全废了",从而进入既有 [finishFallbackWithoutResult] 终态。
+        // 短期失败记忆让这里能判定"确实全废了"。
+        //
+        // ⚠️ 2026-10-18 修正(真机《怦然心动》的严重体验缺陷):
+        // **在报终态之前,必须先确认"源已经问尽"**。
+        // 那次的实际形状是:源池 317,自动链只跑了第 1 档(106 个),9 个候选全失败就报
+        // 「视频播放出错」—— 而剩下 211 个源**从未被问过**,搜索在 9 秒后还在正常跑完第一档。
+        // 用 33% 的样本宣布"这部片看不了",这是纯粹的设计缺陷(用户明确要求:一切以体验为上)。
+        //
+        // 所以现在分两步走:
+        //   ① 还有档没跑 ⇒ **请求搜索自动推进下一档**,本次不收口(用户继续等,比看报错好);
+        //   ② 确实问尽了 ⇒ 才走终态。
         val liveCandidateKeys = synchronized(fallbackCandidates) {
             fallbackCandidates.mapNotNull { it.sourceKey?.takeIf { k -> k.isNotBlank() } }
         }
-        if (liveCandidateKeys.isNotEmpty() && PlaybackFailureMemory.allFailed(liveCandidateKeys)) {
-            LOG.i("echo-fallback all candidates failed this session, enter终态 n=" + liveCandidateKeys.size)
+        val allFailed = liveCandidateKeys.isNotEmpty() && PlaybackFailureMemory.allFailed(liveCandidateKeys)
+        if (allFailed) {
+            // ① 先请求跨档推进(由正在跑的波次循环消费,复用去重/计数/并发自适应)
+            val canAdvance = ExpandPoolPolicy.shouldAutoAdvanceOnExhaustion(
+                allCandidatesFailed = true,
+                hasMoreWave = ExpandPoolPolicy.hasNextWave(sourcePoolTotal.value, poolRound),
+                autoAdvancedWaves = autoAdvancedWaves,
+                maxAutoWaves = ExpandPoolPolicy.MAX_AUTO_ADVANCE_WAVES,
+            )
+            if (canAdvance) {
+                fallbackAutoAdvanceWanted = true
+                LOG.i(
+                    "echo-fallback auto-advance-wanted n=" + liveCandidateKeys.size +
+                        " round=$poolRound total=${sourcePoolTotal.value}" +
+                        " auto=$autoAdvancedWaves/" + ExpandPoolPolicy.MAX_AUTO_ADVANCE_WAVES
+                )
+                // 保持"在等"的语义:不动 fallbackActive、不报终态,让搜索把下一档投完
+                return true
+            }
+            LOG.i(
+                "echo-fallback all candidates failed and pool exhausted, enter终态 n=" +
+                    liveCandidateKeys.size + " round=$poolRound auto=$autoAdvancedWaves"
+            )
             finishFallbackWithoutResult()
             return false
         }

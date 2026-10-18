@@ -165,6 +165,16 @@ class DetailActivity : BaseActivity(), PageHost {
     fun startDetailFallbackAfterLinesExhausted(sourceLevelFailure: Boolean): Boolean =
         vm.startFallbackAfterLinesExhausted(sourceLevelFailure)
 
+    /**
+     * 播放层问"页面还在找别的源吗"(2026-10-18)。
+     *
+     * <p>它决定内核报错时说哪句话:还在找 ⇒「正在查找其他片源…」;
+     * 已确认没源 ⇒「该影片暂无有效片源」。
+     * 这两个替代了原来那句裸的「视频播放出错」—— 那句话既不告诉用户发生了什么,
+     * 也不说明系统还在不在干活(真机《怦然心动》:换源链正在跑,屏幕上却是裸错误)。
+     */
+    override fun isSearchingOtherSources(): Boolean = vm.isSearchingOtherSources()
+
     /** 入口可见性由播放侧判定(剧集/线路多于一个才显示按钮),这里只兜住详情数据尚未就绪的时序 */
     override fun showEpisodeSheet() {
         if (vm.vodInfo != null) vm.showEpisodeSheet()
