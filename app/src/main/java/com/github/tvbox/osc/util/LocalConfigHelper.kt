@@ -28,10 +28,22 @@ import java.util.concurrent.Executors
  * 本地源导入的中间态:调用页 Activity 注册 `OpenDocument`(选 config.json)与 `OpenDocumentTree`
  * (第二段:源目录授权)两个契约,结果分别交给 [handleLocalConfigResult] / [handleLocalSourceTreeResult]。
  * 唯一入口 = 配置管理页「添加订阅」dialog 的「从本地选择」。
+ *
+ * <p>2026-10-19 起新增**批量导入**(`OpenMultipleDocuments`):一次最多选 [MAX_BATCH_IMPORT] 个文件,
+ * 文件名自动作源名,一次性进列表等用户点保存。批量走同一套解析/复制逻辑,
+ * 只是把逐文件的收尾合并成一次回调(见 [handleLocalConfigBatchResult])。
  */
 object LocalConfigHost {
     /** 等待中的结果回调(同一时刻只会有一个导入流程) */
     var pending: ((api: String) -> Unit)? = null
+
+    /**
+     * 批量导入的结果回调(2026-10-19)。
+     *
+     * <p>与 [pending] 分开存:两者由**不同的 launcher** 触发(OpenDocument / OpenMultipleDocuments),
+     * 系统回调时机不保证与调用顺序一致,共用一个槽位会被覆盖。各自清空、互不干扰。
+     */
+    var pendingBatch: ((items: List<LocalConfigBatchItem>) -> Unit)? = null
 
     /** 复制路线已算出的地址;要补同目录引用时挂起,等目录授权回来再收尾 */
     var pendingApi: String? = null
@@ -63,6 +75,124 @@ fun startLocalConfig(
 ) {
     LocalConfigHost.pending = onResult
     launcher.launch(arrayOf("*/*"))
+}
+
+/** 批量导入上限(产品口径:一次最多 4 个)。超出的文件被忽略并在结果里回报,由调用方提示 */
+const val MAX_BATCH_IMPORT = 4
+
+/** 批量导入的单条结果:文件名(去扩展名,用作源名) + 可用地址 */
+data class LocalConfigBatchItem(val name: String, val api: String)
+
+/**
+ * 启动**多选**文件选择器。
+ *
+ * @param onResult 主线程回调:成功导入的条目(顺序与用户选择一致);全部失败时为空列表
+ * @param onOverflow 被忽略的文件数(超出 [MAX_BATCH_IMPORT]);0 表示没有溢出
+ *
+ * <p>⚠️ 与单选的 [startLocalConfig] 共用 [LocalConfigHost] 的 pending 槽位 —— 两者不会同时进行
+ * (同一个按钮触发),故不新开槽位;但仍各自清空,避免互串。
+ */
+fun startLocalConfigBatch(
+    launcher: ActivityResultLauncher<Array<String>>,
+    onResult: (items: List<LocalConfigBatchItem>) -> Unit,
+) {
+    LocalConfigHost.pendingBatch = onResult
+    launcher.launch(arrayOf("*/*"))
+}
+
+/**
+ * 批量导入的 SAF 结果入口。
+ *
+ * <p>与单选的关键差别:单选一次只处理一个 Uri,批量要**逐个**解析并把结果合成一次回调
+ * (用户点一次"保存"要看到 4 条都在列表里,不能弹 4 次 Toast)。
+ *
+ * <p>刻意**不做**目录授权收尾(那条链只为"复制后仍缺同目录引用"服务,是一个交互密集的第二段流程)。
+ * 批量导入遇到缺同目录引用的文件时**照常交回地址** —— 那些引用的读取失败由 ApiConfig 在拉取时报错,
+ * 而批量场景追求的是"一次把几个订阅塞进去",让用户为每个文件回答一次目录授权会摧毁这个便利。
+ * 单文件的完整收尾流程仍在 [handleLocalConfigResult] 里,单选入口不变。
+ */
+fun handleLocalConfigBatchResult(activity: Activity, uris: List<Uri>) {
+    val callback = LocalConfigHost.pendingBatch ?: return
+    LocalConfigHost.pendingBatch = null
+    if (uris.isEmpty()) {
+        callback(emptyList())
+        return
+    }
+    val context = activity.applicationContext ?: activity
+    importWorker.execute {
+        val items = ArrayList<LocalConfigBatchItem>()
+        var failed = 0
+        // 逐个解析:单个失败不影响其它(用户选了 4 个,坏掉 1 个不该让另外 3 个也进不去)
+        for (uri in uris.take(MAX_BATCH_IMPORT)) {
+            val result = try {
+                importLocalConfig(context, uri)
+            } catch (th: Throwable) {
+                LOG.e("LocalConfigHelper", th)
+                null
+            }
+            if (result == null || result.api.isEmpty()) {
+                failed++
+                continue
+            }
+            items.add(LocalConfigBatchItem(nameFromUri(context, uri), result.api))
+        }
+        onMain {
+            if (activity.isFinishing || activity.isDestroyed) {
+                LOG.i("echo-local-src drop batch, page gone n=" + uris.size)
+                return@onMain
+            }
+            val ignored = (uris.size - MAX_BATCH_IMPORT).coerceAtLeast(0)
+            LOG.i(
+                "echo-local-src batch n=" + uris.size + " ok=" + items.size +
+                    " failed=" + failed + " overflow=" + ignored,
+            )
+            if (items.isEmpty()) {
+                Toast.makeText(
+                    activity,
+                    activity.getString(R.string.toast_local_config_read_failed),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            } else if (ignored > 0) {
+                // 超上限:明确告知被忽略的数量,而不是静默丢弃
+                Toast.makeText(
+                    activity,
+                    activity.getString(R.string.toast_local_config_batch_overflow, MAX_BATCH_IMPORT, ignored),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+            callback(items)
+        }
+    }
+}
+
+/**
+ * 源名 = 文件名去掉扩展名。
+ *
+ * <p>为什么用文件名:批量导入时用户已经用"文件名"区分了这几个订阅(下载下来就是有意义的名字),
+ * 再让他逐个填名字就失去了批量导入的意义。取不到文件名时退回地址(与单选的 name 口径一致)。
+ */
+internal fun nameFromUri(context: Context, uri: Uri): String {
+    val raw = getDisplayName(context, uri).trim()
+    if (raw.isEmpty()) return uri.toString()
+    return stripExtension(raw)
+}
+
+/**
+ * 去掉文件名的扩展名(纯函数,JVM 可测;Android 依赖部分留在 [nameFromUri])。
+ *
+ * <p>规则:
+ * <ul>
+ *   <li>无扩展名(不含点)或点是首字符(隐藏文件 `.foo`)⇒ 原样返回;</li>
+ *   <li>去掉扩展名后为空(如 `.json`)⇒ 返回原名,不产生空名字
+ *       (空名字会让列表项显示为地址,且 `parseSubscribe` 会把名字与地址都填成同一个值)。</li>
+ * </ul>
+ */
+internal fun stripExtension(fileName: String): String {
+    val name = fileName.trim()
+    if (name.isEmpty()) return name
+    val dot = name.lastIndexOf('.')
+    if (dot <= 0) return name
+    return name.substring(0, dot).trim().ifEmpty { name }
 }
 
 /**

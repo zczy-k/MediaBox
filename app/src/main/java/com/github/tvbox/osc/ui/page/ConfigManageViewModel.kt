@@ -55,6 +55,16 @@ class ConfigManageViewModel : ViewModel() {
     val editTarget = MutableStateFlow<SubscribeSource?>(null)
     val pendingSwitch = MutableStateFlow<PendingSwitch?>(null)
     val toastEvent = MutableStateFlow<String?>(null)
+
+    /**
+     * 批量导入的**待确认**列表(2026-10-19):选完文件先挂在这里,用户点「保存」才落盘。
+     *
+     * <p>为什么不做成"选完直接落盘":批量导入是**一次改多条订阅**的动作,用户需要先看到
+     * "到底加了哪几个、名字是什么"再决定。直接落盘会让"多选错了一个"变成需要逐条删除的麻烦。
+     * 与单条添加不同 —— 单条只有一个,所见即所得,不需要中间态。
+     */
+    val pendingBatch = MutableStateFlow<List<SubscribeSource>>(emptyList())
+
     /** 即发即走:不随页面退出(VM cleared)取消,对齐旧 executor 语义 */
     private val copyCleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
@@ -249,6 +259,61 @@ class ConfigManageViewModel : ViewModel() {
             val item = parseSubscribe(newItems.first())
             if (vod) switchToVod(item) else switchToLive(item)
         }
+    }
+
+    /**
+     * 批量导入**第一步**:把选中的文件挂进待确认列表(不落盘)。
+     *
+     * <p>去重口径与落盘一致(地址相同视为同一条),这样用户看到的预览条数与最终落盘条数一致 ——
+     * 预览时说"4 条"、保存后只多 3 条,是最容易被当成 bug 的那种不一致。
+     *
+     * @return 挂进去的条数
+     */
+    fun stageBatchAdd(entries: List<SubscribeSource>) {
+        if (entries.isEmpty()) return
+        val cleaned = entries
+            .filter { it.url.isNotBlank() }
+            .map { SubscribeSource(it.name.trim().ifEmpty { it.url.trim() }, it.url.trim()) }
+        pendingBatch.value = cleaned
+    }
+
+    /** 取消批量导入(用户关掉预览) */
+    fun cancelBatchAdd() {
+        pendingBatch.value = emptyList()
+    }
+
+    /**
+     * 批量导入**第二步**:用户确认后一次性落盘。
+     *
+     * <p>只写一次 KV —— 逐条调 [commitAdd] 会写 N 次,而每次都要重读整份列表。
+     *
+     * <p>不与"首条自动切源"交互:批量场景用户要的是"都加进来",是否切换由他自己在列表里点。
+     * (单选时加第一条会自动切,那是因为单选的用户意图明确就是"要用这个源"。)
+     *
+     * @return 实际新增的条数(地址已存在的按更新名字处理,不计入新增)
+     */
+    fun commitBatchAdd(vod: Boolean): Int {
+        val entries = pendingBatch.value
+        pendingBatch.value = emptyList()
+        if (entries.isEmpty()) return 0
+        val mode = if (vod) ConfigMode.Vod else ConfigMode.Live
+        val list = ArrayList(loadSubscribes(mode))
+        var added = 0
+        for (entry in entries) {
+            val url = entry.url
+            if (url.isEmpty()) continue
+            val value = entry.name + SUBSCRIBE_SPLIT + url
+            val existIndex = list.indexOfFirst { parseSubscribe(it).url == url }
+            if (existIndex >= 0) {
+                list[existIndex] = value
+            } else {
+                list.add(value)
+                added++
+            }
+        }
+        KV.put(subscribeKeyOf(mode), list)
+        if (vod) vodItems.value = list else liveItems.value = list
+        return added
     }
 
     fun commitEdit(vod: Boolean, target: SubscribeSource, name: String, url: String) {

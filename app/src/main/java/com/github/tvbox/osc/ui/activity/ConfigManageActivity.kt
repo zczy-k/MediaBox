@@ -12,9 +12,12 @@ import com.github.tvbox.osc.ui.components.SheetHostScaffold
 import com.github.tvbox.osc.ui.page.ConfigManageScreen
 import com.github.tvbox.osc.ui.theme.MediaBoxTheme
 import com.github.tvbox.osc.util.PermissionHelper
+import com.github.tvbox.osc.util.LocalConfigBatchItem
+import com.github.tvbox.osc.util.handleLocalConfigBatchResult
 import com.github.tvbox.osc.util.handleLocalConfigResult
 import com.github.tvbox.osc.util.handleLocalSourceTreeResult
 import com.github.tvbox.osc.util.startLocalConfig
+import com.github.tvbox.osc.util.startLocalConfigBatch
 
 class ConfigManageActivity : BaseActivity() {
 
@@ -32,6 +35,12 @@ class ConfigManageActivity : BaseActivity() {
             }
         }
 
+    /** 批量导入(2026-10-19):一次最多选 MAX_BATCH_IMPORT 个文件,文件名自动作源名 */
+    private val localConfigBatchLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+            handleLocalConfigBatchResult(this, uris)
+        }
+
     private val sourceTreeLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             handleLocalSourceTreeResult(this, uri)
@@ -40,6 +49,11 @@ class ConfigManageActivity : BaseActivity() {
     /** 不预检存储权限:能不能直引由"应用此刻是否真读得到"决定,预检会让读得到的设备白跳一次设置页 */
     fun launchLocalConfig(onResult: (api: String) -> Unit) {
         startLocalConfig(localConfigLauncher) { api -> onResult(api) }
+    }
+
+    /** 批量导入:一次选多个文件,逐个解析后合并成一次回调(用户点保存才落盘) */
+    fun launchLocalConfigBatch(onResult: (items: List<LocalConfigBatchItem>) -> Unit) {
+        startLocalConfigBatch(localConfigBatchLauncher, onResult)
     }
 
     /** 复制后还缺同目录引用:先争「所有文件访问」(拿到多半直接改成直引),拿不到再要目录授权;地址已可用,取消也照样完成导入 */

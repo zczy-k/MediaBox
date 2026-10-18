@@ -14,6 +14,8 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +25,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -33,6 +36,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -109,6 +113,7 @@ fun ConfigManageScreen(onNavigateBack: () -> Unit) {
     val manageMode by vm.manageMode.collectAsStateWithLifecycle()
     val editTarget by vm.editTarget.collectAsStateWithLifecycle()
     val toastEvent by vm.toastEvent.collectAsStateWithLifecycle()
+    val pendingBatch by vm.pendingBatch.collectAsStateWithLifecycle()
 
     val isVod = mode == ConfigMode.Vod
     val currentItems = if (isVod) vodItems else liveItems
@@ -234,6 +239,19 @@ fun ConfigManageScreen(onNavigateBack: () -> Unit) {
                                 stringResource(R.string.config_add_live_source)
                             },
                             onClick = { addDialogOpen = true },
+                        )
+                        // 批量导入(2026-10-19):一次最多选 4 个文件,文件名自动作源名。
+                        // **两步走**:选完先进待确认列表(预览),用户点「保存」才落盘 ——
+                        // 批量改多条订阅的动作需要先让用户看到"加了哪几个、叫什么名字"。
+                        TopBarActionBox(
+                            iconRes = R.drawable.ic_subscribe_source,
+                            contentDescription = stringResource(R.string.config_import_batch),
+                            onClick = {
+                                (context as? ConfigManageActivity)?.launchLocalConfigBatch { items ->
+                                    if (items.isEmpty()) return@launchLocalConfigBatch
+                                    vm.stageBatchAdd(items.map { SubscribeSource(it.name, it.api) })
+                                }
+                            },
                         )
                     }
                 }
@@ -393,6 +411,24 @@ fun ConfigManageScreen(onNavigateBack: () -> Unit) {
             },
             onPickFile = { onPicked ->
                 (context as? ConfigManageActivity)?.launchLocalConfig { api -> onPicked(api) }
+            },
+        )
+    }
+
+    // 批量导入预览(2026-10-19):选完文件先看清单,点「保存」才落盘。
+    // 名字已按文件名自动取好,用户在这里只需要"确认",不需要输入。
+    if (pendingBatch.isNotEmpty()) {
+        BatchImportPreviewDialog(
+            items = pendingBatch,
+            onDismiss = { vm.cancelBatchAdd() },
+            onConfirm = {
+                val added = vm.commitBatchAdd(isVod)
+                val msg = if (added > 0) {
+                    context.getString(R.string.toast_config_batch_added, added)
+                } else {
+                    context.getString(R.string.toast_config_batch_all_exist)
+                }
+                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
             },
         )
     }
@@ -614,6 +650,72 @@ private fun DisabledSourceTag() {
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
         )
     }
+}
+
+/**
+ * 批量导入预览(2026-10-19)。
+ *
+ * <p>为什么要这一步:批量导入是**一次改多条订阅**的动作。选完直接落盘的话,"多选错一个"
+ * 就得逐条删;先给清单让用户扫一眼,成本远低于善后。
+ *
+ * <p>名字由文件名的去扩展名结果自动填好(见 `nameFromUri`),这里**不可编辑** ——
+ * 批量场景让用户逐个改名就失去了批量的意义;真要改名,保存后在列表里点那一条编辑即可。
+ * 地址用等宽小字显示并截断:它主要用于让用户辨认"这条是不是我要的那个源"。
+ */
+@Composable
+private fun BatchImportPreviewDialog(
+    items: List<SubscribeSource>,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    MediaBoxAlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.config_import_batch_title, items.size)) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 320.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                items.forEachIndexed { index, item ->
+                    if (index > 0) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 8.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant,
+                        )
+                    }
+                    Text(
+                        text = item.name,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = item.url,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        // 用 Ellipsis 而不是 MiddleEllipsis:后者要求较新的 Compose 版本,
+                        // 而本仓无先例(全仓仅此一处)—— 为一行地址的省略样式引入版本风险不值。
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            val dismissThen = LocalSheetDismissThen.current
+            TextButton(onClick = { dismissThen { onConfirm() } }) {
+                Text(stringResource(R.string.common_save))
+            }
+        },
+        dismissButton = {
+            val dismissAnimated = LocalSheetDismiss.current
+            TextButton(onClick = { dismissAnimated(); onDismiss() }) {
+                Text(stringResource(R.string.common_cancel))
+            }
+        },
+    )
 }
 
 @Composable

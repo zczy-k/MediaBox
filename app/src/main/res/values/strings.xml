@@ -505,6 +505,11 @@
     <string name="config_switched_to">已切换到:%1$s</string>
     <string name="config_switch_repo">换仓</string>
     <string name="config_add_subscribe">添加订阅</string>
+    <string name="config_import_batch">批量导入</string>
+    <string name="config_import_batch_title">导入 %1$d 个订阅</string>
+    <string name="toast_config_batch_added">已添加 %1$d 个订阅</string>
+    <string name="toast_config_batch_all_exist">这些订阅都已存在</string>
+    <string name="toast_local_config_batch_overflow">一次最多导入 %1$d 个，已忽略 %2$d 个</string>
     <string name="config_add_live_source">添加直播源</string>
     <string name="config_edit_subscribe">编辑订阅</string>
     <string name="config_edit_live_source">编辑直播源</string>

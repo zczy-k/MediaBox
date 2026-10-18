@@ -490,6 +490,11 @@
     <string name="config_switched_to">Switched to: %1$s</string>
     <string name="config_switch_repo">Switch Repo</string>
     <string name="config_add_subscribe">Add Subscription</string>
+    <string name="config_import_batch">Batch import</string>
+    <string name="config_import_batch_title">Import %1$d subscriptions</string>
+    <string name="toast_config_batch_added">Added %1$d subscriptions</string>
+    <string name="toast_config_batch_all_exist">These subscriptions already exist</string>
+    <string name="toast_local_config_batch_overflow">Up to %1$d at a time, %2$d ignored</string>
     <string name="config_add_live_source">Add Live Source</string>
     <string name="config_edit_subscribe">Edit Subscription</string>
     <string name="config_edit_live_source">Edit Live Source</string>

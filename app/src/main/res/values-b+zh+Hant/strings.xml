@@ -489,6 +489,11 @@
     <string name="config_switched_to">已切換到：%1$s</string>
     <string name="config_switch_repo">換倉</string>
     <string name="config_add_subscribe">新增訂閱</string>
+    <string name="config_import_batch">批次匯入</string>
+    <string name="config_import_batch_title">匯入 %1$d 個訂閱</string>
+    <string name="toast_config_batch_added">已新增 %1$d 個訂閱</string>
+    <string name="toast_config_batch_all_exist">這些訂閱都已存在</string>
+    <string name="toast_local_config_batch_overflow">一次最多匯入 %1$d 個，已忽略 %2$d 個</string>
     <string name="config_add_live_source">新增直播源</string>
     <string name="config_edit_subscribe">編輯訂閱</string>
     <string name="config_edit_live_source">編輯直播源</string>
