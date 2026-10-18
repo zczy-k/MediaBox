@@ -42,15 +42,21 @@ class PinyinQueryTest {
      * <p>⚠️ 2026-10-18 上限从 6 提到 12，本用例随之调整：原值 6 会硬性挡掉
      * **7 字以上片名的首字母输入**（《寂静之地入侵日》=`jjzdrqr`），而中文片名超 6 字很常见。
      *
+     * <p>⚠️ **注意本例的边界值变化**：`qianjunyifa`（千钧一发全拼，11 字母）
+     * 在上限 6 时是"过长"，提到 12 后**落进合法范围**了 —— 这正是上调的预期效果
+     * （它确实是个首字母场景的输入）。所以这里改用**真正超上限**的输入来测。
+     *
      * <p>上调的代价可接受：真把长英文（`thematrixreloaded`）当拼音去索引试一次，
      * 结果也只是"索引里没有 ⇒ 落空 ⇒ 回落普通搜索"，与现在同一条路，只多一次无效查表。
      */
     @Test
     fun `过长的字母串不算首字母输入`() {
-        assertFalse(PinyinQuery.looksLikePinyin("qianjunyifa"))
-        assertFalse(PinyinQuery.looksLikePinyin("qian jun yi fa"))
-        // 14 个字母，超出 12 的上限
+        // 13 个字母，超出 12 的上限
+        assertFalse(PinyinQuery.looksLikePinyin("abcdefghijklm"))
+        // 14 个字母
         assertFalse(PinyinQuery.looksLikePinyin("thematrixreloaded"))
+        // 带空格的超长输入同样超出
+        assertFalse(PinyinQuery.looksLikePinyin("aa bb cc dd ee ff gg"))
     }
 
     /**
