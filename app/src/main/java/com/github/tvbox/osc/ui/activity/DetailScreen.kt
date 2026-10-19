@@ -36,6 +36,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -153,6 +155,33 @@ fun DetailScreen(activity: DetailActivity, vm: DetailViewModel) {
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.surfaceContainer),
     ) {
+        // ① 背景层:该片剧照铺满整屏,模糊 + 缩放 1.18(模糊会把边缘往里吃,
+        //    不放大四周会露一圈未模糊的硬边),再压 86% 底色保证正文可读(对比度约 13.9:1)。
+        //    播放器在 Column 里,天然盖在遮罩之上 —— 顺序反了视频会被蒙一层白。
+        val bgPic = vm.vodInfo?.pic
+        if (!bgPic.isNullOrBlank()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .blur(24.dp)
+                    .graphicsLayer {
+                        scaleX = 1.18f
+                        scaleY = 1.18f
+                    },
+            ) {
+                VodPoster(
+                    name = vm.vodInfo?.name,
+                    pic = bgPic,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.86f)),
+            )
+        }
+
         Column(modifier = Modifier.fillMaxSize()) {
             Box(
                 modifier = if (fullBox) {

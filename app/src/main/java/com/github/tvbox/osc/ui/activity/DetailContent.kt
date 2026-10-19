@@ -88,79 +88,53 @@ internal fun DetailContent(
             // 站点堆在简介开头的推广群/链接/分隔线会原样留在界面上(见该函数 KDoc)
             val desc = remember(info.des) { cleanVodDescription(info.des) }
             Column {
-                // ── 头图:通栏 + 底部渐隐到页面底色 ───────────────────────────
-                // 旧版是"圆角卡片里塞一张 72dp 小海报",整页最贵的资产(剧照)只有指甲盖大。
-                // 新版把剧照铺满 268dp,标题与元信息压在下三分之一的白化渐变上 ——
-                // 渐变终点必须是 surface(不是半透明白),否则深色模式下会糊成一片灰。
-                Box(
+                // ── 标题区 ────────────────────────────────────────────────
+                // 剧照已经退到整页背景(见 DetailScreen 的背景层),这里不再放 268dp 大图:
+                // 顶部是播放器,再压一张大图会互相抢重心,而且把标题挤到第二屏。
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(268.dp),
+                        .padding(start = 16.dp, end = 16.dp, top = 14.dp),
                 ) {
-                    VodPoster(
-                        name = info.name,
-                        pic = info.pic,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                    Box(
+                    Text(
+                        text = info.name ?: "TVBox",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = if (titleExpanded) Int.MAX_VALUE else 2,
+                        overflow = TextOverflow.Ellipsis,
+                        onTextLayout = { titleOverflow = it.hasVisualOverflow },
                         modifier = Modifier
-                            .fillMaxSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    0f to Color.Transparent,
-                                    0.30f to Color.Transparent,
-                                    0.58f to MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
-                                    0.78f to MaterialTheme.colorScheme.surface,
-                                    1f to MaterialTheme.colorScheme.surface,
-                                )
-                            ),
-                    )
-                    Column(
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                    ) {
+                            .clickable(enabled = titleOverflow || titleExpanded) {
+                                titleExpanded = !titleExpanded
+                            },
+                    )
+                    if (titleOverflow || titleExpanded) {
                         Text(
-                            text = info.name ?: "TVBox",
-                            style = MaterialTheme.typography.headlineSmall,
-                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = if (titleExpanded) Int.MAX_VALUE else 2,
-                            overflow = TextOverflow.Ellipsis,
-                            onTextLayout = { titleOverflow = it.hasVisualOverflow },
+                            text = stringResource(if (titleExpanded) R.string.detail_collapse else R.string.detail_expand),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable(enabled = titleOverflow || titleExpanded) {
-                                    titleExpanded = !titleExpanded
-                                },
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { titleExpanded = !titleExpanded }
+                                .padding(vertical = 2.dp),
                         )
-                        if (titleOverflow || titleExpanded) {
-                            Text(
-                                text = stringResource(if (titleExpanded) R.string.detail_collapse else R.string.detail_expand),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .clickable { titleExpanded = !titleExpanded }
-                                    .padding(vertical = 2.dp),
-                            )
-                        }
-                        val metaParts = listOfNotNull(
-                            if (info.year > 0) info.year.toString() else null,
-                            info.area?.takeIf { it.isNotBlank() },
-                            info.type?.takeIf { it.isNotBlank() },
+                    }
+                    val metaParts = listOfNotNull(
+                        if (info.year > 0) info.year.toString() else null,
+                        info.area?.takeIf { it.isNotBlank() },
+                        info.type?.takeIf { it.isNotBlank() },
+                    )
+                    if (metaParts.isNotEmpty()) {
+                        Text(
+                            text = metaParts.joinToString(" · "),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 2.dp),
                         )
-                        if (metaParts.isNotEmpty()) {
-                            Text(
-                                text = metaParts.joinToString(" · "),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(top = 2.dp),
-                            )
-                        }
                     }
                 }
 
