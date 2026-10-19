@@ -3,6 +3,7 @@ package com.github.tvbox.osc.ui.activity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -93,6 +94,13 @@ internal fun sourceStatusText(searchedOnce: Boolean, searching: Boolean, asked: 
  * 只是不再告诉用户"你正在换到哪个站"。换源全自动化下这才是正确形态:
  * 提示既刷屏又泄露身份(与 [DetailViewModel.stopPlaybackForSwitch] 静默换源同一口径)。
  */
+/**
+ * 换源内容体 —— **不再是独立白卡**,由 `DetailSourceSheet` 装进底部弹层。
+ *
+ * <p>为什么搬:操作条 ⇄ 与这张卡里的按钮原来调的是同一个 `onSwitchSourceClick`,
+ * 两个入口干同一件事;而且卡片在详情页最底部,用户「卡了想换源」时要先滚到最底。
+ * 现在入口只剩操作条 ⇄ 一颗,点开就是这里。
+ */
 @Composable
 internal fun SourceSection(vm: DetailViewModel, revision: Int, statusInline: Boolean = true) {
     @Suppress("UNUSED_EXPRESSION") revision
@@ -113,12 +121,7 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int, statusInline: Boo
     LaunchedEffect(chipPage, sourceChips.size) {
         if (sourceChips.isNotEmpty()) listState.scrollToItem(0)
     }
-    Column(
-        modifier = Modifier
-            .padding(start = 20.dp, end = 20.dp, top = 16.dp)
-            .background(MaterialTheme.colorScheme.surfaceBright, RoundedCornerShape(20.dp))
-            .padding(vertical = 12.dp)
-    ) {
+    Column(modifier = Modifier.fillMaxWidth()) {
         // ① 「换源」按钮行(无条件可见,放最前面方便用户发起)
         Row(
             modifier = Modifier
@@ -207,25 +210,28 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int, statusInline: Boo
         }
         // ② 候选源分页(有候选才展开)。每页 5 个,双向翻页;评分随 chip 显示。
         if (sourceChips.isNotEmpty()) {
-            LazyRow(
-                state = listState,
-                contentPadding = PaddingValues(horizontal = 16.dp),
+            // FlowRow 自动换行:手机(328dp 内容宽)一行 3~4 个、平板一行铺满。
+            // 原来 LazyRow 横滑依赖写死的「每页 5 个」,在宽屏上稀疏、在窄屏上又要翻页,
+            // 换行后一屏就能看全一页候选,不需要感知"每页几个"。
+            androidx.compose.foundation.layout.FlowRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 // 上一页(仅非首页显示)
                 if (CandidatePager.hasPrev(chipPage)) {
-                    item(key = "prev") {
-                        TextButton(onClick = { vm.prevChipPage() }) {
-                            Text(stringResource(R.string.detail_source_prev_page))
-                        }
+                    TextButton(onClick = { vm.prevChipPage() }) {
+                        Text(stringResource(R.string.detail_source_prev_page))
                     }
                 }
                 // 标签由**这个源自己的匿名号**生成(源 1 / 源 2 …),不含真实站名。
                 // 2026-10-15:号不再按"页号*每页数+页内下标"现算 —— 那样同一个源每次回包重排都会换号,
                 // 而"切回刚才那个源"全靠这个数字认人。号改由台账按 key 绑定(见 SourceBoardLedger)。
-                itemsIndexed(sourceChips, key = { _, c -> c.key }) { _, chip ->
+                sourceChips.forEach { chip ->
                     val label = vm.sourceLabelFor(chip.key)
-                    if (label.isEmpty()) return@itemsIndexed
+                    if (label.isEmpty()) return@forEach
                     val scoreText = chip.score?.let {
                         stringResource(R.string.detail_source_score, Math.round(it).toInt())
                     } ?: stringResource(R.string.detail_source_no_score)
@@ -243,10 +249,8 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int, statusInline: Boo
                 }
                 // 下一页(仅在还有下一页时显示)
                 if (CandidatePager.hasNext(totalCandidates, chipPage)) {
-                    item(key = "next") {
-                        TextButton(onClick = { vm.nextChipPage() }) {
-                            Text(stringResource(R.string.detail_source_next_page))
-                        }
+                    TextButton(onClick = { vm.nextChipPage() }) {
+                        Text(stringResource(R.string.detail_source_next_page))
                     }
                 }
             }

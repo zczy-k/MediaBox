@@ -76,6 +76,7 @@ internal fun DetailContent(
     val qualitySelected by vm.qualitySelected.collectAsStateWithLifecycle()
     val collected by vm.collected.collectAsStateWithLifecycle()
     var descExpanded by rememberSaveable { mutableStateOf(false) }
+    // 换源弹层开关挂在 VM(横屏全屏侧滑时 DetailContent 不在组合里,Compose 状态会丢)
     var titleExpanded by rememberSaveable(info.id) { mutableStateOf(false) }
     var titleOverflow by remember(info.id) { mutableStateOf(false) }
 
@@ -150,8 +151,8 @@ internal fun DetailContent(
                     onPlay = { vm.showEpisodeSheet() },
                     collected = collected,
                     onCollect = { vm.toggleCollect() },
-                    sourceCount = info.seriesFlags?.size ?: 1,
-                    onSwitchSource = { vm.onSwitchSourceClick() },
+                    sourceCount = vm.totalCandidateCount(),
+                    onSwitchSource = { vm.showSourceSheet() },
                     onCast = { activity.playContainer?.showCast() },
                     onMusic = { activity.openMusicPlayer() },
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
@@ -235,15 +236,8 @@ internal fun DetailContent(
             }
         }
 
-        // 「换源」区(2026-10-14 恢复):用户明确要求"选集下方那一栏显示可换的源 + 评分"。
-        //
-        // ⚠️ 此前这里主动下线了它(旧注释:"换源由播放侧自动接管,手动 chip 无意义")。
-        // 但真机反馈暴露两个问题:①自动接管只在"线路耗尽"时发生,用户想**主动**换到更好的源却没入口;
-        // ②连"有哪些源/各自评分"都看不到。故按用户设计恢复:用户主动点「换源」→ 分页浏览候选源。
-        // SourceSection 内部**无条件渲染「换源」按钮**(即使候选为空),不受此 item 的可见性影响。
-        item(key = "sources") {
-            SourceSection(vm, revision)
-        }
+        // 「换源」白卡已移除(2026-10-19 收敛):操作条 ⇄ 是唯一入口,点开 DetailSourceSheet。
+        // 原卡里的候选源/评分/进度整套逻辑原样搬进弹层(SourceSection 容器化),零逻辑改动。
 
         // 「相关推荐」是独立区块,不受影响
         item(key = "related") {
