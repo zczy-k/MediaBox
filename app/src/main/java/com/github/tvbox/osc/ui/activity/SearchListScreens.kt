@@ -3,6 +3,11 @@ package com.github.tvbox.osc.ui.activity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -38,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import com.github.tvbox.osc.R
 import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.ui.components.VodCard
+import com.github.tvbox.osc.ui.components.VodPoster
 import com.github.tvbox.osc.ui.theme.filterChipColors
 import com.github.tvbox.osc.util.AvailabilityHeuristic
 import com.github.tvbox.osc.util.AvailabilityMemory
@@ -208,23 +214,18 @@ internal fun SearchListResults(
                         )
                     }
                 }
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    // 方案 B 第一层:与 SearchTracks 同一口径粗筛(见 AvailabilityHeuristic)
-                    itemsIndexed(
-                        result.videos.filterNot {
-                            AvailabilityHeuristic.mightBeUnavailable(it, unavailableMarks)
+                // 每个源下面用**紧凑行**而不是海报卡片:搜索结果是一张"清单",
+                // 用户在这里扫的是片名,不是海报。66×42 缩略图只用来确认"是不是这部"。
+                Column(modifier = Modifier.padding(horizontal = 16.dp)) {
+                    result.videos
+                        .filterNot { AvailabilityHeuristic.mightBeUnavailable(it, unavailableMarks) }
+                        .forEach { video ->
+                            SearchResultRow(
+                                video = video,
+                                onClick = { onCardClick(video) },
+                                onLongClick = { onCardLongClick(video) },
+                            )
                         }
-                    ) { _, video ->
-                        VodCard(
-                            video = video,
-                            onClick = { onCardClick(video) },
-                            onLongClick = { onCardLongClick(video) },
-                            modifier = Modifier.width(110.dp),
-                        )
-                    }
                 }
             }
         }
@@ -241,5 +242,77 @@ internal fun SearchListResults(
         onSearchAll = onSearchAll,
         onOpenSourceSettings = onOpenSourceSettings,
     )
+    }
+}
+
+/**
+ * 搜索结果行 —— 设计稿的紧凑清单样式。
+ *
+ * <p>66×42 缩略图 + 单行标题 + 元信息。为什么不用海报卡:搜索页用户是在**扫片名**,
+ * 海报卡(110dp 宽、2:3)一屏只放得下 3 个,行样式能放 8 个以上。
+ */
+@Composable
+private fun SearchResultRow(
+    video: com.github.tvbox.osc.bean.Movie.Video,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .width(66.dp)
+                .height(42.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(MaterialTheme.colorScheme.surfaceContainer),
+        ) {
+            VodPoster(
+                name = video.name,
+                pic = video.pic,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        Spacer(modifier = Modifier.width(11.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = video.name ?: "",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            val meta = listOfNotNull(
+                if (video.year > 0) video.year.toString() else null,
+                video.type?.takeIf { it.isNotBlank() },
+            ).joinToString(" · ")
+            if (meta.isNotEmpty()) {
+                Text(
+                    text = meta,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        com.github.tvbox.osc.ui.components.ratingBadgeText(video.note)?.let { score ->
+            Text(
+                text = score,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer)
+                    .padding(horizontal = 7.dp, vertical = 2.dp),
+            )
+        }
     }
 }
