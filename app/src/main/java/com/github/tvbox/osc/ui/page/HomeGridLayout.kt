@@ -231,17 +231,19 @@ fun HomeGridLayout(
                 // 每个分类都挂一遍会让用户以为切了页签内容没变 —— 头图是"今天的推荐",
                 // 不是分类内容的一部分。放在网格首项而不是页签上方,是为了让它跟着滚动走:
                 // 固定在顶部的头图会永久吃掉 190dp 首屏高度,列表越往下滑越亏。
-                if (tabId == sorts.firstOrNull()?.id &&
-                    rec.state == HomeViewModel.PartitionState.Ready &&
-                    rec.videos.isNotEmpty()
-                ) {
+                //
+                // 推荐位(rec)在很多源上是空的 —— 那时退到当前分类的前 5 条。
+                // 不兜底的话,设计稿里最重的那块视觉资产在真机上直接消失(实测过一次)。
+                val heroVideos = rec.videos.take(5)
+                    .ifEmpty { tabPartition?.videos?.take(5).orEmpty() }
+                if (tabId == sorts.firstOrNull()?.id && heroVideos.isNotEmpty()) {
                     item(
                         key = "hero",
                         span = { GridItemSpan(maxLineSpan) },
                         contentType = "hero",
                     ) {
                         HeroCarousel(
-                            videos = rec.videos.take(5),
+                            videos = heroVideos,
                             onCardClick = onCardClick,
                             modifier = Modifier.padding(bottom = 4.dp),
                         )
@@ -468,22 +470,15 @@ private fun HomeSortTabRow(
             edgePadding = 16.dp,
             divider = {},
             indicator = {
-                // 胶囊指示器:整块填成品牌色,替代原来那条 3dp 下划线。
-                // 下划线在中文短标签下只有 2~3 个字宽,视觉上像"多了一条横线";
-                // 胶囊把"当前分类"变成一个实心块,余光可辨。
-                Box(
-                    modifier = Modifier
-                        .tabIndicatorOffset(selectedIndex)
-                        .height(HomeGridTabRowHeight)
-                        .padding(horizontal = 4.dp, vertical = 8.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primary),
-                )
+                // 指示器交给选中项自己的背景去画(见下方 text 里的 background)。
+                // 用 TabRow 的 indicator 画胶囊会盖在文字上面 —— 真机上表现为
+                // "选中的分类只剩一个空胶囊、文字消失",这是 M3 ScrollableTabRow 的绘制顺序决定的。
             },
         ) {
             sorts.forEach { item ->
+                val isSelected = item.id == selectedId
                 Tab(
-                    selected = item.id == selectedId,
+                    selected = isSelected,
                     onClick = { onSelect(item.id) },
                     text = {
                         Text(
@@ -491,6 +486,13 @@ private fun HomeSortTabRow(
                             style = MaterialTheme.typography.titleSmall,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(
+                                    if (isSelected) MaterialTheme.colorScheme.primary
+                                    else Color.Transparent
+                                )
+                                .padding(horizontal = 14.dp, vertical = 6.dp),
                         )
                     },
                     selectedContentColor = MaterialTheme.colorScheme.onPrimary,

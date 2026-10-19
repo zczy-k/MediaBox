@@ -60,7 +60,8 @@ fun VodCard(
                 // 单行:两行会让标题长短不一的卡片撑出不同高度,整行网格的基线随之抖动
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                textAlign = TextAlign.Center,
+                // 左对齐:居中会让长短不一的标题在网格里形成锯齿状的中轴线
+                textAlign = TextAlign.Start,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 8.dp),
