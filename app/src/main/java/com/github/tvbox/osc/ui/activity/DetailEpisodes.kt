@@ -172,8 +172,16 @@ internal fun EpisodeSheet(vm: DetailViewModel, revision: Int, slideFromEnd: Bool
     val info = vm.vodInfo ?: return
     val flags = info.seriesFlags.orEmpty()
     val currentFlag = info.playFlag
-    val episodes = info.seriesMap?.get(currentFlag).orEmpty()
+    val rawEpisodes = info.seriesMap?.get(currentFlag).orEmpty()
+    // ⚠️ 弹层网格必须吃 reverseSort:之前直接渲染原始列表,页面点倒序后弹层仍是正序,
+    // 同一个 App 两个选集视图排序不一致(真 bug,不是设计偏好)
+    val episodes = if (info.reverseSort) rawEpisodes.asReversed() else rawEpisodes
+    // 网格下标 ↔ 原始下标换算:选集/分组定位全部用**显示下标**,点击回调换回原始下标
+    fun displayToRaw(index: Int): Int = if (info.reverseSort) episodes.size - 1 - index else index
     val playIndex = info.playIndex
+    val playDisplayIndex = if (playIndex >= 0) episodes.indexOfFirst {
+        it === rawEpisodes.getOrNull(playIndex)
+    } else -1
     val lineHeights by vm.lineQualityHeights.collectAsStateWithLifecycle()
 
     val groupCount = when {
@@ -197,10 +205,10 @@ internal fun EpisodeSheet(vm: DetailViewModel, revision: Int, slideFromEnd: Bool
     val gridScope = rememberCoroutineScope()
     var selectedGroup by rememberSaveable { mutableStateOf(0) }
 
-    LaunchedEffect(show, currentFlag, playIndex) {
-        if (show && playIndex >= 0) {
-            selectedGroup = playIndex / groupCount
-            if (playIndex in episodes.indices) gridState.scrollToItem(playIndex)
+    LaunchedEffect(show, currentFlag, playIndex, info.reverseSort) {
+        if (show && playDisplayIndex >= 0) {
+            selectedGroup = playDisplayIndex / groupCount
+            if (playDisplayIndex in episodes.indices) gridState.scrollToItem(playDisplayIndex)
         }
     }
 
@@ -242,32 +250,50 @@ internal fun EpisodeSheet(vm: DetailViewModel, revision: Int, slideFromEnd: Bool
                 }
                 Spacer(modifier = Modifier.height(8.dp))
             }
-            // 分组导航:横滑胶囊行在竖屏上要占掉 ~44dp,首屏少看两行集数。
-            // 改成"第 N / 共 M 组"单个下拉(FilterChip 本身可点,循环切换),只在集数超一屏时出现。
-            if (groups.size > 3) {
+            // 工具行:左「倒序/正序」(与页面选集卡共用 vm.toggleReverse,状态天然同步)、
+            // 右分组下拉(原分组行右移到这里,少占一行)。任何一侧不存在时另一侧独占。
+            if (rawEpisodes.isNotEmpty()) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 2.dp),
-                    horizontalArrangement = Arrangement.End,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     FilterChip(
-                        selected = true,
-                        onClick = {
-                            selectedGroup = (selectedGroup + 1) % groups.size
-                            gridScope.launch { gridState.scrollToItem(selectedGroup * groupCount) }
-                        },
+                        selected = false,
+                        onClick = { vm.toggleReverse() },
                         label = {
                             Text(
-                                "第 ${selectedGroup + 1} / ${groups.size} 组",
+                                stringResource(
+                                    if (info.reverseSort) R.string.detail_order_asc
+                                    else R.string.detail_order_desc
+                                ),
                                 style = MaterialTheme.typography.labelMedium,
                             )
                         },
                         shape = RoundedCornerShape(999.dp),
                         colors = MaterialTheme.colorScheme.filterChipColors(),
                     )
+                    if (groups.size > 3) {
+                        FilterChip(
+                            selected = true,
+                            onClick = {
+                                selectedGroup = (selectedGroup + 1) % groups.size
+                                gridScope.launch { gridState.scrollToItem(selectedGroup * groupCount) }
+                            },
+                            label = {
+                                Text(
+                                    "第 ${selectedGroup + 1} / ${groups.size} 组",
+                                    style = MaterialTheme.typography.labelMedium,
+                                )
+                            },
+                            shape = RoundedCornerShape(999.dp),
+                            colors = MaterialTheme.colorScheme.filterChipColors(),
+                        )
+                    }
                 }
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(2.dp))
             }
             // 列数不再"按片名长度猜":那条规则在平板上会崩(1024dp 宽的格子挤 12sp 的字)。
             // 统一走 Fluid.columns —— 卡片目标宽随宽度缩放,任何屏幕密度感一致。
@@ -303,9 +329,9 @@ internal fun EpisodeSheet(vm: DetailViewModel, revision: Int, slideFromEnd: Bool
             ) {
                 gridItemsIndexed(episodes) { index, ep ->
                     FilterChip(
-                        selected = index == playIndex,
+                        selected = index == playDisplayIndex,
                         onClick = {
-                            vm.onEpisodeClick(index)
+                            vm.onEpisodeClick(displayToRaw(index))
                             dismissAnimated()
                         },
                         modifier = Modifier
