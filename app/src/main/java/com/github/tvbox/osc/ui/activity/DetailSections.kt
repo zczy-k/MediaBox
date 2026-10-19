@@ -95,11 +95,14 @@ internal fun sourceStatusText(searchedOnce: Boolean, searching: Boolean, asked: 
  * 提示既刷屏又泄露身份(与 [DetailViewModel.stopPlaybackForSwitch] 静默换源同一口径)。
  */
 /**
- * 换源内容体 —— **不再是独立白卡**,由 `DetailSourceSheet` 装进底部弹层。
+ * 「搜源」白卡内容体 —— 详情页里的换源/搜源卡片。
  *
- * <p>为什么搬:操作条 ⇄ 与这张卡里的按钮原来调的是同一个 `onSwitchSourceClick`,
- * 两个入口干同一件事;而且卡片在详情页最底部,用户「卡了想换源」时要先滚到最底。
- * 现在入口只剩操作条 ⇄ 一颗,点开就是这里。
+ * <p>为什么放回卡片(2026-10-19 定案):换源是**过程性**内容 —— 搜索跑很久、候选与评分
+ * 在持续变化,卡片让用户边看详情边瞟进度;弹层适合"选完就关"的短操作,不适合它。
+ * 操作条 ⇄ 现在只是滚动锚点(滚到这张卡),不再是第二个功能入口。
+ *
+ * <p>候选源用 FlowRow 自动换行:手机一行 3~4 个自动折行、平板一行铺满,
+ * 不再依赖写死的「每页 5 个」横滑翻页。
  */
 @Composable
 internal fun SourceSection(vm: DetailViewModel, revision: Int, statusInline: Boolean = true) {
@@ -121,7 +124,12 @@ internal fun SourceSection(vm: DetailViewModel, revision: Int, statusInline: Boo
     LaunchedEffect(chipPage, sourceChips.size) {
         if (sourceChips.isNotEmpty()) listState.scrollToItem(0)
     }
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(
+        modifier = Modifier
+            .padding(start = 20.dp, end = 20.dp, top = 16.dp)
+            .background(MaterialTheme.colorScheme.surfaceBright, RoundedCornerShape(20.dp))
+            .padding(vertical = 12.dp)
+    ) {
         // ① 「换源」按钮行(无条件可见,放最前面方便用户发起)
         Row(
             modifier = Modifier

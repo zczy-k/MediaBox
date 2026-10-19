@@ -1451,12 +1451,6 @@ class DetailViewModel : ViewModel() {
     }
 
     /** 面板开合同时投影给播放底栏(冻结自动收起,见 `PlayerUiState.overlayPanelOpen`) */
-    /** 「换源」弹层开关:操作条 ⇄ 的唯一去处(原搜源白卡已移除,入口收敛) */
-    val sourceSheet = MutableStateFlow(false)
-
-    fun showSourceSheet() { sourceSheet.value = true }
-    fun dismissSourceSheet() { sourceSheet.value = false }
-
     fun showEpisodeSheet() {
         // 面板要显示线路标签,打开这一刻刷新一次实测画质(起播后回写的值到这时才可能变)
         publishLineQualityHeights()

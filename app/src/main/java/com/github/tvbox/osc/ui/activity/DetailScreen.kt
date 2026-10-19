@@ -244,8 +244,6 @@ fun DetailScreen(activity: DetailActivity, vm: DetailViewModel) {
     // 侧滑只在"横屏全屏"这一种形态:大屏设备点全屏时系统可能不旋转(忽略应用的方向限制),
     // 那时窗口仍是竖屏,面板必须保持贴底
     EpisodeSheet(vm, revision, slideFromEnd = fullBox && isLandscapeNow)
-    // 「换源」弹层:操作条 ⇄ 的唯一去处(搜源白卡已移除)
-    DetailSourceSheet(vm, revision)
     VodCardMenu(vodMenu) { menuContext.jumpToSearch(it) }
 }
 
