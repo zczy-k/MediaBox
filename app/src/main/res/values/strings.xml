@@ -283,6 +283,7 @@
     <string name="music_queue">播放队列</string>
     <string name="music_song_index">第 %1$d 首</string>
     <string name="tab_home">首页</string>
+    <string name="collect_count_hint">共 %1$d 部</string>
     <string name="common_collect">收藏</string>
     <string name="config_load_failed">配置加载失败</string>
     <string name="toast_source_auto_disabled">该源无法使用，会导致崩溃，已自动停用（可在配置管理中重新启用）</string>

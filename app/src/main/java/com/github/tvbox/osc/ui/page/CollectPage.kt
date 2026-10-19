@@ -224,12 +224,23 @@ fun CollectPage(
     AppTopBarScaffold(
         topBarStartInset = navStart,
         titleContent = {
-            Text(
-                text = stringResource(R.string.common_collect),
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
+            // 标题 + 统计副行:设计稿要求每页标题下方都有一行"共 N 条",
+            // 让用户在滚动前就知道自己有多少内容
+            Column {
+                Text(
+                    text = stringResource(R.string.common_collect),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                if (items.isNotEmpty()) {
+                    Text(
+                        text = stringResource(R.string.collect_count_hint, items.size),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         },
         actions = {
             AnimatedContent(
