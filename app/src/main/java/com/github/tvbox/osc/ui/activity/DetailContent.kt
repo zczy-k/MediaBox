@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -23,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -42,6 +44,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -80,34 +84,46 @@ internal fun DetailContent(
             // 走 cleanVodDescription 而不是 removeHtmlTag:后者只去 HTML 标签,
             // 站点堆在简介开头的推广群/链接/分隔线会原样留在界面上(见该函数 KDoc)
             val desc = remember(info.des) { cleanVodDescription(info.des) }
-            Column(
-                modifier = Modifier
-                    .padding(start = 20.dp, end = 20.dp, top = 16.dp)
-                    .background(MaterialTheme.colorScheme.surfaceBright, RoundedCornerShape(24.dp))
-                    .padding(horizontal = 16.dp, vertical = 16.dp)
-            ) {
-                Row(
-                    verticalAlignment = Alignment.Top,
-                    modifier = Modifier.fillMaxWidth(),
+            Column {
+                // ── 头图:通栏 + 底部渐隐到页面底色 ───────────────────────────
+                // 旧版是"圆角卡片里塞一张 72dp 小海报",整页最贵的资产(剧照)只有指甲盖大。
+                // 新版把剧照铺满 268dp,标题与元信息压在下三分之一的白化渐变上 ——
+                // 渐变终点必须是 surface(不是半透明白),否则深色模式下会糊成一片灰。
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(268.dp),
                 ) {
                     VodPoster(
                         name = info.name,
                         pic = info.pic,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    Box(
                         modifier = Modifier
-                            .width(72.dp)
-                            .aspectRatio(2f / 3f)
-                            .clip(RoundedCornerShape(12.dp)),
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    0f to Color.Transparent,
+                                    0.30f to Color.Transparent,
+                                    0.58f to MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+                                    0.78f to MaterialTheme.colorScheme.surface,
+                                    1f to MaterialTheme.colorScheme.surface,
+                                )
+                            ),
                     )
                     Column(
                         modifier = Modifier
-                            .weight(1f)
-                            .padding(start = 12.dp),
+                            .align(Alignment.BottomStart)
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
                     ) {
                         Text(
                             text = info.name ?: "TVBox",
-                            style = MaterialTheme.typography.titleLarge,
+                            style = MaterialTheme.typography.headlineSmall,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = if (titleExpanded) Int.MAX_VALUE else 3,
+                            maxLines = if (titleExpanded) Int.MAX_VALUE else 2,
                             overflow = TextOverflow.Ellipsis,
                             onTextLayout = { titleOverflow = it.hasVisualOverflow },
                             modifier = Modifier
@@ -119,13 +135,12 @@ internal fun DetailContent(
                         if (titleOverflow || titleExpanded) {
                             Text(
                                 text = stringResource(if (titleExpanded) R.string.detail_collapse else R.string.detail_expand),
-                                style = MaterialTheme.typography.labelLarge,
+                                style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier
-                                    .align(Alignment.End)
-                                    .clip(RoundedCornerShape(8.dp))
+                                    .clip(RoundedCornerShape(6.dp))
                                     .clickable { titleExpanded = !titleExpanded }
-                                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                                    .padding(vertical = 2.dp),
                             )
                         }
                         val metaParts = listOfNotNull(
@@ -133,110 +148,101 @@ internal fun DetailContent(
                             info.area?.takeIf { it.isNotBlank() },
                             info.type?.takeIf { it.isNotBlank() },
                         )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(top = 4.dp),
-                        ) {
-                            // 「来源:站名」已下线:换源自动化后用户不需要知道用的是哪个站
-                            if (metaParts.isNotEmpty()) {
-                                Text(
-                                    text = metaParts.joinToString(" · "),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .padding(start = 8.dp),
-                                )
-                            }
-                        }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 10.dp)
-                                .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(18.dp)),
-                            horizontalArrangement = Arrangement.SpaceEvenly,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            IconButton(onClick = { activity.openMusicPlayer() }) {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_detail_music_player),
-                                    contentDescription = stringResource(R.string.detail_music_player),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(22.dp),
-                                )
-                            }
-                            IconButton(onClick = { activity.playContainer?.showCast() }) {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_detail_cast),
-                                    contentDescription = stringResource(R.string.common_cast),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(22.dp),
-                                )
-                            }
-                            IconButton(onClick = { vm.toggleCollect() }) {
-                                AnimatedContent(
-                                    targetState = collected,
-                                    transitionSpec = {
-                                        (scaleIn(initialScale = 0.6f) + fadeIn()) togetherWith
-                                            (scaleOut(targetScale = 0.6f) + fadeOut())
-                                    },
-                                    label = "collectIcon",
-                                ) { isCollected ->
-                                    Icon(
-                                        painter = painterResource(
-                                            if (isCollected) R.drawable.ic_tab_collect_filled else R.drawable.ic_tab_collect
-                                        ),
-                                        contentDescription = stringResource(if (isCollected) R.string.detail_uncollect else R.string.detail_collect),
-                                        tint = if (isCollected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(22.dp),
-                                    )
-                                }
-                            }
+                        if (metaParts.isNotEmpty()) {
+                            Text(
+                                text = metaParts.joinToString(" · "),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(top = 2.dp),
+                            )
                         }
                     }
                 }
-                if (desc.isNotEmpty()) {
-                    Column(
-                        modifier = Modifier
-                            .padding(top = 8.dp)
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(12.dp))
-                            .padding(12.dp)
-                    ) {
-                        Text(
-                            text = desc,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = if (descExpanded) Int.MAX_VALUE else 3,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { descExpanded = !descExpanded },
+
+                // ── 操作条:三个等大圆形按钮 ──────────────────────────────
+                // 圆形容器比原来那条通栏灰底更"轻":通栏底会把三个图标框成一条工具栏,
+                // 视觉上像设置项而不是对这部片子的操作。
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    DetailCircleAction(onClick = { activity.openMusicPlayer() }) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_detail_music_player),
+                            contentDescription = stringResource(R.string.detail_music_player),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(21.dp),
                         )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier
-                                .padding(top = 4.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { descExpanded = !descExpanded },
-                        ) {
-                            Spacer(Modifier.weight(1f))
-                            Text(
-                                text = stringResource(if (descExpanded) R.string.detail_collapse else R.string.detail_expand),
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
+                    }
+                    DetailCircleAction(onClick = { activity.playContainer?.showCast() }) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_detail_cast),
+                            contentDescription = stringResource(R.string.common_cast),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(21.dp),
+                        )
+                    }
+                    DetailCircleAction(onClick = { vm.toggleCollect() }) {
+                        AnimatedContent(
+                            targetState = collected,
+                            transitionSpec = {
+                                (scaleIn(initialScale = 0.6f) + fadeIn()) togetherWith
+                                    (scaleOut(targetScale = 0.6f) + fadeOut())
+                            },
+                            label = "collectIcon",
+                        ) { isCollected ->
                             Icon(
-                                imageVector = Icons.Filled.ArrowDropDown,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier
-                                    .size(20.dp)
-                                    .rotate(if (descExpanded) 180f else 0f),
+                                painter = painterResource(
+                                    if (isCollected) R.drawable.ic_tab_collect_filled else R.drawable.ic_tab_collect
+                                ),
+                                contentDescription = stringResource(if (isCollected) R.string.detail_uncollect else R.string.detail_collect),
+                                tint = if (isCollected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(21.dp),
                             )
                         }
+                    }
+                }
+
+                // ── 简介:两行折叠 ────────────────────────────────────────
+                if (desc.isNotEmpty()) {
+                    Text(
+                        text = desc,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = if (descExpanded) Int.MAX_VALUE else 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { descExpanded = !descExpanded },
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .padding(start = 16.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable { descExpanded = !descExpanded }
+                            .padding(vertical = 2.dp),
+                    ) {
+                        Text(
+                            text = stringResource(if (descExpanded) R.string.detail_collapse else R.string.detail_expand),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                        Icon(
+                            imageVector = Icons.Filled.ArrowDropDown,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier
+                                .size(18.dp)
+                                .rotate(if (descExpanded) 180f else 0f),
+                        )
                     }
                 }
             }
@@ -294,6 +300,29 @@ internal fun DetailContent(
         item(key = "related") {
             RelatedSection(activity, vm, onCardLongClick)
         }
+    }
+}
+
+/**
+ * 详情页操作条上的圆形按钮:42dp 热区、无文字、图标 21dp。
+ *
+ * <p>为什么不用 IconButton:它的默认热区是 48dp 且自带水波纹半径,三颗并排时会撑出
+ * 一条 156dp 的虚框,把"对这部片子的操作"做成了一条工具栏。
+ */
+@Composable
+private fun DetailCircleAction(
+    onClick: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(42.dp)
+            .clip(CircleShape)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        content()
     }
 }
 
