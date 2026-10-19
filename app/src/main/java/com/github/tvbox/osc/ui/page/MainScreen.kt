@@ -381,7 +381,9 @@ private fun MainContent() {
                             // 作为"内容内边距"下发,不用容器 padding:页面必须保持全出血,
                             // 否则背景被缩到导航栏之上,玻璃就取不到内容、退化成一块纯色
                             when (AppTab.entries[page]) {
-                                AppTab.HOME -> HomePage(homeViewModel, pageContentPadding)
+                                // 首页改用全新实现:旧 HomePage / HomeGridLayout 是"标题栏 + 下划线页签 +
+                                // 横滑分区"的旧结构,在它上面调尺寸只会得到"换了颜色的旧界面"
+                                AppTab.HOME -> HomeFeedScreen(homeViewModel, pageContentPadding)
                                 AppTab.HISTORY -> HistoryPage(contentPadding = pageContentPadding)
                                 AppTab.COLLECT -> CollectPage(contentPadding = pageContentPadding)
                                 AppTab.SETTINGS -> SettingsPage(contentPadding = pageContentPadding)
