@@ -94,3 +94,7 @@ internal fun ConfirmDeleteDialog(
         },
     )
 }
+
+
+/** 提供从任意 Tab 页跳回指定 Tab 的能力(空态按钮用),MainScreen 注入 */
+val LocalHomeTabNavigator = androidx.compose.runtime.staticCompositionLocalOf<(Int) -> Unit> { { } }

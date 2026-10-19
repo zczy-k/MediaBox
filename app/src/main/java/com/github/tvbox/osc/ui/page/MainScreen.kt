@@ -266,7 +266,10 @@ private fun MainContent() {
     val openLive: () -> Unit = remember(context) {
         { context.startActivity(Intent(context, LivePlayActivity::class.java)) }
     }
+    // 页面跳转回调:空态"去首页看看"这类按钮用,不必层层传 lambda
+    val gotoTab: (Int) -> Unit = { index -> scope.launch { pagerState.animateScrollToPage(index) } }
     CompositionLocalProvider(
+        LocalHomeTabNavigator provides gotoTab,
         LocalSheetHost provides sheetHost,
         LocalGlassPauseRecording provides pauseGlassRecording,
     ) {

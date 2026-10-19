@@ -345,6 +345,8 @@ fun CollectPage(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                         )
+                        // "去首页看看":跳回 pager 的首页 Tab(HomeFeedScreen 所在页)
+                        val gotoTab = com.github.tvbox.osc.ui.page.LocalHomeTabNavigator.current
                         Text(
                             text = stringResource(R.string.collect_empty_action),
                             style = MaterialTheme.typography.labelLarge,
@@ -354,7 +356,7 @@ fun CollectPage(
                                 .padding(top = 14.dp)
                                 .clip(RoundedCornerShape(999.dp))
                                 .background(MaterialTheme.colorScheme.primary)
-                                .clickable(enabled = false) {}
+                                .clickable { gotoTab(1) }
                                 .padding(horizontal = 20.dp, vertical = 9.dp),
                         )
                     }
