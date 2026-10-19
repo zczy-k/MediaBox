@@ -65,6 +65,8 @@ fun MediaBoxBottomSheet(
     title: String? = null,
     containerColor: Color? = null,
     isScrollable: Boolean = true,
+    /** 贴底弹层最大高度占屏比:默认 0.9;内容多的弹层(选集)传小值,给顶部留"下面还有页面"的语境 */
+    maxHeightFraction: Float = SheetMaxHeightFraction,
     headerContent: (@Composable () -> Unit)? = null,
     /** 从右侧滑出（面板贴右、全高、左两角圆角），横屏全屏下的选集面板用；false = 原贴底形态 */
     slideFromEnd: Boolean = false,
@@ -75,6 +77,7 @@ fun MediaBoxBottomSheet(
     title = title,
     containerColor = containerColor,
     isScrollable = isScrollable,
+    maxHeightFraction = maxHeightFraction,
     headerContent = headerContent,
     variant = if (slideFromEnd) SheetVariant.END else SheetVariant.BOTTOM,
     content = content,
@@ -91,6 +94,7 @@ internal fun OverlayRequest(
     title: String? = null,
     containerColor: Color? = null,
     isScrollable: Boolean = true,
+    maxHeightFraction: Float = SheetMaxHeightFraction,
     headerContent: (@Composable () -> Unit)? = null,
     variant: SheetVariant = SheetVariant.BOTTOM,
     dismissible: Boolean = true,
@@ -395,6 +399,8 @@ private fun SheetSurface(
     title: String? = null,
     containerColor: Color? = null,
     isScrollable: Boolean = true,
+    /** 贴底弹层最大高度占屏比:默认 0.9;内容多的弹层(选集)传小值,给顶部留"下面还有页面"的语境 */
+    maxHeightFraction: Float = SheetMaxHeightFraction,
     headerContent: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -403,7 +409,7 @@ private fun SheetSurface(
     var panelHeightPx by remember { mutableIntStateOf(0) }
     var panelWidthPx by remember { mutableIntStateOf(0) }
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val panelMaxHeight = maxHeight * SheetMaxHeightFraction
+        val panelMaxHeight = maxHeight * maxHeightFraction
         val panelMaxWidth = minOf(SheetMaxWidth, maxWidth * SHEET_END_WIDTH_FRACTION)
         Box(
             modifier = Modifier

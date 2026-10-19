@@ -212,6 +212,8 @@ internal fun EpisodeSheet(vm: DetailViewModel, revision: Int, slideFromEnd: Bool
                 stringResource(R.string.detail_episodes_of, info.name.orEmpty())
             },
         isScrollable = false,
+        // 集数多、弹层高:压到 78%,顶部留出页面语境,不再顶到状态栏
+        maxHeightFraction = 0.78f,
         // 横屏全屏播放时改成右侧滑出（竖屏详情页仍是贴底弹层）
         slideFromEnd = slideFromEnd,
     ) {
@@ -240,33 +242,39 @@ internal fun EpisodeSheet(vm: DetailViewModel, revision: Int, slideFromEnd: Bool
                 }
                 Spacer(modifier = Modifier.height(8.dp))
             }
-            if (groups.isNotEmpty()) {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+            // 分组导航:横滑胶囊行在竖屏上要占掉 ~44dp,首屏少看两行集数。
+            // 改成"第 N / 共 M 组"单个下拉(FilterChip 本身可点,循环切换),只在集数超一屏时出现。
+            if (groups.size > 3) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.End,
                 ) {
-                    itemsIndexed(groups) { index, label ->
-                        FilterChip(
-                            selected = index == selectedGroup,
-                            onClick = {
-                                selectedGroup = index
-                                gridScope.launch { gridState.scrollToItem(index * groupCount) }
-                            },
-                            label = { Text(label) },
-                            shape = RoundedCornerShape(20.dp),
-                            colors = MaterialTheme.colorScheme.filterChipColors(),
-                        )
-                    }
+                    FilterChip(
+                        selected = true,
+                        onClick = {
+                            selectedGroup = (selectedGroup + 1) % groups.size
+                            gridScope.launch { gridState.scrollToItem(selectedGroup * groupCount) }
+                        },
+                        label = {
+                            Text(
+                                "第 ${selectedGroup + 1} / ${groups.size} 组",
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                        },
+                        shape = RoundedCornerShape(999.dp),
+                        colors = MaterialTheme.colorScheme.filterChipColors(),
+                    )
                 }
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(4.dp))
             }
-            val maxNameLength = episodes.maxOfOrNull { it.name?.length ?: 0 } ?: 0
-            // 侧滑面板宽度只有窗口 40% 出头,按名字长度取到的 4 列会挤成小方块,上限压到 2 列
-            val gridColumnCount = when {
-                maxNameLength <= 4 -> if (slideFromEnd) 2 else 4
-                maxNameLength <= 12 -> 2
-                else -> 1
-            }
+            // 列数不再"按片名长度猜":那条规则在平板上会崩(1024dp 宽的格子挤 12sp 的字)。
+            // 统一走 Fluid.columns —— 卡片目标宽随宽度缩放,任何屏幕密度感一致。
+            // 侧滑面板约 45% 宽:同一公式,只是入参窄;名字超长交给 Ellipsis,不为它牺牲密度。
+            val gridColumnCount = com.github.tvbox.osc.ui.theme.Fluid.columns(
+                if (slideFromEnd) 420.dp else 720.dp, minColumns = if (slideFromEnd) 2 else 3,
+            )
             val gridModifier = if (slideFromEnd) {
                 // 全高面板:网格直接撑满标题/线路行之外的剩余高度
                 Modifier
