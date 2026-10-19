@@ -213,6 +213,8 @@
     <string name="common_unnamed">未命名</string>
     <string name="common_all">全部</string>
     <string name="common_cast">投屏</string>
+    <string name="common_more">更多</string>
+    <string name="detail_change_source">换源</string>
     <string name="common_refresh">刷新</string>
     <string name="common_empty_content">暂无内容</string>
     <!-- 候选源的匿名标签前缀(源 1 / 源 2 …)。刻意不写任何"这是某某站"的解释:

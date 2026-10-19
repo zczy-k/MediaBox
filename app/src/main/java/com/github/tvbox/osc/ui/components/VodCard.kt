@@ -18,6 +18,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.github.tvbox.osc.bean.Movie
@@ -35,13 +37,17 @@ fun VodCard(
     posterAspectRatio: Float = 2f / 3f,
     onPosterAspectRatio: ((Float) -> Unit)? = null,
     fitPosterContent: Boolean = false,
+    /** 圆角:由调用方按卡片宽算(Fluid.cardRadius),不在这里写死 */
+    cornerRadius: Dp = MediaBoxRadius.Small,
+    /** 标题字号:由调用方按卡片宽算(Fluid.titleSize);null 时退回主题字号 */
+    titleSize: TextUnit? = null,
 ) {
     if (style == VodCardStyle.Stacked) {
         Column(modifier = modifier) {
             PressableCard(
                 onClick = onClick,
                 onLongClick = onLongClick,
-                shape = RoundedCornerShape(MediaBoxRadius.Small),
+                shape = RoundedCornerShape(cornerRadius),
             ) {
                 Box(modifier = Modifier.aspectRatio(posterAspectRatio)) {
                     VodPoster(
@@ -56,6 +62,7 @@ fun VodCard(
             Text(
                 text = video.name ?: "",
                 style = MaterialTheme.typography.titleSmall,
+                fontSize = titleSize ?: MaterialTheme.typography.titleSmall.fontSize,
                 color = MaterialTheme.colorScheme.onSurface,
                 // 单行:两行会让标题长短不一的卡片撑出不同高度,整行网格的基线随之抖动
                 maxLines = 1,
@@ -74,7 +81,7 @@ fun VodCard(
         onClick = onClick,
         onLongClick = onLongClick,
         modifier = modifier,
-        shape = RoundedCornerShape(MediaBoxRadius.Small),
+        shape = RoundedCornerShape(cornerRadius),
     ) {
         Box(modifier = Modifier.aspectRatio(posterAspectRatio)) {
             VodPoster(

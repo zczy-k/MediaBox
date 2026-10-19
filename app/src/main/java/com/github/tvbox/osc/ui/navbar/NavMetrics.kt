@@ -30,8 +30,17 @@ object NavMetrics {
     fun axisFor(widthClass: WindowWidthClass): NavAxis =
         if (widthClass == WindowWidthClass.Compact) NavAxis.Horizontal else NavAxis.Vertical
 
-    /** 中央动作槽的槽位下标:两侧各留一半页面,即"历史 | 直播 | 收藏" */
-    fun actionSlotFor(tabCount: Int): Int = tabCount / 2
+    /**
+     * 动作槽(直播)的槽位下标。
+     *
+     * <p>2026-10-19 改版:从"正中"改为**最左**(0)。配合页面顺序
+     * 「历史 · 首页 · 收藏 · 设置」,最终呈现为「直播 · 历史 · 首页 · 收藏 · 设置」——
+     * 首页因此落在正中,成为导航锚点。
+     *
+     * <p>⚠️ 这个值必须与 [MainScreen.AppTab] 的枚举顺序一致:
+     * 槽位 0 是动作槽,页面从槽位 1 开始依次排开。
+     */
+    fun actionSlotFor(tabCount: Int): Int = 0
 
     /** 页面下标 → 槽位下标(动作槽插在中间,它右侧的页面整体右移一格);只用于"定位",不做插值 */
     fun slotIndexOfTab(tab: Int, actionSlot: Int?): Int =

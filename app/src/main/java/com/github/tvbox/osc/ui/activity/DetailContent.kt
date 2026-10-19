@@ -47,6 +47,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -54,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import com.github.tvbox.osc.R
 import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.ui.components.VodPoster
+import com.github.tvbox.osc.ui.theme.Fluid
 import com.github.tvbox.osc.ui.theme.filterChipColors
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
@@ -162,52 +164,24 @@ internal fun DetailContent(
                     }
                 }
 
-                // ── 操作条:三个等大圆形按钮 ──────────────────────────────
-                // 圆形容器比原来那条通栏灰底更"轻":通栏底会把三个图标框成一条工具栏,
-                // 视觉上像设置项而不是对这部片子的操作。
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    DetailCircleAction(onClick = { activity.openMusicPlayer() }) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_detail_music_player),
-                            contentDescription = stringResource(R.string.detail_music_player),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(21.dp),
-                        )
-                    }
-                    DetailCircleAction(onClick = { activity.playContainer?.showCast() }) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_detail_cast),
-                            contentDescription = stringResource(R.string.common_cast),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(21.dp),
-                        )
-                    }
-                    DetailCircleAction(onClick = { vm.toggleCollect() }) {
-                        AnimatedContent(
-                            targetState = collected,
-                            transitionSpec = {
-                                (scaleIn(initialScale = 0.6f) + fadeIn()) togetherWith
-                                    (scaleOut(targetScale = 0.6f) + fadeOut())
-                            },
-                            label = "collectIcon",
-                        ) { isCollected ->
-                            Icon(
-                                painter = painterResource(
-                                    if (isCollected) R.drawable.ic_tab_collect_filled else R.drawable.ic_tab_collect
-                                ),
-                                contentDescription = stringResource(if (isCollected) R.string.detail_uncollect else R.string.detail_collect),
-                                tint = if (isCollected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(21.dp),
-                            )
-                        }
-                    }
-                }
+                // ── 操作条:按可用宽度决定放几个入口 ───────────────────────
+                // 槽位由 Fluid.detailActionSlots 算:360dp 只放得下 3 个(第 3 个是「⋯」),
+                // 412dp 起四个全平铺。详见 DetailActions.kt 的 KDoc。
+                val windowWidth = LocalConfiguration.current.screenWidthDp.dp
+                DetailActionRow(
+                    availWidth = windowWidth - Fluid.padding(windowWidth) * 2,
+                    windowWidth = windowWidth,
+                    primaryText = stringResource(R.string.common_play) + " · " +
+                        stringResource(R.string.detail_episodes),
+                    onPlay = { vm.showEpisodeSheet() },
+                    collected = collected,
+                    onCollect = { vm.toggleCollect() },
+                    sourceCount = info.seriesFlags?.size ?: 1,
+                    onSwitchSource = { vm.onSwitchSourceClick() },
+                    onCast = { activity.playContainer?.showCast() },
+                    onMusic = { activity.openMusicPlayer() },
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                )
 
                 // ── 简介:两行折叠 ────────────────────────────────────────
                 if (desc.isNotEmpty()) {

@@ -1,15 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- AppTheme(Manifest 主题)
-         2026-10-19:与 Compose 种子色同源(ThemeConfig.MediaBoxSeedArgb = #0F766E)。
-         此前这里是 #2563EB(蓝),而 Compose 侧早已改成青绿 —— 冷启动首帧、系统栏、
-         启动画面走的是 XML 主题,会先闪一下蓝再切青绿。三处色值必须一起改。 -->
-    <color name="color_6200EE">#0F766E</color>
-    <color name="color_3700B3">#0B5A54</color>
-    <color name="color_03DAC5">#7DE3D4</color>
+         2026-10-19:换成珊瑚橙,与 Compose 种子色同源(ThemeConfig.MediaBoxSeedArgb = #FF6B4A)。
+         冷启动首帧、系统栏、启动画面走的是 XML 主题,必须与 Compose 侧一起改。 -->
+    <color name="color_6200EE">#FF6B4A</color>
+    <color name="color_3700B3">#D6431F</color>
+    <color name="color_03DAC5">#FFC0AE</color>
 
     <!-- 与 DesignTokens.MediaBoxColors.Bg 一致 -->
-    <color name="window_background">#F6F8F9</color>
+    <color name="window_background">#FBF8F7</color>
 
     <!-- 字幕文本色(PlayContainer) -->
     <color name="color_FFFFFF">#ffffffff</color>

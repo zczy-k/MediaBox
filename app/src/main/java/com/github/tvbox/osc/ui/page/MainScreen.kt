@@ -93,9 +93,17 @@ import com.github.tvbox.osc.util.KV
 import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
+/**
+ * 一级页签。
+ *
+ * <p>⚠️ 枚举顺序 = pager 页顺序 = 导航槽顺序(直播动作槽插在最左,见 [NavMetrics.actionSlotFor])。
+ * 2026-10-19 改版把顺序调成「直播 · 历史 · 首页 · 收藏 · 设置」:
+ * 直播(动作槽)占最左,首页因此落在正中 —— 中间是主入口,符合"点播为主"的产品定位。
+ * 调整顺序时必须同步改 [pagerState] 的 initialPage,否则冷启动会停在"历史"而不是首页。
+ */
 private enum class AppTab(@StringRes val labelRes: Int, @DrawableRes val icon: Int) {
-    HOME(R.string.tab_home, R.drawable.ic_tab_home),
     HISTORY(R.string.history_title, R.drawable.ic_tab_history),
+    HOME(R.string.tab_home, R.drawable.ic_tab_home),
     COLLECT(R.string.common_collect, R.drawable.ic_tab_collect),
     SETTINGS(R.string.settings_title, R.drawable.ic_tab_settings),
 }
@@ -143,7 +151,11 @@ private fun BootErrorDialog(msg: String) {
 private fun MainContent() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val pagerState = rememberPagerState(pageCount = { AppTab.entries.size })
+    val pagerState = rememberPagerState(
+        // 枚举重排后首页不再是 0 号页,必须显式指定,否则冷启动停在"历史"
+        initialPage = AppTab.HOME.ordinal,
+        pageCount = { AppTab.entries.size },
+    )
     val homeViewModel: HomeViewModel = viewModel()
 
     LaunchedEffect(Unit) {
@@ -268,37 +280,41 @@ private fun MainContent() {
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .windowInsetsPadding(WindowInsets.navigationBars)
-                                .padding(horizontal = 18.dp, vertical = 8.dp)
-                                .height(68.dp)
-                                .clip(RoundedCornerShape(24.dp))
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                                // 56dp 胶囊:与设计稿的 54dp 悬浮导航一致,圆角取全圆
+                                .height(56.dp)
+                                .clip(RoundedCornerShape(999.dp))
                                 .background(MaterialTheme.colorScheme.surfaceContainerHigh)
-                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                                .padding(horizontal = 6.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp),
                         ) {
                             AppTab.entries.forEachIndexed { index, tab ->
+                                // 动作槽(直播)现在在最左,与页签同形。
+                                // 它原来是"居中的实心方块",移到最左后还留着方块会像个误放的按钮;
+                                // 直播本质上也是一个入口,只是进的是另一个 Activity。
                                 if (!navLiveHidden && index == NavMetrics.actionSlotFor(AppTab.entries.size)) {
-                                    Box(
+                                    Column(
                                         modifier = Modifier
                                             .weight(1f)
                                             .fillMaxHeight()
+                                            .clip(RoundedCornerShape(18.dp))
                                             .clickable(onClick = openLive),
-                                        contentAlignment = Alignment.Center,
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Center,
                                     ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(48.dp)
-                                                .clip(RoundedCornerShape(18.dp))
-                                                .background(MaterialTheme.colorScheme.primary),
-                                            contentAlignment = Alignment.Center,
-                                        ) {
-                                            Icon(
-                                                painterResource(liveActionItem.iconRes),
-                                                contentDescription = liveActionItem.label,
-                                                tint = MaterialTheme.colorScheme.onPrimary,
-                                                modifier = Modifier.size(24.dp),
-                                            )
-                                        }
+                                        Icon(
+                                            painterResource(liveActionItem.iconRes),
+                                            contentDescription = liveActionItem.label,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(21.dp),
+                                        )
+                                        Text(
+                                            text = liveActionItem.label,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                        )
                                     }
                                 }
                                 val selected = pagerState.targetPage == index
@@ -320,7 +336,8 @@ private fun MainContent() {
                                         contentDescription = stringResource(tab.labelRes),
                                         tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
                                         else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(21.dp),
+                                        // 首页居中,图标略大,作为导航锚点
+                                        modifier = Modifier.size(if (tab == AppTab.HOME) 23.dp else 21.dp),
                                     )
                                     Text(
                                         text = stringResource(tab.labelRes),

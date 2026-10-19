@@ -10,14 +10,14 @@ object ThemeMode {
 }
 
 /**
- * 固定青绿基调。
+ * 固定珊瑚橙基调。
  *
  * 原版开放了 8 个预设色 + 自定义取色器 + 9 种配色风格(81 种组合),每次切换都要跑一遍
- * materialkolor 的 HCT 算法重算整套 ColorScheme。收敛成单一青绿后:
+ * materialkolor 的 HCT 算法重算整套 ColorScheme。收敛成单一主色后:
  * - 配色方案只有浅/深两套,首次用到时算一次,之后切换零计算
  * - 删掉取色器 Sheet、预设色网格、风格选择器三个组件与对应状态
  */
-val MediaBoxSeedArgb: Int = 0xFF0F766E.toInt()
+val MediaBoxSeedArgb: Int = 0xFFFF6B4A.toInt()
 
 val MediaBoxPaletteStyle: PaletteStyle = PaletteStyle.Vibrant
 

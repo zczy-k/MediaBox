@@ -28,6 +28,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.github.tvbox.osc.R
@@ -52,6 +53,10 @@ fun HeroCarousel(
     videos: List<Movie.Video>,
     onCardClick: (Movie.Video) -> Unit,
     modifier: Modifier = Modifier,
+    /** 头图高度:由调用方按窗口宽高算(Fluid.heroHeight);null 时退回 1.72:1 比例 */
+    heroHeight: Dp? = null,
+    /** 圆角:由调用方按窗口宽算(Fluid.heroRadius) */
+    cornerRadius: Dp = MediaBoxRadius.Container,
 ) {
     if (videos.isEmpty()) return
     val n = videos.size
@@ -69,8 +74,11 @@ fun HeroCarousel(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(1.72f)
-                .clip(RoundedCornerShape(MediaBoxRadius.Container))
+                .then(
+                    if (heroHeight != null) Modifier.height(heroHeight)
+                    else Modifier.aspectRatio(1.72f)
+                )
+                .clip(RoundedCornerShape(cornerRadius))
                 .clickable { onCardClick(video) },
         ) {
             VodPoster(

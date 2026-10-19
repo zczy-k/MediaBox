@@ -70,18 +70,21 @@ class NavMetricsTest {
     // ---------- 中央动作槽的槽位映射 ----------
 
     @Test
-    fun actionSlotFor_isSymmetricAroundTheCentre() {
-        // 4 个页面 ⇒ 槽位 2,即"首页 历史 | 直播 | 收藏 设置",两侧各两个
-        assertEquals(2, NavMetrics.actionSlotFor(4))
-        assertEquals(2, NavMetrics.actionSlotFor(5))
+    fun actionSlotFor_isAlwaysLeftmost() {
+        // 2026-10-19 改版:动作槽(直播)从"正中"移到"最左"。
+        // 配合页面顺序「历史 · 首页 · 收藏 · 设置」,呈现为
+        // 「直播 · 历史 · 首页 · 收藏 · 设置」—— 首页因此落在正中。
+        // ⚠️ 若把这里改回 tabCount / 2,首页会被挤到槽位 1,与设计稿不符。
+        assertEquals(0, NavMetrics.actionSlotFor(4))
+        assertEquals(0, NavMetrics.actionSlotFor(5))
     }
 
     @Test
     fun slotIndexOfTab_skipsTheActionSlot() {
         val action = NavMetrics.actionSlotFor(4)
-        // 页面 0/1 落在动作槽左侧,2/3 整体右移一格 ⇒ 胶囊只停 0/1/3/4,永不停在 2
-        assertEquals(0, NavMetrics.slotIndexOfTab(0, action))
-        assertEquals(1, NavMetrics.slotIndexOfTab(1, action))
+        // 动作槽在最左 ⇒ 所有页面整体右移一格,胶囊只停 1/2/3/4,永不停在 0
+        assertEquals(1, NavMetrics.slotIndexOfTab(0, action))
+        assertEquals(2, NavMetrics.slotIndexOfTab(1, action))
         assertEquals(3, NavMetrics.slotIndexOfTab(2, action))
         assertEquals(4, NavMetrics.slotIndexOfTab(3, action))
     }

@@ -70,6 +70,7 @@ import com.github.tvbox.osc.ui.components.ShimmerHost
 import com.github.tvbox.osc.ui.components.SkeletonBox
 import com.github.tvbox.osc.ui.components.VodCard
 import com.github.tvbox.osc.ui.components.VodCardStyle
+import com.github.tvbox.osc.ui.theme.Fluid
 import com.github.tvbox.osc.ui.theme.MediaBoxRadius
 import com.github.tvbox.osc.util.HomeSettings
 import com.kyant.capsule.ContinuousCapsule
@@ -90,18 +91,6 @@ private val HomeFilterChipPadding = 14.dp
 
 /** 超过此宽度不再等宽铺满:宽屏下会把每个 chip 拉成一大条,不如保持自然宽度左对齐 */
 private val HomeFilterChipEqualWidthMaxWidth = 600.dp
-
-/**
- * 栅格行间距。与列间距保持一致(12dp):行列不等距会让网格看起来"被拉长",
- * 尤其是在 3 列布局下,16dp 的行距会明显大于 12dp 的列距。
- */
-private val HomeGridItemSpacing = 12.dp
-
-/**
- * 栅格顶部留白 = 分类 tab 行下方分隔线到首行卡片的距离,必须取到 HomeGridItemSpacing:
- * 没有筛选 chips 的分类首行会紧贴分隔线。有 chips 时由 chips 自己补差(见下),两档间距一致。
- */
-private val HomeGridContentTopPadding = 12.dp
 
 private const val HomeGridSkeletonCount = 18
 
@@ -194,10 +183,16 @@ fun HomeGridLayout(
                 HomeSettings.PosterRatioMode.Landscape -> HomePosterRatio.LANDSCAPE
             }
             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-            val gridColumns = WindowSize.gridColumns(
-                availableWidthDp = (maxWidth - 32.dp - navStart).value.toInt(),
-                minColumns = homeColumns,
-            )
+            // 全部尺寸由当前窗口宽高推导(见 Fluid):断点只管结构,数值连续,
+            // 折叠屏展开 673dp、分屏 500dp 这类非标准宽度不会卡在两档之间
+            val availWidth = maxWidth - navStart
+            val pad = Fluid.padding(availWidth)
+            val gap = Fluid.gap(availWidth)
+            val gridColumns = Fluid.columns(availWidth, homeColumns)
+            val cardWidth = Fluid.cardWidth(availWidth, gridColumns)
+            val cardRadius = Fluid.cardRadius(cardWidth)
+            val cardTitleSize = Fluid.titleSize(cardWidth)
+            val heroHeight = Fluid.heroHeight(availWidth, maxHeight)
             // 骨架屏共用一条动画时钟:加载态一次铺 18 个格子,不共享就是 18 条无限动画同时跑。
             // active 必须按真实加载态给 —— 常驻会让动画在内容就绪后仍每帧推进,应用进不了空闲。
             // 条件与下面 when 里"真的铺骨架"的两支严格一致(null 且 sorts 非空 / Idle / Loading)。
@@ -219,13 +214,13 @@ fun HomeGridLayout(
                         onRefresh = { vm.reload() },
                     ),
                 contentPadding = PaddingValues(
-                    start = 16.dp + navStart,
-                    end = 16.dp,
-                    top = HomeGridContentTopPadding,
+                    start = pad + navStart,
+                    end = pad,
+                    top = gap,
                     bottom = 88.dp + contentPadding.calculateBottomPadding(),
                 ),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(HomeGridItemSpacing),
+                horizontalArrangement = Arrangement.spacedBy(gap),
+                verticalArrangement = Arrangement.spacedBy(gap),
             ) {
                 // 头图只挂在**第一个分类**上(通常是「热门/推荐」)。
                 // 每个分类都挂一遍会让用户以为切了页签内容没变 —— 头图是"今天的推荐",
@@ -245,7 +240,9 @@ fun HomeGridLayout(
                         HeroCarousel(
                             videos = heroVideos,
                             onCardClick = onCardClick,
-                            modifier = Modifier.padding(bottom = 4.dp),
+                            modifier = Modifier.padding(bottom = gap),
+                            heroHeight = heroHeight,
+                            cornerRadius = Fluid.heroRadius(availWidth),
                         )
                     }
                 }
@@ -255,11 +252,7 @@ fun HomeGridLayout(
                         span = { GridItemSpan(maxLineSpan) },
                         contentType = "chips",
                     ) {
-                        Box(
-                            modifier = Modifier.padding(
-                                top = (HomeGridItemSpacing - HomeGridContentTopPadding).coerceAtLeast(0.dp),
-                            ),
-                        ) {
+                        Box(modifier = Modifier.padding(top = 0.dp)) {
                             HomeFilterChipsRow(sort = tabSort) { selection ->
                                 tabPartition?.let { vm.applyFilter(it, selection) }
                             }
@@ -327,6 +320,8 @@ fun HomeGridLayout(
                                 style = VodCardStyle.Stacked,
                                 posterAspectRatio = posterAspectRatio,
                                 fitPosterContent = true,
+                                cornerRadius = cardRadius,
+                                titleSize = cardTitleSize,
                                 onPosterAspectRatio = { ratio ->
                                     val imageKey = video.pic?.takeIf { it.isNotBlank() }
                                     if (posterRatioMode == HomeSettings.PosterRatioMode.Automatic &&
