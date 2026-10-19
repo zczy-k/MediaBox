@@ -67,7 +67,12 @@ fun HeroCarousel(
 
     HorizontalPager(
         state = pagerState,
-        modifier = modifier,
+        // ⚠️ 高度必须同时给到 Pager 本身:放进 LazyVerticalGrid 的 item 时,
+        // item 的高度约束是无界的,只给页内容加 height 会让 Pager 在测量阶段塌成 0 高
+        // (真机实测:头图整块消失,页面直接是"页签 → 网格")
+        modifier = modifier.then(
+            if (heroHeight != null) Modifier.height(heroHeight) else Modifier
+        ),
         pageSpacing = 12.dp,
     ) { page ->
         val video = videos[page % n]

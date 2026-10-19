@@ -231,7 +231,11 @@ fun HomeGridLayout(
                 // 不兜底的话,设计稿里最重的那块视觉资产在真机上直接消失(实测过一次)。
                 val heroVideos = rec.videos.take(5)
                     .ifEmpty { tabPartition?.videos?.take(5).orEmpty() }
-                if (tabId == sorts.firstOrNull()?.id && heroVideos.isNotEmpty()) {
+                    .ifEmpty { partitions.firstOrNull()?.videos?.take(5).orEmpty() }
+                // 用**位置**判断而不是比较 id:页签行的选中态会 coerceAtLeast(0),
+                // id 对不上时高亮仍落在第一个,用 id 比较会出现"看着是第一个、判断却不成立"
+                val heroTabIndex = sorts.indexOfFirst { it.id == tabId }
+                if (heroTabIndex <= 0 && heroVideos.isNotEmpty()) {
                     item(
                         key = "hero",
                         span = { GridItemSpan(maxLineSpan) },
