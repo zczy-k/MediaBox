@@ -47,6 +47,7 @@ import com.github.tvbox.osc.bean.Subtitle
 import com.github.tvbox.osc.player.state.SubtitleSearchSheetState
 import com.github.tvbox.osc.player.state.SubtitleSheetState
 import com.github.tvbox.osc.util.SubtitleHelper
+import com.github.tvbox.osc.util.TitleCodePolicy
 import com.github.tvbox.osc.sourcedata.SubtitleViewModel
 import kotlin.math.roundToInt
 import java.util.Locale
@@ -403,6 +404,10 @@ fun SubtitleSearchSheet(sheet: SubtitleSearchSheetState, onDismiss: () -> Unit) 
         wd = wd.replace(Regex("(?:：|\\:|）|\\)|\\]|】|\\.)"), " ")
         // Keep the full filename/title; SubtitleSearchQuery generates bounded title/code variants itself.
         wd = wd.trim()
+        // 有番号就**只搜番号**(2026-10-19 用户定案):字幕站按番号索引的命中率远高于
+        // "番号+一长串译名";没有番号(普通剧集/中文片名)才整条标题进搜索框。
+        // 判据是纯函数,见 [TitleCodePolicy.subtitleSeed]。
+        wd = TitleCodePolicy.subtitleSeed(wd)
         word = wd
         if (wd.isNotEmpty()) search(wd)
     }

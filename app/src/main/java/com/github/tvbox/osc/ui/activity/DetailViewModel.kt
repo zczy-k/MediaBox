@@ -17,6 +17,7 @@ import com.github.tvbox.osc.util.SearchResultCache
 import com.github.tvbox.osc.util.NoHitSourceCache
 import com.github.tvbox.osc.util.NoHitSourcePolicy
 import com.github.tvbox.osc.util.PlayTitleMatch
+import com.github.tvbox.osc.util.TitleCodePolicy
 import com.github.tvbox.osc.util.SourceCompletenessPolicy
 import com.github.tvbox.osc.util.TitleIndexMemory
 import com.github.tvbox.osc.util.QualityLabelPolicy
@@ -1735,6 +1736,25 @@ class DetailViewModel : ViewModel() {
             mVideo.id = vodId
             if (mVideo.name.isNullOrEmpty()) mVideo.name = vodName
             if (mVideo.name.isNullOrEmpty()) mVideo.name = "TVBox"
+            // 番号回填(2026-10-19,真机实测 py_02e87301/AV01):部分源**搜索侧把 dvd_id
+            // 拼进 vod_name、详情侧不拼**(见 TitleCodePolicy 类注释),于是列表卡片有番号、
+            // 详情页没有 —— 同一个条目"点进去就变了样"。这里按入口标题把番号补回前缀。
+            //
+            // 顺带把 [searchTitle] 的源头(下方 `searchTitle = info.name`)也修正了:
+            // 换源/重搜都从这条名字出发,带番号的形态与用户实际搜的那次一致。
+            //
+            // 位置必须在 [PlayTitleMatch.isDifferentFilm] 之前:补回番号只会让"是不是同一部片"
+            // 的判据更宽松(两边前缀更接近),不会更严 —— 放在后面就白补了。
+            val entryName = entryTitle.ifEmpty { vodName }
+            val codeRestored = TitleCodePolicy.restoreCode(entryName, mVideo.name)
+            if (codeRestored != mVideo.name) {
+                LOG.i(
+                    "echo-title-code restore code=" + TitleCodePolicy.leadingCode(entryName) +
+                        " from=\"" + mVideo.name.orEmpty().take(24) +
+                        "\" to=\"" + codeRestored.take(32) + "\""
+                )
+                mVideo.name = codeRestored
+            }
             if ((mVideo.pic == null || mVideo.pic.isEmpty()) && vodPicture.isNotEmpty()) {
                 mVideo.pic = vodPicture
             }
