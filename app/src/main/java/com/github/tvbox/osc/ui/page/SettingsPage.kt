@@ -300,6 +300,7 @@ fun SettingsPage(
             Text(
                 text = stringResource(R.string.settings_title),
                 style = MaterialTheme.typography.headlineSmall,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
             )
         },

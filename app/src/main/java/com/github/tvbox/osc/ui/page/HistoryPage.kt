@@ -112,6 +112,7 @@ fun HistoryPage(
             Text(
                 text = stringResource(R.string.history_title),
                 style = MaterialTheme.typography.headlineSmall,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
             )
         },

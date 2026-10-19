@@ -11,6 +11,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,6 +34,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -115,6 +118,9 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
         }
     }
 
+    // 进入搜索页即聚焦并弹键盘:否则用户要多点一次输入框才能打字
+    val searchFocus = remember { FocusRequester() }
+
     val resultListState = rememberLazyListState()
 
     LaunchedEffect(resultLayout) {
@@ -138,6 +144,8 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
                 query = query,
                 onQueryChange = { query = it },
                 onSearch = { submit(query) },
+                focusRequester = searchFocus,
+                autoFocus = true,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(start = 4.dp),
@@ -155,8 +163,9 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
         navigationIcon = {
             Box(
                 modifier = Modifier
-                    .size(40.dp)
-                    .glassTopBarSurface(CircleShape, MaterialTheme.colorScheme.surfaceBright)
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainer)
                     .clickable { activity?.finish() },
                 contentAlignment = Alignment.Center,
             ) {
