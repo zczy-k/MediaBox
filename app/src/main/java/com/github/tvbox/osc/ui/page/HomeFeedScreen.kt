@@ -216,11 +216,15 @@ fun HomeFeedScreen(vm: HomeViewModel, contentPadding: PaddingValues = PaddingVal
                         horizontalArrangement = Arrangement.spacedBy(gap),
                         verticalArrangement = Arrangement.spacedBy(gap),
                     ) {
-                        // ① 通栏头图:推荐位为空时退到当前分类前 5 条
-                        val heroVideos = rec.videos.take(5)
-                            .ifEmpty { partition?.videos?.take(5).orEmpty() }
-                        if (heroVideos.isNotEmpty()) {
-                            item(key = "hero", span = { GridItemSpan(maxLineSpan) }) {
+                        // ① 通栏头图:推荐位为空时退到当前分类前 5 条。
+                        //
+                        // ⚠️ 槽位**常驻**,是否渲染在 item 内部判断 —— 之前把 if 写在外面,
+                        // 首帧数据还没到时这个 item 根本没被注册,后续数据到了也不会补位,
+                        // 真机表现为"冷启动没有头图、切一次分类才出现"。
+                        item(key = "hero", span = { GridItemSpan(maxLineSpan) }) {
+                            val heroVideos = rec.videos.take(5)
+                                .ifEmpty { partition?.videos?.take(5).orEmpty() }
+                            if (heroVideos.isNotEmpty()) {
                                 HomeHero(
                                     videos = heroVideos,
                                     height = heroHeight,
@@ -230,9 +234,9 @@ fun HomeFeedScreen(vm: HomeViewModel, contentPadding: PaddingValues = PaddingVal
                             }
                         }
 
-                        // ② 分类胶囊
-                        if (sorts.isNotEmpty()) {
-                            item(key = "sorts", span = { GridItemSpan(maxLineSpan) }) {
+                        // ② 分类胶囊(槽位常驻,理由同头图:首帧 sorts 为空时不能丢槽位)
+                        item(key = "sorts", span = { GridItemSpan(maxLineSpan) }) {
+                            if (sorts.isNotEmpty()) {
                                 LazyRow(
                                     horizontalArrangement = Arrangement.spacedBy(7.dp),
                                     contentPadding = PaddingValues(vertical = 2.dp),
