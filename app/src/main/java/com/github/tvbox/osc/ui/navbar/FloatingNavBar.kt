@@ -5,6 +5,7 @@ import android.os.Build
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -539,6 +541,7 @@ private fun RowScope.NavSlotsRow(
                 enabled = enabled,
                 onClick = onActionClick,
                 role = Role.Button,
+                isAction = true,
                 modifier = Modifier.fillMaxHeight().weight(1f),
             )
         } else {
@@ -574,6 +577,7 @@ private fun ColumnScope.NavSlotsColumn(
                 enabled = enabled,
                 onClick = onActionClick,
                 role = Role.Button,
+                isAction = true,
                 modifier = Modifier.fillMaxWidth().weight(1f),
             )
         } else {
@@ -597,8 +601,43 @@ private fun NavTabItem(
     onClick: () -> Unit,
     modifier: Modifier,
     role: Role = Role.Tab,
+    /** 动作槽(直播):与页签不是同一类目标,必须一眼可分辨 */
+    isAction: Boolean = false,
 ) {
     val scale = LocalNavTabScale.current
+    if (isAction) {
+        // 动作项单独一种形态:品牌色实心圆 + 白图标。
+        // 此前它和页签同形(24dp 图标 + onSurfaceVariant 着色),而 ic_live_fab 是三层同心圆,
+        // 着色后在深色下渲染成一个没有任何可读图形的黑点 —— 真机截图里像个洞。
+        Box(
+            modifier = modifier
+                .clip(ContinuousCapsule)
+                .clickable(
+                    enabled = enabled,
+                    interactionSource = null,
+                    indication = null,
+                    role = role,
+                    onClick = onClick,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    painter = painterResource(tab.iconRes),
+                    contentDescription = tab.label,
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+        return
+    }
     val iconColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer
     else MaterialTheme.colorScheme.onSurfaceVariant
     val textColor = if (selected) MaterialTheme.colorScheme.onSecondaryContainer
