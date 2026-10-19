@@ -23,6 +23,9 @@ public class VodCollect implements Serializable {
     /** 订阅标识(收藏时的配置地址):列表全局显示,点击时按它路由回原订阅 */
     @ColumnInfo(name = "cid")
     public String cid;
+    /** 源站分类原文(动作片/连续剧/综艺…):收藏页分类胶囊的过滤依据,v2 迁移新增,老数据为 null */
+    @ColumnInfo(name = "type")
+    public String type;
 
     public int getId() {
         return id;

@@ -116,11 +116,8 @@ fun SettingsRow(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        leadingIconRes?.let { RowLeadingIcon(it, enabled) }
-        if (iconRes != null) {
-            SettingsIconBadge(iconRes, title)
-            Spacer(Modifier.width(16.dp))
-        }
+        // 行首图标已按用户要求全部移除(2026-10-19):每行一个彩色徽章+行尾箭头太乱,
+        // 文字本身已足够表意。iconRes/leadingIconRes 参数保留只是为不破坏调用处。
         Column(modifier = Modifier.weight(1f)) {
             RowTitle(title = title, enabled = enabled)
             if (subtitle != null) {
@@ -204,7 +201,6 @@ fun SettingsSliderRow(
                 .padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            leadingIconRes?.let { RowLeadingIcon(it, enabled = enabled) }
             RowTitle(title = title, enabled = enabled, modifier = Modifier.weight(1f))
             if (valueText != null) {
                 Spacer(Modifier.width(16.dp))
@@ -294,7 +290,6 @@ fun SettingsSwitchRow(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        leadingIconRes?.let { RowLeadingIcon(it, enabled) }
         Column(modifier = Modifier.weight(1f)) {
             RowTitle(title = title, enabled = enabled)
             if (subtitle != null) {

@@ -91,6 +91,25 @@ class CollectViewModel : ViewModel() {
     val loading = MutableStateFlow(true)
     val items = MutableStateFlow<List<VodCollect>>(emptyList())
 
+    /** 分类筛选:全部/电影/剧集/动漫/综艺。源站 type 是自由文本,按关键词归桶,归不进的兜底「电影」 */
+    enum class Category(val label: String) { ALL("全部"), MOVIE("电影"), SERIES("剧集"), ANIME("动漫"), VARIETY("综艺") }
+
+    val category = MutableStateFlow(Category.ALL)
+
+    fun filterByCat(list: List<VodCollect>, cat: Category): List<VodCollect> = when (cat) {
+        Category.ALL -> list
+        else -> list.filter {
+            val t = (it.type ?: "").lowercase()
+            when (cat) {
+                Category.MOVIE -> !(t.contains("剧") || t.contains("连续") || t.contains("动漫") || t.contains("动画") || t.contains("综艺"))
+                Category.SERIES -> t.contains("剧") || t.contains("连续")
+                Category.ANIME -> t.contains("动漫") || t.contains("动画")
+                Category.VARIETY -> t.contains("综艺")
+                Category.ALL -> true
+            }
+        }
+    }
+
     companion object {
         /** 收藏过多弱提示阈值:只提示不删(删用户收藏是红线)。 */
         const val COLLECT_MANY_HINT_THRESHOLD = 500
@@ -195,6 +214,7 @@ fun CollectPage(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val items by vm.items.collectAsStateWithLifecycle()
+    val category by vm.category.collectAsStateWithLifecycle()
     val loading by vm.loading.collectAsStateWithLifecycle()
     val placementAnim by vm.placementAnim.collectAsStateWithLifecycle()
     val unavailableKeys by vm.unavailableKeys.collectAsStateWithLifecycle()
@@ -291,6 +311,7 @@ fun CollectPage(
             }
         },
     ) { topPad, _ ->
+        val filtered = remember(items, category) { vm.filterByCat(items, category) }
         when {
             loading -> Box(
                 modifier = Modifier
@@ -301,8 +322,35 @@ fun CollectPage(
                 ContainedLoadingIndicator(Modifier.size(64.dp))
             }
 
-            else -> AnimatedContent(
-                targetState = items,
+            else -> Column(modifier = Modifier.fillMaxSize()) {
+                // 分类胶囊(设计稿 06-A):全部/电影/剧集/动漫/综艺。
+                // 源站 type 是自由文本,VM 里按关键词归桶;老数据 type=null 归「电影」兜底。
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 16.dp, top = topPad, bottom = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    CollectViewModel.Category.entries.forEach { cat ->
+                        val on = category == cat
+                        Text(
+                            text = cat.label,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (on) MaterialTheme.colorScheme.onPrimary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(
+                                    if (on) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.surfaceContainer
+                                )
+                                .clickable { vm.category.value = cat }
+                                .padding(horizontal = 14.dp, vertical = 7.dp),
+                        )
+                    }
+                }
+                AnimatedContent(
+                    targetState = filtered,
                 contentKey = { it.isEmpty() },
                 transitionSpec = {
                     fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) togetherWith
@@ -438,6 +486,7 @@ fun CollectPage(
                         }
                     }
                 }
+            }
             }
         }
     }

@@ -157,6 +157,7 @@ public class RoomDataManger {
         record.updateTime = System.currentTimeMillis();
         record.name = vodInfo.name;
         record.pic = vodInfo.pic;
+        record.type = vodInfo.type;
         AppDataManager.get().getVodCollectDao().insert(record);
         // 收藏的片名同样回写本地拼音索引(2026-10-11):收藏是用户**主动表达**的兴趣,
         // 优先级不低于搜索命中。收藏不受无痕模式影响(见 insertVodRecord 的注释),
