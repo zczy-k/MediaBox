@@ -763,58 +763,60 @@ internal fun SearchResultRow(
     onLongClick: () -> Unit,
     sourceCount: Int = 1,
 ) {
+    // 设计稿的清单行:66×42 缩略图 + 单行标题 + 元信息,不再用卡片底。
+    // 搜索页用户是在**扫片名**,不是看海报:卡片(72×96)一屏只放 4 条,行样式能放 8 条以上。
     PressableCard(
         onClick = onClick,
         onLongClick = onLongClick,
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(12.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.cardContainer)
-                .padding(8.dp),
+                .padding(vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // 海报自带圆角并留出内边距:不裁的话左侧跟随卡片圆角、右侧是硬直角,看着像被切了一半。
             VodPoster(
                 name = video.name,
                 pic = video.pic,
-                fitContent = true,
                 modifier = Modifier
-                    .width(72.dp)
-                    .height(96.dp)
-                    .clip(RoundedCornerShape(12.dp)),
+                    .width(66.dp)
+                    .height(42.dp)
+                    .clip(RoundedCornerShape(9.dp)),
             )
             Column(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(start = 12.dp, end = 4.dp),
+                    .padding(start = 11.dp, end = 6.dp),
             ) {
-                // 番号标题普遍偏长:一行必然截断,放到两行再省略。
                 Text(
                     text = video.name ?: "",
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 val note = video.note?.trim().orEmpty()
-                if (note.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    // 内容角标(中文字幕/无码影片…)用主色胶囊突出,一眼能分辨。
-                    SearchTag(text = note, emphasized = true)
-                }
                 val meta = searchMetaText(video)
-                if (meta.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = meta,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                if (note.isNotEmpty() || meta.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (note.isNotEmpty()) {
+                            SearchTag(text = note, emphasized = false)
+                            if (meta.isNotEmpty()) Spacer(modifier = Modifier.width(6.dp))
+                        }
+                        if (meta.isNotEmpty()) {
+                            Text(
+                                text = meta,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                 }
             }
             // P2 同名聚合角标:该标题共有 N 个来源可用(N>1 才显示)。
@@ -822,7 +824,7 @@ internal fun SearchResultRow(
             if (sourceCount > 1) {
                 SearchTag(
                     text = stringResource(R.string.search_result_source_count, sourceCount),
-                    emphasized = false,
+                    emphasized = true,
                     modifier = Modifier.padding(end = 2.dp),
                 )
             }
