@@ -318,6 +318,8 @@
 
     <!-- 收藏页 -->
     <string name="collect_clear">清空收藏</string>
+    <string name="collect_empty_hint">在详情页点 ☆ 就能收藏</string>
+    <string name="collect_empty_action">去首页看看</string>
     <string name="collect_empty">暂无收藏</string>
     <string name="collect_clear_message">将删除全部收藏，此操作不可恢复</string>
     <string name="collect_uncollect_message">取消收藏「%1$s」？</string>

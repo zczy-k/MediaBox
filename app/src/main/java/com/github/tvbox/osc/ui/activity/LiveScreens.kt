@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -455,12 +456,13 @@ private fun GroupHeaderRow(activity: LivePlayActivity, group: LiveChannelGroup) 
         modifier = Modifier
             .fillMaxWidth()
             .clickable { activity.toggleChannelGroup(group.groupIndex) }
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = group.groupName ?: "",
             style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f),
         )
@@ -496,25 +498,47 @@ private fun ChannelRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(if (selected) MaterialTheme.colorScheme.cardContainer else Color.Transparent)
             .clickable { activity.selectChannel(group.groupIndex, row.channelPos) }
-            .padding(horizontal = 20.dp, vertical = 10.dp),
+            .padding(horizontal = 16.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = channel.channelNum.toString(),
-            fontSize = 12.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(36.dp),
-        )
+        // 频道号:30dp 圆角方图标底,与设置页 si / 详情集数格同一语言
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(
+                    if (selected) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.surfaceContainer
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = channel.channelNum.toString(),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (selected) MaterialTheme.colorScheme.onPrimary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        Spacer(modifier = Modifier.width(11.dp))
         Text(
             text = channel.channelName ?: "",
-            fontSize = 15.sp,
+            fontSize = 14.sp,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
             color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
         )
+        // 状态:当前频道显示 LIVE 点,与播放页顶栏同一语义
+        if (selected) {
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .background(MaterialTheme.colorScheme.primary, CircleShape),
+            )
+        }
     }
 }
 

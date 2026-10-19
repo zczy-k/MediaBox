@@ -17,6 +17,12 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.Icon
+import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -305,16 +311,53 @@ fun CollectPage(
                 label = "collectContent",
             ) { list ->
                 if (list.isEmpty()) {
-                    LoadStateBox(
-                        state = com.github.tvbox.osc.ui.components.LoadState.Empty,
-                        emptyText = stringResource(R.string.collect_empty),
-                        errorText = "",
-                        retryText = "",
-                        emptyIconRes = R.drawable.ic_empty_record,
+                    // 空态:64dp 图标底 + 两行说明 + 主按钮(设计稿 06-B)。
+                    // 不能只给一行灰字 —— 空态是用户第一次见到这个页面时的样子。
+                    Column(
                         modifier = Modifier
                             .fillMaxSize()
                             .padding(top = topPad),
-                    )
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(MaterialTheme.colorScheme.surfaceContainer),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_tab_collect),
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(26.dp),
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = stringResource(R.string.collect_empty),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Text(
+                            text = stringResource(R.string.collect_empty_hint),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        )
+                        Text(
+                            text = stringResource(R.string.collect_empty_action),
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier
+                                .padding(top = 14.dp)
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(MaterialTheme.colorScheme.primary)
+                                .clickable(enabled = false) {}
+                                .padding(horizontal = 20.dp, vertical = 9.dp),
+                        )
+                    }
                 } else {
                     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                         val gridColumns = WindowSize.gridColumns(
