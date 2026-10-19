@@ -47,7 +47,7 @@ fun MediaBoxTheme(
         else -> isSystemInDarkTheme()
     }
 
-    // 固定蓝色基调:深浅各一套方案,懒算一次后常驻(不再跟随壁纸取色,也不再受自定义色影响)
+    // 固定青绿基调:深浅各一套方案,懒算一次后常驻(不再跟随壁纸取色,也不再受自定义色影响)
     val colorScheme = AppThemeState.scheme(darkTheme)
 
     if (manageStatusBarIcons) {

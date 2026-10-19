@@ -500,12 +500,13 @@ fun FloatingNavBar(
                     },
                     onDrawSurface = {
                         val progress = if (isBlurEnabled) dampedDragAnimation.pressProgress else 0f
+                        // 选中胶囊用品牌色淡底。原来是纯黑 10%:在浅色玻璃层上几乎读不出"选中",
+                        // 用户只能靠图标颜色的细微差别判断当前页 —— 这是导航栏最该避免的模糊。
                         drawRect(
-                            if (isLightTheme) Color.Black.copy(0.1f)
-                            else Color.White.copy(0.1f),
+                            accentColor.copy(alpha = if (isLightTheme) 0.14f else 0.22f),
                             alpha = 1f - progress
                         )
-                        drawRect(Color.Black.copy(alpha = 0.03f * progress))
+                        drawRect(accentColor.copy(alpha = 0.05f * progress))
                     }
                 )
                 .crossAxisSize(axis, 56.dp)

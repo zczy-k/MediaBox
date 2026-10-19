@@ -69,6 +69,7 @@ import com.github.tvbox.osc.ui.components.ShimmerHost
 import com.github.tvbox.osc.ui.components.SkeletonBox
 import com.github.tvbox.osc.ui.components.VodCard
 import com.github.tvbox.osc.ui.components.VodCardStyle
+import com.github.tvbox.osc.ui.theme.MediaBoxRadius
 import com.github.tvbox.osc.util.HomeSettings
 import com.kyant.capsule.ContinuousCapsule
 import kotlinx.coroutines.flow.first
@@ -89,13 +90,17 @@ private val HomeFilterChipPadding = 14.dp
 /** 超过此宽度不再等宽铺满:宽屏下会把每个 chip 拉成一大条,不如保持自然宽度左对齐 */
 private val HomeFilterChipEqualWidthMaxWidth = 600.dp
 
-private val HomeGridItemSpacing = 16.dp
+/**
+ * 栅格行间距。与列间距保持一致(12dp):行列不等距会让网格看起来"被拉长",
+ * 尤其是在 3 列布局下,16dp 的行距会明显大于 12dp 的列距。
+ */
+private val HomeGridItemSpacing = 12.dp
 
 /**
  * 栅格顶部留白 = 分类 tab 行下方分隔线到首行卡片的距离,必须取到 HomeGridItemSpacing:
  * 没有筛选 chips 的分类首行会紧贴分隔线。有 chips 时由 chips 自己补差(见下),两档间距一致。
  */
-private val HomeGridContentTopPadding = 16.dp
+private val HomeGridContentTopPadding = 12.dp
 
 private const val HomeGridSkeletonCount = 18
 
@@ -380,12 +385,12 @@ fun HomeGridLayout(
 @Composable
 private fun HomeGridSkeleton(titleLine: Dp, posterAspectRatio: Float) {
     Column {
+        // 圆角必须与 VodCard 的海报一致,否则内容到达的瞬间会"缩一下角"
         SkeletonBox(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(posterAspectRatio)
-                .clip(RoundedCornerShape(16.dp)),
-            shape = RoundedCornerShape(16.dp),
+                .aspectRatio(posterAspectRatio),
+            shape = RoundedCornerShape(MediaBoxRadius.Small),
         )
         Spacer(modifier = Modifier.height(6.dp + titleLine))
     }

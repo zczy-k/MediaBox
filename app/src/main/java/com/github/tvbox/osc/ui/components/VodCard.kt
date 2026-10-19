@@ -21,6 +21,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.github.tvbox.osc.bean.Movie
+import com.github.tvbox.osc.ui.theme.MediaBoxRadius
 
 enum class VodCardStyle { Overlay, Stacked }
 
@@ -40,7 +41,7 @@ fun VodCard(
             PressableCard(
                 onClick = onClick,
                 onLongClick = onLongClick,
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(MediaBoxRadius.Small),
             ) {
                 Box(modifier = Modifier.aspectRatio(posterAspectRatio)) {
                     VodPoster(
@@ -56,7 +57,8 @@ fun VodCard(
                 text = video.name ?: "",
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 2,
+                // 单行:两行会让标题长短不一的卡片撑出不同高度,整行网格的基线随之抖动
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
                 modifier = Modifier
@@ -71,7 +73,7 @@ fun VodCard(
         onClick = onClick,
         onLongClick = onLongClick,
         modifier = modifier,
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(MediaBoxRadius.Small),
     ) {
         Box(modifier = Modifier.aspectRatio(posterAspectRatio)) {
             VodPoster(
@@ -124,13 +126,14 @@ private fun RatingBadge(video: Movie.Video, modifier: Modifier = Modifier) {
     Text(
         text = badge,
         style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurface,
+        // 角标用品牌色实底:海报本身色彩杂乱,半透明白底在浅色海报上几乎看不见
+        color = MaterialTheme.colorScheme.onPrimary,
         maxLines = 1,
         modifier = modifier
             .padding(8.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.7f))
-            .padding(horizontal = 8.dp, vertical = 2.dp),
+            .clip(RoundedCornerShape(6.dp))
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.92f))
+            .padding(horizontal = 7.dp, vertical = 2.dp),
     )
 }
 

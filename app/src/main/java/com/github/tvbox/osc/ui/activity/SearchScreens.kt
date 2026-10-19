@@ -3,6 +3,8 @@
 package com.github.tvbox.osc.ui.activity
 
 import android.view.inputmethod.InputMethodManager
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -652,6 +654,31 @@ internal fun SearchLoadMoreFooter(
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        // 进度线(2026-10-19):文字只给「12/18」这种离散数字,扫一眼读不出还剩多少;
+        // 一条 3dp 的进度线能在余光里表达完成度。搜索是并发聚合,这是唯一能让"还在动"
+        // 变得可见的元件 —— 而且数据源就是现成的 settledCount/totalCount,不新增任何请求。
+        if (running && totalCount > 0) {
+            val fraction by animateFloatAsState(
+                targetValue = (settledCount.toFloat() / totalCount).coerceIn(0f, 1f),
+                animationSpec = tween(320),
+                label = "searchProgress",
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(fraction)
+                        .height(3.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary),
+                )
+            }
+        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,

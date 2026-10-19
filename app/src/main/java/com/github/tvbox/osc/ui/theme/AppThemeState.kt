@@ -10,7 +10,7 @@ import com.github.tvbox.osc.util.KV
 import com.materialkolor.dynamicColorScheme
 
 /**
- * 主题状态:固定蓝色 + 明暗模式 + 纯黑。
+ * 主题状态:固定青绿 + 明暗模式 + 纯黑。
  *
  * 原版有三张缓存表(自定义色、预览色、深浅各一套),切色/切风格时每次都要重算并广播重组。
  * 现在只有浅/深两套方案,首次用到时算一次即常驻,后续切换是纯引用比较。
