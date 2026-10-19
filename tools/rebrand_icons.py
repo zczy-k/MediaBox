@@ -146,7 +146,7 @@ MAP = {
     "detail_cast": "cast", "detail_episodes": "grid", "detail_line": "list",
     "detail_music_player": "audio", "detail_quality": "quality",
     "detail_recommend": "star", "detail_switch_source": "refresh",
-    "empty_record": "record", "file_choose": "folder",
+    "empty_record": "record", "config_folder": "folder",
     "episode_grid_all": "grid", "episode_order_asc": "order", "episode_reverse": "prev",
     "hot_search": "hot", "layout_horizontal": "layout_h", "layout_vertical": "layout_v",
     "live_fab": "live", "more_vert": "more_vert",

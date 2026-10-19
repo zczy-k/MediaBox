@@ -27,11 +27,17 @@ import java.util.concurrent.Executors
 /**
  * 本地源导入的中间态:调用页 Activity 注册 `OpenDocument`(选 config.json)与 `OpenDocumentTree`
  * (第二段:源目录授权)两个契约,结果分别交给 [handleLocalConfigResult] / [handleLocalSourceTreeResult]。
- * 唯一入口 = 配置管理页「添加订阅」dialog 的「从本地选择」。
  *
- * <p>2026-10-19 起新增**批量导入**(`OpenMultipleDocuments`):一次最多选 [MAX_BATCH_IMPORT] 个文件,
- * 文件名自动作源名,一次性进列表等用户点保存。批量走同一套解析/复制逻辑,
- * 只是把逐文件的收尾合并成一次回调(见 [handleLocalConfigBatchResult])。
+ * <p>⚠️ 2026-10-19 入口收敛:原先「添加订阅」弹窗右上角还有一颗「从本地选择」小按钮,
+ * 与配置管理顶栏的「批量导入」是同一个能力(都调系统文件选择器)。两个入口并存让人不知道点哪个,
+ * 已删除 —— 现在**唯一入口**是顶栏那颗文件夹图标,走 [startLocalConfigBatch]。
+ * 选单个文件也走批量入口(选 1 个 ⇒ 预览 1 条 ⇒ 保存),功能没有缺口。
+ *
+ * <p>因此单选入口 [startLocalConfig] 及其收尾链([handleLocalConfigResult] /
+ * [handleLocalSourceTreeResult] / `ConfigManageActivity.launchLocalConfig`)当前**没有触发点**,
+ * 但**刻意保留**:它承载"复制后仍缺同目录引用 ⇒ 争取目录授权补齐"这条完整收尾,
+ * 而批量导入为保便利刻意跳过该收尾(见 [handleLocalConfigBatchResult] 注释)。
+ * 将来若要提供单选入口,直接复用这条链即可,不必重写。
  */
 object LocalConfigHost {
     /** 等待中的结果回调(同一时刻只会有一个导入流程) */

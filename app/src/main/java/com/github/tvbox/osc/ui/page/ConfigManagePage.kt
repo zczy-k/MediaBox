@@ -17,7 +17,6 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -27,17 +26,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -55,7 +51,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -81,7 +76,6 @@ import com.github.tvbox.osc.ui.components.SettingsOptionRow
 import com.github.tvbox.osc.ui.components.SettingsSwitch
 import com.github.tvbox.osc.ui.components.SettingsSwitchRow
 import com.github.tvbox.osc.ui.components.TopBarActionBox
-import com.github.tvbox.osc.ui.components.glassSurface
 import com.github.tvbox.osc.ui.theme.cardContainer
 import com.github.tvbox.osc.util.HistoryHelper
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -243,8 +237,13 @@ fun ConfigManageScreen(onNavigateBack: () -> Unit) {
                         // 批量导入(2026-10-19):一次最多选 4 个文件,文件名自动作源名。
                         // **两步走**:选完先进待确认列表(预览),用户点「保存」才落盘 ——
                         // 批量改多条订阅的动作需要先让用户看到"加了哪几个、叫什么名字"。
+                        //
+                        // ⚠️ 图标用"文件夹"(2026-10-19 用户定案):它取代了原先藏在
+                        // 「添加订阅」弹窗右上角那个"从本地选择"小按钮 —— 同一个能力有两个入口
+                        // 会让人不知道点哪个。现在**唯一入口就是这里**,图标也要一眼看出
+                        // "这是从本地文件夹挑文件",而不是原来的通用"源"图标。
                         TopBarActionBox(
-                            iconRes = R.drawable.ic_subscribe_source,
+                            iconRes = R.drawable.ic_config_folder,
                             contentDescription = stringResource(R.string.config_import_batch),
                             onClick = {
                                 (context as? ConfigManageActivity)?.launchLocalConfigBatch { items ->
@@ -408,9 +407,6 @@ fun ConfigManageScreen(onNavigateBack: () -> Unit) {
             onSave = { name, url ->
                 if (editing != null) vm.commitEdit(isVod, editing, name, url) else vm.commitAdd(isVod, name, url)
                 addDialogOpen = false
-            },
-            onPickFile = { onPicked ->
-                (context as? ConfigManageActivity)?.launchLocalConfig { api -> onPicked(api) }
             },
         )
     }
@@ -718,6 +714,14 @@ private fun BatchImportPreviewDialog(
     )
 }
 
+/**
+ * 「添加订阅 / 编辑源」对话框:名字 + 地址两个输入框。
+ *
+ * <p>⚠️ 2026-10-19 移除了标题栏右上角那颗「从本地选择」小按钮 ——
+ * 它与配置管理顶栏的「批量导入」是**同一个能力**(都是调系统的本地文件选择器),
+ * 两个入口并存只会让人不知道点哪个。现在本地导入**唯一入口**是顶栏那颗文件夹图标,
+ * 本对话框回归"纯手填"。批量导入还能一次选多个文件、文件名自动作源名,比这里单选更强。
+ */
 @Composable
 private fun AddSubscribeDialog(
     title: String,
@@ -726,7 +730,6 @@ private fun AddSubscribeDialog(
     initialUrl: String,
     onDismiss: () -> Unit,
     onSave: (String, String) -> Unit,
-    onPickFile: (onPicked: (String) -> Unit) -> Unit,
 ) {
     var name by remember { mutableStateOf(initialName) }
     var url by remember { mutableStateOf(initialUrl) }
@@ -743,31 +746,7 @@ private fun AddSubscribeDialog(
     }
     MediaBoxAlertDialog(
         onDismissRequest = onDismiss,
-        title = {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = title,
-                    modifier = Modifier.weight(1f),
-                )
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .glassSurface(CircleShape, MaterialTheme.colorScheme.surfaceBright)
-                        .clickable { onPickFile { picked -> url = picked } },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_file_choose),
-                        contentDescription = stringResource(R.string.config_pick_local),
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(22.dp),
-                    )
-                }
-            }
-        },
+        title = { Text(text = title) },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
                 OutlinedTextField(
