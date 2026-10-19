@@ -436,6 +436,9 @@
     <string name="detail_recommend">相关推荐</string>
 
     <!-- 历史 -->
+    <string name="history_filter_all">全部</string>
+    <string name="history_filter_today">今天</string>
+    <string name="history_filter_week">本周</string>
     <string name="history_title">历史</string>
     <string name="history_clear">清空历史</string>
     <string name="history_empty">暂无观看历史</string>

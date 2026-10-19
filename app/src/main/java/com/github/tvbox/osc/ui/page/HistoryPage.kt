@@ -14,7 +14,13 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.calculateStartPadding
@@ -67,6 +73,7 @@ fun HistoryPage(
     val navBottom = contentPadding.calculateBottomPadding()
     val context = LocalContext.current
     val items by vm.items.collectAsStateWithLifecycle()
+    val timeFilter by vm.timeFilter.collectAsStateWithLifecycle()
     val loading by vm.loading.collectAsStateWithLifecycle()
     val episodeTotals by vm.episodeTotals.collectAsStateWithLifecycle()
     val playedPercents by vm.playedPercents.collectAsStateWithLifecycle()
@@ -180,15 +187,47 @@ fun HistoryPage(
                 ContainedLoadingIndicator(Modifier.size(64.dp))
             }
 
-            else -> AnimatedContent(
-                targetState = HistoryContent(items, episodeTotals, playedPercents),
-                contentKey = { it.items.isEmpty() },
-                transitionSpec = {
-                    fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) togetherWith
-                        fadeOut(animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
-                },
-                label = "historyContent",
-            ) { content ->
+            else -> Column(modifier = Modifier.fillMaxSize()) {
+                // 时间筛选胶囊(全部/今天/本周):判据是记录的 updateTime,纯 UI 过滤,不动库
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 20.dp + navStart, end = 20.dp, top = topPad, bottom = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    listOf(
+                        HistoryViewModel.TimeFilter.ALL to R.string.history_filter_all,
+                        HistoryViewModel.TimeFilter.TODAY to R.string.history_filter_today,
+                        HistoryViewModel.TimeFilter.WEEK to R.string.history_filter_week,
+                    ).forEach { (f, label) ->
+                        val on = timeFilter == f
+                        Text(
+                            text = stringResource(label),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (on) MaterialTheme.colorScheme.onPrimary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(
+                                    if (on) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.surfaceContainer
+                                )
+                                .clickable { vm.setTimeFilter(f) }
+                                .padding(horizontal = 14.dp, vertical = 7.dp),
+                        )
+                    }
+                }
+                AnimatedContent(
+                    targetState = HistoryContent(items, episodeTotals, playedPercents),
+                    contentKey = { it.items.isEmpty() },
+                    transitionSpec = {
+                        fadeIn(animationSpec = spring(stiffness = Spring.StiffnessMediumLow)) togetherWith
+                            fadeOut(animationSpec = spring(stiffness = Spring.StiffnessMediumLow))
+                    },
+                    label = "historyContent",
+                    modifier = Modifier.weight(1f),
+                ) { content ->
                 if (content.items.isEmpty()) {
                     LoadStateBox(
                         state = LoadState.Empty,
@@ -196,9 +235,7 @@ fun HistoryPage(
                         errorText = "",
                         retryText = "",
                         emptyIconRes = R.drawable.ic_empty_record,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(top = topPad),
+                        modifier = Modifier.fillMaxSize(),
                     )
                 } else {
                     LazyColumn(
@@ -207,7 +244,7 @@ fun HistoryPage(
                         contentPadding = PaddingValues(
                             start = 20.dp + navStart,
                             end = 20.dp,
-                            top = topPad + 12.dp,
+                            top = 0.dp,
                             bottom = 12.dp + navBottom,
                         ),
                         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -254,6 +291,7 @@ fun HistoryPage(
                         }
                     }
                 }
+            }
             }
         }
     }

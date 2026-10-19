@@ -48,6 +48,8 @@ public class VodInfo implements Serializable {
     public int playIndex = 0;
     public String playNote = "";
     public String sourceKey;
+    /** 记录最后更新时间(毫秒),来自 VodRecord.updateTime —— 历史页"今天/本周"筛选的判据 */
+    public transient long updateTime;
     /** 源显示名快照(仅内存,2026-09-14 历史页解析用,不落 Room) */
     public String sourceName = "";
     /** 该条目的站点不在当前订阅(仅内存,历史页"当前源不可用"标记用,不落 Room) */

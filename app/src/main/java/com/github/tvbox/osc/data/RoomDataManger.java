@@ -123,6 +123,9 @@ public class RoomDataManger {
                         info = getVodInfoGson().fromJson(record.dataJson, new TypeToken<VodInfo>() {
                         }.getType());
                         info.sourceKey = record.sourceKey;
+                        // updateTime 已在表列上(每次播放都会写),透传给 UI 做时间筛选;
+                        // 不放 dataJson 是为了不重复存一份时间戳
+                        info.updateTime = record.updateTime;
 //                        SourceBean sourceBean = ApiConfig.get().getSource(info.sourceKey);
                         if (info.name == null)
                             info = null;

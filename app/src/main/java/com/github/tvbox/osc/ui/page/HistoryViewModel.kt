@@ -48,6 +48,11 @@ class HistoryViewModel : ViewModel() {
 
     val scrollSignal = MutableStateFlow(0)
 
+    /** 时间筛选:全部 / 今天 / 本周(判据是 VodRecord.updateTime,每次播放都会刷新) */
+    enum class TimeFilter { ALL, TODAY, WEEK }
+
+    val timeFilter = MutableStateFlow(TimeFilter.ALL)
+
     val placementAnim = MutableStateFlow(false)
 
     fun refresh(scrollToTop: Boolean = false) {
@@ -65,20 +70,59 @@ class HistoryViewModel : ViewModel() {
         if (scrollToTop) placementAnim.value = false
         viewModelScope.launch(Dispatchers.IO) {
             val all = RoomDataManger.getAllVodRecord(HistoryHelper.HISTORY_LIMIT)
+            val merged: List<VodInfo>
             if (HistoryMerge.isEnabled()) {
                 // 历史合并:同一部剧只保留最新一条,被合并掉的旧记录直接清库(上游"历史合并"语义,见 HistoryMerge)
                 val (kept, dropped) = HistoryMerge.dedupe(all) { it.name }
                 dropped.forEach { RoomDataManger.deleteVodRecord(it.sourceKey, it) }
-                items.value = kept
+                merged = kept
             } else {
-                items.value = all
+                merged = all
             }
+            allItems = merged
+            items.value = merged
+            applyTimeFilter()
             episodeTotals.value = EpisodeTotals.snapshot()
             playedPercents.value = PlaybackProgress.snapshot()
             resolveSourceNames()
             loading.value = false
             if (scrollToTop) scrollSignal.value++
         }
+    }
+
+    /** 按当前 [timeFilter] 重算可见列表(全量存 allItems,筛过的放 items) */
+    private var allItems: List<VodInfo> = emptyList()
+
+    fun applyTimeFilter() {
+        val f = timeFilter.value
+        val list = when (f) {
+            TimeFilter.ALL -> allItems
+            TimeFilter.TODAY -> allItems.filter { it.updateTime >= startOfToday() }
+            TimeFilter.WEEK -> allItems.filter { it.updateTime >= startOfWeek() }
+        }
+        items.value = list
+    }
+
+    fun setTimeFilter(f: TimeFilter) {
+        if (timeFilter.value == f) return
+        timeFilter.value = f
+        applyTimeFilter()
+    }
+
+    private fun startOfToday(): Long =
+        java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0)
+            set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
+        }.timeInMillis
+
+    private fun startOfWeek(): Long {
+        val c = java.util.Calendar.getInstance()
+        val dow = c.get(java.util.Calendar.DAY_OF_WEEK) // 周一为一周起点
+        val diff = (dow + 5) % 7
+        c.add(java.util.Calendar.DAY_OF_YEAR, -diff)
+        c.set(java.util.Calendar.HOUR_OF_DAY, 0); c.set(java.util.Calendar.MINUTE, 0)
+        c.set(java.util.Calendar.SECOND, 0); c.set(java.util.Calendar.MILLISECOND, 0)
+        return c.timeInMillis
     }
 
     @Subscribe(threadMode = ThreadMode.MAIN)
