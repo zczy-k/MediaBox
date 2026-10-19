@@ -40,17 +40,15 @@ object AppThemeState {
 
     private var darkCache: ColorScheme? = null
 
-    /** 固定种子,深浅各一份,懒算一次 */
-    fun scheme(isDark: Boolean): ColorScheme {
-        if (isDark) {
-            darkCache?.let { return it }
-            return dynamicColorScheme(Color(MediaBoxSeedArgb), isDark = true, style = MediaBoxPaletteStyle)
-                .also { darkCache = it }
-        }
-        lightCache?.let { return it }
-        return dynamicColorScheme(Color(MediaBoxSeedArgb), isDark = false, style = MediaBoxPaletteStyle)
-            .also { lightCache = it }
-    }
+    /**
+     * 固定两套方案,懒取一次。
+     *
+     * <p>⚠️ 2026-10-19 起**不再用 MaterialKolor 生成**:`dynamicColorScheme` 会把主色相
+     * 扩散到整张色板(白底变粉白、卡片变粉卡),与设计稿的"白底 + 纯珊瑚按钮"是两种气质。
+     * 现在直接返回 [MediaBoxSchemes] 里手写的两套。
+     */
+    fun scheme(isDark: Boolean): ColorScheme =
+        if (isDark) MediaBoxSchemes.Dark else MediaBoxSchemes.Light
 
     /** 音乐页按封面取色渲染用:配色风格固定,只换种子;按 (种子,深浅) 缓存,切歌不重算 */
     private val coverCache = HashMap<Pair<Int, Boolean>, ColorScheme>()
