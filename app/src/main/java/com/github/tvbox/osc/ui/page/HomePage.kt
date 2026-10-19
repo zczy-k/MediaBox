@@ -32,6 +32,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -91,6 +92,7 @@ import com.github.tvbox.osc.ui.components.VodCardMenu
 import com.github.tvbox.osc.ui.components.glassTopBarSurface
 import com.github.tvbox.osc.ui.components.rememberVodCardMenuState
 import com.github.tvbox.osc.ui.theme.cardContainer
+import com.github.tvbox.osc.ui.theme.MediaBoxRadius
 import com.github.tvbox.osc.util.HomeSettings
 import com.github.tvbox.osc.util.SiteSearch
 import com.github.tvbox.osc.util.SourceIdentityMask
@@ -166,61 +168,70 @@ fun HomePage(vm: HomeViewModel, contentPadding: PaddingValues = PaddingValues(0.
         collapseEnabled = false,
         topBarStartInset = navStart,
         titleContent = {
-            Column(
+            // 顶部只留一条搜索框。旧版是"标题 + 源名 + 绿色搜索按钮 + 更多"四件套,
+            // 首屏第一眼全被控件吃掉;现在源切换收进搜索框左端的小胶囊,标题整块删掉。
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { showSourceSheet = true }
-                    .padding(vertical = 3.dp),
+                    .padding(end = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = stringResource(R.string.app_name),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(42.dp)
+                        .clip(RoundedCornerShape(MediaBoxRadius.Pill))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                        .clickable {
+                            context.startActivity(Intent(context, SearchActivity::class.java))
+                        }
+                        .padding(start = 5.dp, end = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(MediaBoxRadius.Pill))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
+                            .clickable { showSourceSheet = true }
+                            .padding(start = 10.dp, end = 3.dp, top = 5.dp, bottom = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = currentSourceLabel,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                        )
+                        Icon(
+                            imageVector = Icons.Filled.ArrowDropDown,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Icon(
+                        imageVector = Icons.Filled.Search,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(7.dp))
                     Text(
-                        text = currentSourceLabel,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
+                        text = stringResource(R.string.home_search_hint),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                    )
-                    Icon(
-                        imageVector = Icons.Filled.ArrowDropDown,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp),
                     )
                 }
             }
         },
         actions = {
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(MaterialTheme.colorScheme.primary)
-                    .clickable { context.startActivity(Intent(context, SearchActivity::class.java)) }
-                    .padding(horizontal = 16.dp, vertical = 11.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.Search,
-                    contentDescription = stringResource(R.string.common_search),
-                    tint = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(20.dp),
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = stringResource(R.string.common_search),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onPrimary,
-                )
-            }
-            Spacer(Modifier.width(HomeTopBarControlSpacing))
             Box(
                 modifier = Modifier
-                    .size(42.dp)
-                    .clip(RoundedCornerShape(14.dp))
+                    .size(38.dp)
+                    .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                     .clickable { showSearchSettings = true },
                 contentAlignment = Alignment.Center,
@@ -229,6 +240,7 @@ fun HomePage(vm: HomeViewModel, contentPadding: PaddingValues = PaddingValues(0.
                     painter = painterResource(R.drawable.ic_more_vert),
                     contentDescription = stringResource(R.string.search_settings),
                     tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(20.dp),
                 )
             }
         },
@@ -294,45 +306,29 @@ fun HomePage(vm: HomeViewModel, contentPadding: PaddingValues = PaddingValues(0.
                 ),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                item(key = "home_intro") {
-                    Column(
-                        modifier = Modifier
-                            .fillParentMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        Text(
-                            text = stringResource(R.string.home_recommend),
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        Text(
-                            text = currentSourceLabel,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
                 item(key = "hero") {
+                    // 头图通栏、左右 16dp 边距:与下面的网格同一列宽,视觉上是一条竖线
                     if (rec.state == HomeViewModel.PartitionState.Ready && rec.videos.isNotEmpty()) {
                         HeroCarousel(
                             videos = rec.videos.take(5),
                             onCardClick = { video -> handleCardClick(vm, video, context) },
+                            modifier = Modifier.padding(horizontal = 16.dp),
                         )
                     } else if (rec.state == HomeViewModel.PartitionState.Loading) {
                         SkeletonBox(
                             modifier = Modifier
-                                .fillParentMaxWidth(0.78f)
-                                .aspectRatio(1.5f)
-                                .clip(RoundedCornerShape(20.dp)),
-                            shape = RoundedCornerShape(20.dp),
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp)
+                                .aspectRatio(1.72f),
+                            shape = RoundedCornerShape(MediaBoxRadius.Container),
                         )
                     } else if (rec.state == HomeViewModel.PartitionState.Error) {
                         Box(
                             modifier = Modifier
-                                .fillParentMaxWidth(0.78f)
-                                .aspectRatio(1.5f)
-                                .clip(RoundedCornerShape(20.dp))
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp)
+                                .aspectRatio(1.72f)
+                                .clip(RoundedCornerShape(MediaBoxRadius.Container))
                                 .background(MaterialTheme.colorScheme.surfaceBright),
                             contentAlignment = Alignment.Center,
                         ) {
@@ -574,38 +570,39 @@ private fun PartitionSection(
     onRetry: (() -> Unit)? = null,
     cardWidth: Dp = 110.dp,
 ) {
-    Column(modifier = Modifier.padding(vertical = 12.dp)) {
+    Column(modifier = Modifier.padding(vertical = 10.dp)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 20.dp, end = 12.dp, bottom = 10.dp),
+                .padding(start = 16.dp, end = 16.dp, bottom = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 text = title,
-                style = MaterialTheme.typography.titleLarge,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.weight(1f),
             )
             if (onOpenAll != null) {
+                // "全部 ›" 只做文字,不再包一层半透明胶囊 —— 区块标题右侧不该出现第二个按钮形态
                 Row(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.7f))
+                        .clip(RoundedCornerShape(MediaBoxRadius.Pill))
                         .clickable(onClick = onOpenAll)
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                        .padding(start = 8.dp, top = 4.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
                         text = stringResource(R.string.common_all),
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Icon(
                         imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp),
+                        modifier = Modifier.size(16.dp),
                     )
                 }
             }
@@ -624,9 +621,8 @@ private fun PartitionSection(
                         SkeletonBox(
                             modifier = Modifier
                                 .weight(1f)
-                                .aspectRatio(2f / 3f)
-                                .clip(RoundedCornerShape(16.dp)),
-                            shape = RoundedCornerShape(16.dp),
+                                .aspectRatio(2f / 3f),
+                            shape = RoundedCornerShape(MediaBoxRadius.Small),
                         )
                     }
                 }
@@ -659,8 +655,8 @@ private fun PartitionSection(
             }
 
             HomeViewModel.PartitionState.Ready -> LazyRow(
-                contentPadding = PaddingValues(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 itemsIndexed(videos) { index, video ->
                     com.github.tvbox.osc.ui.components.VodCard(

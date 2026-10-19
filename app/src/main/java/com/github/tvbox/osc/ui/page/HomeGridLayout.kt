@@ -65,6 +65,7 @@ import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.bean.MovieSort
 import com.github.tvbox.osc.ui.WindowSize
 import com.github.tvbox.osc.ui.components.FilterSheet
+import com.github.tvbox.osc.ui.components.HeroCarousel
 import com.github.tvbox.osc.ui.components.ShimmerHost
 import com.github.tvbox.osc.ui.components.SkeletonBox
 import com.github.tvbox.osc.ui.components.VodCard
@@ -125,6 +126,7 @@ fun HomeGridLayout(
 ) {
     val sorts by vm.sorts.collectAsStateWithLifecycle()
     val partitions by vm.partitions.collectAsStateWithLifecycle()
+    val rec by vm.rec.collectAsStateWithLifecycle()
     val sourceKey by vm.currentSource.collectAsStateWithLifecycle()
     val sortLoadFailed by vm.sortLoadFailed.collectAsStateWithLifecycle()
     // 首页每行图片列数(设置页"首页布局"可切 2/3):作为列数下限传入,手机档即"每行 2 或 3 列"
@@ -225,6 +227,26 @@ fun HomeGridLayout(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(HomeGridItemSpacing),
             ) {
+                // 头图只挂在**第一个分类**上(通常是「热门/推荐」)。
+                // 每个分类都挂一遍会让用户以为切了页签内容没变 —— 头图是"今天的推荐",
+                // 不是分类内容的一部分。放在网格首项而不是页签上方,是为了让它跟着滚动走:
+                // 固定在顶部的头图会永久吃掉 190dp 首屏高度,列表越往下滑越亏。
+                if (tabId == sorts.firstOrNull()?.id &&
+                    rec.state == HomeViewModel.PartitionState.Ready &&
+                    rec.videos.isNotEmpty()
+                ) {
+                    item(
+                        key = "hero",
+                        span = { GridItemSpan(maxLineSpan) },
+                        contentType = "hero",
+                    ) {
+                        HeroCarousel(
+                            videos = rec.videos.take(5),
+                            onCardClick = onCardClick,
+                            modifier = Modifier.padding(bottom = 4.dp),
+                        )
+                    }
+                }
                 if (tabSort != null && tabSort.filters.isNotEmpty()) {
                     item(
                         key = "chips_${tabSort.id}",
@@ -446,12 +468,14 @@ private fun HomeSortTabRow(
             edgePadding = 16.dp,
             divider = {},
             indicator = {
+                // 胶囊指示器:整块填成品牌色,替代原来那条 3dp 下划线。
+                // 下划线在中文短标签下只有 2~3 个字宽,视觉上像"多了一条横线";
+                // 胶囊把"当前分类"变成一个实心块,余光可辨。
                 Box(
                     modifier = Modifier
                         .tabIndicatorOffset(selectedIndex)
-                        .fillMaxWidth()
-                        .padding(horizontal = HomeTabIndicatorInset)
-                        .height(HomeTabIndicatorHeight)
+                        .height(HomeGridTabRowHeight)
+                        .padding(horizontal = 4.dp, vertical = 8.dp)
                         .clip(CircleShape)
                         .background(MaterialTheme.colorScheme.primary),
                 )
@@ -469,7 +493,7 @@ private fun HomeSortTabRow(
                             overflow = TextOverflow.Ellipsis,
                         )
                     },
-                    selectedContentColor = MaterialTheme.colorScheme.primary,
+                    selectedContentColor = MaterialTheme.colorScheme.onPrimary,
                     unselectedContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
