@@ -10,6 +10,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -187,7 +188,14 @@ internal fun SearchIdleContent(
                         .padding(vertical = 8.dp),
                 )
             } else {
-                Column(modifier = Modifier.padding(top = 8.dp)) {
+                // 热搜榜装进白卡(设计稿 04-B):1px 描边 + 12 圆角,前三名序号主色
+                Column(
+                    modifier = Modifier
+                        .padding(top = 10.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surface)
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)),
+                ) {
                     hotSearch.chunked(2).forEachIndexed { rowIdx, pair ->
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -198,9 +206,8 @@ internal fun SearchIdleContent(
                                 Row(
                                     modifier = Modifier
                                         .weight(1f)
-                                        .clip(RoundedCornerShape(8.dp))
                                         .clickable { onSearch(title) }
-                                        .padding(vertical = 8.dp),
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text(

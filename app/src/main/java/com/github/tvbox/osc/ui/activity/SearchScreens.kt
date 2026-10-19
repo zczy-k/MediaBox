@@ -84,10 +84,11 @@ internal fun HistoryChip(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
+    // 设计稿 04-B:历史词是实底胶囊(surfaceContainer),不是描边框。
+    // 描边框一行塞 4 个就挤,实底胶囊视觉更轻,能塞 5 个。
     Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = Color.Transparent,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        shape = RoundedCornerShape(999.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
     ) {
         Text(
             text = word,
@@ -97,7 +98,7 @@ internal fun HistoryChip(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-                .padding(horizontal = 12.dp, vertical = 6.dp),
+                .padding(horizontal = 14.dp, vertical = 7.dp),
         )
     }
 }
