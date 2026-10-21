@@ -55,6 +55,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -450,12 +452,34 @@ private fun HomeHero(
                 .clip(RoundedCornerShape(radius))
                 .clickable { onClick(video) },
         ) {
+            // ── 方案 B:双层图 ──
+            // 底层:同一张图放大裁切 + 模糊,做氛围背景。
+            // 竖版海报(2:3)填横条(约 3:1),Crop 必然裁掉上下 —— 比例只能缓解不能消除;
+            // 让"被裁的部分"变成故意虚化的背景,前景则完整显示,一个像素都不裁。
+            // blur 在 Android 12 以下静默失效,但底层还有压暗层兜底,不会不可读。
             VodPoster(
                 name = video.name,
                 pic = video.pic,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .blur(20.dp)
+                    .graphicsLayer {
+                        scaleX = 1.18f
+                        scaleY = 1.18f
+                    },
+            )
+            // 中层:整体压暗,让 Fit 后的亮部与背景不突兀
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.28f)),
+            )
+            // 上层:完整海报(Fit),不裁切
+            VodPoster(
+                name = video.name,
+                pic = video.pic,
+                fitContent = true,
                 modifier = Modifier.fillMaxSize(),
-                // 竖版海报填横条:锚在顶部,片名/人脸大概率还在画面里
-                alignment = Alignment.TopCenter,
             )
             Box(
                 modifier = Modifier
