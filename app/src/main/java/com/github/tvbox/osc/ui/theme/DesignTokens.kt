@@ -133,8 +133,14 @@ object Fluid {
      * 只用于矮屏/电视兜底(电视 540 高 → 270,占屏高一半)。
      * 平板 760×500 → 250dp,**宽高比从 5:1 回到 3:1**。
      */
-    fun heroHeight(w: Dp, h: Dp): Dp =
-        min(w.value * 0.44f, h.value * 0.50f).coerceIn(150f, 280f).dp
+    fun heroHeight(w: Dp, h: Dp): Dp {
+        // 纯按宽度算,**不再乘 h**:实测横屏下 maxHeight 远小于屏高(只有约 270dp),
+        // h×0.5 依旧成瓶颈,头图被压回 136dp 的扁条 —— 高度项在这里只会帮倒忙。
+        // 宽屏内容更宽(700dp+),用更扁的比例,否则头图会吃掉半个屏幕;
+        // 窄屏维持 0.46(手机 328dp → 151dp,与原来 166 基本一致)。
+        val ratio = if (w.value >= 600f) 0.33f else 0.46f
+        return (w.value * ratio).coerceIn(150f, 280f).dp
+    }
 
     /** 卡片圆角:与尺寸成比例,小卡用大圆角会"发软" */
     fun cardRadius(cardWidth: Dp): Dp = (cardWidth.value * 0.095f).coerceIn(10f, 16f).dp
