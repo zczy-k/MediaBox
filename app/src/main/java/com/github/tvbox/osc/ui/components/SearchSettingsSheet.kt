@@ -3,6 +3,12 @@ package com.github.tvbox.osc.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -38,26 +44,11 @@ import com.github.tvbox.osc.bean.SourceBean
 import com.github.tvbox.osc.util.HomeSettings
 import com.github.tvbox.osc.util.SearchSettings
 
-private val SourceCardShapeLeft = RoundedCornerShape(
-    topStart = 28.dp,
-    bottomStart = 28.dp,
-    topEnd = 4.dp,
-    bottomEnd = 4.dp,
-)
-
-private val SourceCardShapeRight = RoundedCornerShape(
-    topStart = 4.dp,
-    bottomStart = 4.dp,
-    topEnd = 28.dp,
-    bottomEnd = 28.dp,
-)
-
 @Composable
 /** @param onSelectionChanged 勾选落盘后的通知(调用方自己去刷新搜索结果用的选择缓存) */
 fun SearchSettingsSheet(onDismiss: () -> Unit, onSelectionChanged: () -> Unit) {
     val sources = remember { ApiConfig.get().getSourceBeanList().filter(SourceBean::isSearchable) }
     val allKeys = remember(sources) { sources.map { it.key }.toSet() }
-    val homeLayout by HomeSettings.layoutFlow.collectAsStateWithLifecycle()
     var matchMode by remember { mutableStateOf(SearchSettings.matchMode()) }
     var selected by remember {
         val selection = SearchSettings.currentSelection()
@@ -80,37 +71,11 @@ fun SearchSettingsSheet(onDismiss: () -> Unit, onSelectionChanged: () -> Unit) {
         onDismissRequest = onDismiss,
         title = stringResource(R.string.search_settings),
         containerColor = MaterialTheme.colorScheme.surfaceContainer,
-        headerContent = {
-            Text(
-                text = stringResource(R.string.search_home_poster),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp),
-            )
-            CapsuleSegmentedButton(
-                options = listOf(
-                    SegmentOption(
-                        label = stringResource(R.string.search_layout_horizontal),
-                        value = HomeSettings.HomeLayout.Horizontal,
-                        iconPainter = painterResource(R.drawable.ic_layout_horizontal),
-                    ),
-                    SegmentOption(
-                        label = stringResource(R.string.search_layout_vertical),
-                        value = HomeSettings.HomeLayout.Vertical,
-                        iconPainter = painterResource(R.drawable.ic_layout_vertical),
-                    ),
-                ),
-                selectedValue = homeLayout,
-                onOptionSelected = { HomeSettings.setLayout(it) },
-                style = SegmentStyle.Separated,
-                containerColor = MaterialTheme.colorScheme.surfaceBright,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
-            )
-        },
+        // 固定 85% 高:标题与「全选/反选」常驻,站点列表在下方内部滚动。
+        // 原来整页滚动 —— 滚到第 50 个站点时按钮已经不见了。
+        maxHeightFraction = 0.85f,
     ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
             SettingsGroup(title = null) {
                 SettingsCard(
                     position = SettingsCardPosition.SINGLE,
@@ -167,45 +132,36 @@ fun SearchSettingsSheet(onDismiss: () -> Unit, onSelectionChanged: () -> Unit) {
                     modifier = Modifier.padding(vertical = 12.dp),
                 )
             } else {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 20.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                // 列数按可用宽度算:手机 2 列(每格 ~163dp,名字放得下)、
+                // 折叠屏 3 列、平板 4 列。原来写死 chunked(2),平板上每格拉到 490dp 像坏了。
+                BoxWithConstraints(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(top = 8.dp),
                 ) {
-                    sources.chunked(2).forEach { pair ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(2.dp),
-                        ) {
-                            val left = pair[0]
+                    val cols = when {
+                        maxWidth >= 720.dp -> 4
+                        maxWidth >= 420.dp -> 3
+                        else -> 2
+                    }
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(cols),
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(bottom = 20.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        items(sources, key = { it.key }) { src ->
                             SourceCard(
-                                name = left.name?.takeIf { it.isNotEmpty() } ?: left.key,
-                                selected = left.key in selected,
-                                dotOnLeft = true,
-                                shape = SourceCardShapeLeft,
+                                name = src.name?.takeIf { it.isNotEmpty() } ?: src.key,
+                                selected = src.key in selected,
                                 onClick = {
                                     applySelection(
-                                        if (left.key in selected) selected - left.key else selected + left.key,
+                                        if (src.key in selected) selected - src.key else selected + src.key,
                                     )
                                 },
-                                modifier = Modifier.weight(1f),
                             )
-                            val right = pair.getOrNull(1)
-                            if (right != null) {
-                                SourceCard(
-                                    name = right.name?.takeIf { it.isNotEmpty() } ?: right.key,
-                                    selected = right.key in selected,
-                                    dotOnLeft = false,
-                                    shape = SourceCardShapeRight,
-                                    onClick = {
-                                        applySelection(
-                                            if (right.key in selected) selected - right.key else selected + right.key,
-                                        )
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                )
-                            } else {
-                                Spacer(Modifier.weight(1f))
-                            }
                         }
                     }
                 }
@@ -218,14 +174,13 @@ fun SearchSettingsSheet(onDismiss: () -> Unit, onSelectionChanged: () -> Unit) {
 private fun SourceCard(
     name: String,
     selected: Boolean,
-    dotOnLeft: Boolean,
-    shape: Shape,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(
         onClick = onClick,
-        shape = shape,
+        // 网格里每格独立,不再需要左右拼接的半圆角
+        shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceBright,
         modifier = modifier,
     ) {
@@ -248,7 +203,7 @@ private fun SourceCard(
             if (selected) {
                 Box(
                     modifier = Modifier
-                        .align(if (dotOnLeft) Alignment.CenterStart else Alignment.CenterEnd)
+                        .align(Alignment.CenterEnd)
                         .padding(horizontal = 12.dp)
                         .size(14.dp)
                         .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape),
