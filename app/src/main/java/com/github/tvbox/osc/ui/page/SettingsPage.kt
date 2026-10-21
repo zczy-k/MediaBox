@@ -313,23 +313,14 @@ fun SettingsPage(
                 .padding(start = navStart, bottom = 16.dp + navBottom),
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = (topPad - 8.dp).coerceAtLeast(8.dp), bottom = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                Text(
-                    text = stringResource(R.string.settings_title),
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Text(
-                    text = stringResource(R.string.settings_preference_subtitle),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            // 顶栏已有「设置」大标题:这里只留一句副标题,不再重复一遍标题(截图实测重复)
+            Spacer(Modifier.height((topPad - 8.dp).coerceAtLeast(8.dp)))
+            Text(
+                text = stringResource(R.string.settings_preference_subtitle),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 4.dp),
+            )
 
             SettingsGroup(title = null) {
                 SettingsCard(SettingsCardPosition.FIRST) {
