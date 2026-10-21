@@ -5,7 +5,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -28,6 +27,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.res.painterResource
@@ -136,37 +136,35 @@ fun SearchSettingsSheet(onDismiss: () -> Unit, onSelectionChanged: () -> Unit) {
                     modifier = Modifier.padding(vertical = 12.dp),
                 )
             } else {
-                // 列数按可用宽度算:手机 2 列(每格 ~163dp,名字放得下)、
-                // 折叠屏 3 列、平板 4 列。原来写死 chunked(2),平板上每格拉到 490dp 像坏了。
-                BoxWithConstraints(
+                // 列数按窗口宽算(不再用 BoxWithConstraints:它内部是 SubcomposeLayout,
+                // 在 Column + weight 的组合下会让子项拿到 0 高度)。弹层宽 = min(640dp, 屏宽)。
+                val screenW = LocalConfiguration.current.screenWidthDp
+                val cols = when {
+                    screenW >= 720 -> 4
+                    screenW >= 420 -> 3
+                    else -> 2
+                }
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(cols),
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
                         .padding(top = 8.dp),
+                    contentPadding = PaddingValues(bottom = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
-                    val cols = when {
-                        maxWidth >= 720.dp -> 4
-                        maxWidth >= 420.dp -> 3
-                        else -> 2
-                    }
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(cols),
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(bottom = 20.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        items(sources, key = { it.key }) { src ->
-                            SourceCard(
-                                name = src.name?.takeIf { it.isNotEmpty() } ?: src.key,
-                                selected = src.key in selected,
-                                onClick = {
-                                    applySelection(
-                                        if (src.key in selected) selected - src.key else selected + src.key,
-                                    )
-                                },
-                            )
-                        }
+                    items(sources.size, key = { sources[it].key }) { i ->
+                        val src = sources[i]
+                        SourceCard(
+                            name = src.name?.takeIf { it.isNotEmpty() } ?: src.key,
+                            selected = src.key in selected,
+                            onClick = {
+                                applySelection(
+                                    if (src.key in selected) selected - src.key else selected + src.key,
+                                )
+                            },
+                        )
                     }
                 }
             }
