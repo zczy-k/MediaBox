@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -482,19 +483,22 @@ private fun HomeHero(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = 14.dp, vertical = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                // 海报+信息作为一组**整体居中**:两侧模糊背景均分,
+                // 比左贴边 + 右侧一大片空要平衡(2026-10-21 用户定案)。
+                horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 VodPoster(
                     name = video.name,
                     pic = video.pic,
                     fitContent = true,
+                    // 精确贴合 2:3,不留 Fit 的内边空隙
                     modifier = Modifier
                         .fillMaxHeight()
-                        .weight(0.62f),
+                        .aspectRatio(2f / 3f),
                 )
                 Column(
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.widthIn(max = 230.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     Text(
