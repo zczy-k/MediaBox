@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Box
@@ -157,17 +158,23 @@ fun SearchSettingsSheet(onDismiss: () -> Unit, onSelectionChanged: () -> Unit) {
             } else {
                 // 列数按窗口宽算(不再用 BoxWithConstraints:它内部是 SubcomposeLayout,
                 // 在 Column + weight 的组合下会让子项拿到 0 高度)。弹层宽 = min(640dp, 屏宽)。
-                val screenW = LocalConfiguration.current.screenWidthDp
+                val cfg = LocalConfiguration.current
+                val screenW = cfg.screenWidthDp
                 val cols = when {
                     screenW >= 720 -> 4
                     screenW >= 420 -> 3
                     else -> 2
                 }
+                // 网格高度**算出来**而不是 weight(1f):实测日志显示 Column 只拿到内容高度
+                // (h=399px≈133dp),weight 的剩余空间恒为 0 ⇒ 网格 h=0、一个格子都看不见。
+                // 这里直接按"弹层 85% 屏高 - 头部实测约 180dp"给确定高度,不再依赖父约束。
+                val gridHeight = (cfg.screenHeightDp * 0.85f - 180f).coerceAtLeast(200f).dp
+                LOG.i("echo-searchsheet calc gridH=${gridHeight.value} screenH=${cfg.screenHeightDp}")
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(cols),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f)
+                        .height(gridHeight)
                         .padding(top = 8.dp)
                         .onGloballyPositioned { g ->
                             LOG.i(

@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import com.github.tvbox.osc.util.LOG
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -428,6 +429,8 @@ private fun SheetSurface(
 ) {
     val centered = variant == SheetVariant.CENTER
     val fromEnd = variant == SheetVariant.END
+    // 诊断:fillHeight 到底有没有传到这一层(站点网格 0 高度就是它没生效导致)
+    LOG.i("echo-sheetpanel fill=$fillHeight frac=$maxHeightFraction variant=$variant")
     var panelHeightPx by remember { mutableIntStateOf(0) }
     var panelWidthPx by remember { mutableIntStateOf(0) }
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
