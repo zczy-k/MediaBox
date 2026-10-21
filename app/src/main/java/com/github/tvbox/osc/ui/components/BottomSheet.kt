@@ -524,7 +524,13 @@ private fun SheetSurface(
                     // 贴底弹层:键盘高度留在面板内部,面板底边不动 ⇒ 收起键盘时不会在底部漏出下方页面
                     // (侧滑面板高度贴满屏幕且无输入场景,不吃键盘 inset)
                     Column(
-                        modifier = if (centered || fromEnd) Modifier else Modifier.imePadding(),
+                        modifier = when {
+                            centered || fromEnd -> Modifier
+                            // 固定高度时必须撑满:否则 Column 仍是 wrap 高度,
+                            // 内部列表的 weight(1f) 会拿到 0 高度被压扁(站点网格不显示的根因)
+                            fillHeight -> Modifier.fillMaxSize().imePadding()
+                            else -> Modifier.imePadding()
+                        },
                     ) {
                         // 居中对话框没有把手、也不吃下滑关闭手势(内容要能正常滚/选文字),
                         // 标题由调用方画在内容里(见 MediaBoxAlertDialog)。

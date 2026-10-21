@@ -241,7 +241,9 @@ object SearchSettings {
      * 旧开 → [MatchMode.Exact];旧关(含从未设置)→ [MatchMode.Smart](比旧的"全部"更准,作为新默认)。
      */
     fun matchMode(): MatchMode = when (KV.get(KEY_MATCH_MODE, "")) {
-        VALUE_MODE_ALL -> MatchMode.All
+        // 「全部」(不过滤)已下线(2026-10-21 用户定案):不过滤会把站点按拼音/模糊
+        // 返回的无关内容全收进来(搜「希望」出「绝望主妇」)。老值 all 一律迁移到 Smart。
+        VALUE_MODE_ALL -> MatchMode.Smart
         VALUE_MODE_SMART -> MatchMode.Smart
         VALUE_MODE_EXACT -> MatchMode.Exact
         else -> if (isExactMatchEnabled()) MatchMode.Exact else MatchMode.Smart
@@ -274,7 +276,7 @@ object SearchSettings {
      * 番号的主体是"字母块+数字块",其后的 `-RM/-C/-UC` 是**版本后缀**,不该参与匹配。
      */
     fun matches(name: String?, alias: String?, keyword: String?, mode: MatchMode): Boolean {
-        // "全部"模式不过滤:番号判据也不能拦(那是用户显式要求的"都给我")
+        // 「全部」已从 UI 下线(2026-10-21):分支保留只为兼容枚举值,实际不会再被选中
         if (mode == MatchMode.All) return true
         // 番号查询:**只**走番号语义(2026-10-12)。
         //

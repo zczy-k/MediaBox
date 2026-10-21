@@ -83,18 +83,20 @@ fun SearchSettingsSheet(onDismiss: () -> Unit, onSelectionChanged: () -> Unit) {
                     position = SettingsCardPosition.SINGLE,
                     color = MaterialTheme.colorScheme.surfaceBright,
                 ) {
-                    val modes = SearchSettings.MatchMode.values()
+                    // 「全部」(不过滤)已下线:会把站点按拼音/模糊返回的无关内容全收进来。
+                    // 只留 智能(默认,包含匹配) / 严格(标题或别名完全相等)。
+                    val modes = listOf(SearchSettings.MatchMode.Smart, SearchSettings.MatchMode.Exact)
                     val options = listOf(
-                        stringResource(R.string.search_match_all),
                         stringResource(R.string.search_match_smart),
                         stringResource(R.string.search_match_exact),
                     )
+                    val selectedIdx = modes.indexOf(matchMode).coerceAtLeast(0)
                     SettingsOptionMenuRow(
                         title = stringResource(R.string.search_match_mode),
                         subtitle = stringResource(R.string.search_match_mode_subtitle),
-                        valueText = options.getOrElse(matchMode.ordinal) { options.first() },
+                        valueText = options[selectedIdx],
                         options = options,
-                        selectedIndex = matchMode.ordinal,
+                        selectedIndex = selectedIdx,
                         onSelect = { idx ->
                             val mode = modes.getOrElse(idx) { SearchSettings.MatchMode.Smart }
                             matchMode = mode
