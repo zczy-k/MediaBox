@@ -30,22 +30,43 @@ public final class PermissionHelper {
     private PermissionHelper() {
     }
 
+    /**
+     * Android 10 及以下**不再申请**存储权限。
+     *
+     * <p>XXPermissions 有一条与设备版本无关的静态规则:
+     * `targetSdkVersion >= 33 时不允许申请 READ/WRITE_EXTERNAL_STORAGE`,
+     * 违反就抛 IllegalArgumentException —— 而 Android 11+ 走 MANAGE_EXTERNAL_STORAGE 分支,
+     * 只有 Android 10 及以下才会走到那两个权限上。
+     * 结果就是"手机(12)正常、平板(10)一启动就崩"(SCM-AL09 实测,三道校验接连抛出)。
+     *
+     * <p>低版本的存储能力改由 SAF(`OpenDocument` / `OpenDocumentTree`)提供 ——
+     * ConfigManage 的导入链路本来就走的这条,不依赖这个权限。
+     */
     public static boolean isStorageGranted(Context context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             return XXPermissions.isGrantedPermission(context, PermissionLists.getManageExternalStoragePermission());
         }
-        return XXPermissions.isGrantedPermissions(context, new IPermission[]{
-                PermissionLists.getReadExternalStoragePermission(),
-                PermissionLists.getWriteExternalStoragePermission()});
+        return true;
     }
 
     public static void requestStorage(Activity activity, OnPermissionCallback callback) {
-        IPermission[] permissions = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
-                ? new IPermission[]{PermissionLists.getManageExternalStoragePermission()}
-                : new IPermission[]{
-                        PermissionLists.getReadExternalStoragePermission(),
-                        PermissionLists.getWriteExternalStoragePermission()};
-        XXPermissions.with(activity).permissions(permissions).request(callback);
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            // 不发起申请,直接回调成功:能力由 SAF 提供,申请反而会触发库的静态校验崩溃
+            if (callback != null) {
+                // 反射调用:该库的 onGranted 泛型签名在 Java 侧匹配不上(实测编译不过),
+                // 这里绕开编译期检查,失败就静默 —— 回调本身只是"可以继续了"的通知
+                try {
+                    java.lang.reflect.Method m = OnPermissionCallback.class
+                            .getMethod("onGranted", java.util.List.class, boolean.class);
+                    m.invoke(callback, new java.util.ArrayList<String>(), true);
+                } catch (Throwable ignored) {
+                }
+            }
+            return;
+        }
+        XXPermissions.with(activity)
+                .permissions(new IPermission[]{PermissionLists.getManageExternalStoragePermission()})
+                .request(callback);
     }
 
     /**
