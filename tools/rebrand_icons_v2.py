@@ -90,7 +90,9 @@ ICONS = {
     "ic_layout_vertical": line("M3 5h8v14H3z", "M13 5h8v14h-8z"),
     "ic_music_page": line("M9 18V6l10-2v12", "M6 21a3 3 0 100-6 3 3 0 000 6z", "M16 19a3 3 0 100-6 3 3 0 000 6z"),
     "ic_music_queue": line("M4 7h12M4 12h12M4 17h8", "M18 10v7", "M15 19a3 3 0 100-6 3 3 0 000 6z"),
-    "ic_notification_music": line("M9 18V6l10-2v12", "M6 21a3 3 0 100-6 3 3 0 000 6z", "M16 19a3 3 0 100-6 3 3 0 000 6z"),
+    # ⚠️ 通知栏小图标必须实心单 path:system_server 侧解码,描边式 vector 会返回 null
+    #    ⇒ Bad notification ⇒ 系统直接杀进程(2026-10-21 事故)。此图不做线稿化。
+    "ic_notification_music": solid("M12,3v10.55c-0.59,-0.34 -1.27,-0.55 -2,-0.55 -2.21,0 -4,1.79 -4,4s1.79,4 4,4 4,-1.79 4,-4V7h4V3h-6z"),
     "ic_order_play": line("M4 7h10M4 12h10M4 17h6", "M18 8v9M15 14l3 3 3-3"),
     "ic_play_aac": line("M4 12a8 8 0 0114 5", "M18 17l-4-1 1-4", "M9 9v6M12 11v2"),
     "ic_play_anime4k": line("M3 5h18v14H3z", "M8 9l4 3-4 3z", "M16 9v6"),

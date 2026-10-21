@@ -1,15 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- MediaBox · 设计总案线稿图标(24dp / 2dp 描边 / 圆头) -->
+<!--
+  通知栏小图标：必须是**单 path 实心剪影**。
+  2026-10-21 事故：这个图标被批量重绘成「fill 全透明 + stroke 白色」的线稿后，
+  App 内解码正常，但通知图标是由 system_server 侧解码的，描边式 vector 在那里返回 null
+  ⇒ RemoteServiceException: Bad notification ... Couldn't create icon ⇒ 系统直接杀进程。
+  ⚠️ 以后重绘图标时，凡被 setSmallIcon / widget / 快捷方式使用的，一律保持实心单 path。
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp" android:height="24dp"
     android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round"
-        android:pathData="M9 18V6l10-2v12" />
-    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round"
-        android:pathData="M6 21a3 3 0 100-6 3 3 0 000 6z" />
-    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF"
-        android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round"
-        android:pathData="M16 19a3 3 0 100-6 3 3 0 000 6z" />
+    <path android:fillColor="#FFFFFFFF"
+        android:pathData="M12,3v10.55c-0.59,-0.34 -1.27,-0.55 -2,-0.55 -2.21,0 -4,1.79 -4,4s1.79,4 4,4 4,-1.79 4,-4V7h4V3h-6z" />
 </vector>
