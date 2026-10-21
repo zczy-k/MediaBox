@@ -54,7 +54,7 @@ public class AppDataManager {
                     // Room 3：必须显式指定 SQLiteDriver（不再走 SupportSQLite）
                     .setDriver(new BundledSQLiteDriver())
                     .setJournalMode(RoomDatabase.JournalMode.TRUNCATE)
-                    .addMigrations(AppDataBase.MIGRATION_1_2)
+                    .addMigrations(AppMigrations.ALL)
                     .allowMainThreadQueries()//可以在主线程操作
                     .build();
         return dbInstance;
