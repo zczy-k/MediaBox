@@ -323,57 +323,29 @@ fun SettingsPage(
                 modifier = Modifier.padding(bottom = 4.dp),
             )
 
-            SettingsGroup(title = null) {
+            // 设计稿 05-A / 08-A:三组白卡 —— 内容与播放 / 外观 / 订阅与数据。
+            // 原来三张无标题卡按"实现顺序"堆着,用户找不到东西;按用途归组后每组只回答一个问题。
+            SettingsGroup(title = stringResource(R.string.settings_group_content_play)) {
                 SettingsCard(SettingsCardPosition.FIRST) {
                     SettingsRow(
                         title = stringResource(R.string.settings_config_manage),
                         subtitle = stringResource(R.string.settings_config_manage_subtitle),
-                        iconRes = R.drawable.ic_settings_api,
                         onClick = { ConfigManageActivity.start(context) },
-                    )
-                }
-                SettingsCard(SettingsCardPosition.MIDDLE) {
-                    SettingsRow(
-                        title = stringResource(R.string.settings_theme),
-                        subtitle = stringResource(R.string.settings_theme_subtitle),
-                        iconRes = R.drawable.ic_settings_theme,
-                        onClick = { ThemeSettingsActivity.start(context) },
                     )
                 }
                 SettingsCard(SettingsCardPosition.MIDDLE) {
                     SettingsRow(
                         title = stringResource(R.string.settings_play),
                         subtitle = stringResource(R.string.settings_play_subtitle),
-                        iconRes = R.drawable.ic_settings_play,
                         onClick = { PlaySettingsActivity.start(context) },
                     )
                 }
-                SettingsCard(SettingsCardPosition.MIDDLE) {
-                    SettingsRow(
-                        title = stringResource(R.string.settings_preference_title),
-                        subtitle = stringResource(R.string.settings_preference_subtitle),
-                        iconRes = R.drawable.ic_settings_preference,
-                        onClick = { PreferenceSettingsActivity.start(context) },
-                    )
-                }
-                // 搜索设置:2026-10-21 从首页三点菜单搬来 —— 低频配置归设置页,首页不再挂三点
                 SettingsCard(SettingsCardPosition.LAST) {
-                    SettingsRow(
-                        title = stringResource(R.string.search_settings),
-                        subtitle = stringResource(R.string.settings_search_subtitle),
-                        onClick = { SearchSettingsActivity.start(context) },
-                    )
-                }
-            }
-
-            SettingsGroup(title = null) {
-                SettingsCard(SettingsCardPosition.FIRST) {
                     // 一个意图只留一把开关:"我不看直播"同时决定默认落在哪一页和导航栏留不留直播,
                     // 拆成两行就会出现"默认点播 + 导航栏隐藏直播 + 上一版残留的直播状态"这种自相矛盾的组合。
                     SettingsOptionMenuRow(
                         title = stringResource(R.string.settings_default_page),
                         subtitle = stringResource(R.string.settings_default_page_subtitle),
-                        iconRes = R.drawable.ic_settings_start,
                         valueText = stringResource(startupPageLabel(state.defaultLoadLive, state.navLiveHidden)),
                         options = listOf(
                             stringResource(R.string.common_vod),
@@ -389,11 +361,38 @@ fun SettingsPage(
                         },
                     )
                 }
-                SettingsCard(SettingsCardPosition.LAST) {
+            }
+
+            SettingsGroup(title = stringResource(R.string.settings_group_appearance)) {
+                SettingsCard(SettingsCardPosition.SINGLE) {
+                    SettingsRow(
+                        title = stringResource(R.string.settings_theme),
+                        subtitle = stringResource(R.string.settings_theme_subtitle),
+                        onClick = { ThemeSettingsActivity.start(context) },
+                    )
+                }
+            }
+
+            SettingsGroup(title = stringResource(R.string.settings_group_data)) {
+                SettingsCard(SettingsCardPosition.FIRST) {
+                    SettingsRow(
+                        title = stringResource(R.string.settings_preference_title),
+                        subtitle = stringResource(R.string.settings_preference_subtitle),
+                        onClick = { PreferenceSettingsActivity.start(context) },
+                    )
+                }
+                // 搜索设置:2026-10-21 从首页三点菜单搬来 —— 低频配置归设置页,首页不再挂三点
+                SettingsCard(SettingsCardPosition.MIDDLE) {
+                    SettingsRow(
+                        title = stringResource(R.string.search_settings),
+                        subtitle = stringResource(R.string.settings_search_subtitle),
+                        onClick = { SearchSettingsActivity.start(context) },
+                    )
+                }
+                SettingsCard(SettingsCardPosition.MIDDLE) {
                     SettingsRow(
                         title = stringResource(R.string.settings_repair_tools),
                         subtitle = stringResource(R.string.settings_repair_tools_subtitle),
-                        iconRes = R.drawable.ic_delete,
                         valueText = state.cacheSizeText,
                         onClick = {
                             vm.clearCache {
@@ -402,14 +401,10 @@ fun SettingsPage(
                         },
                     )
                 }
-            }
-
-            SettingsGroup(title = null) {
-                SettingsCard(SettingsCardPosition.FIRST) {
+                SettingsCard(SettingsCardPosition.MIDDLE) {
                     SettingsRow(
                         title = stringResource(R.string.settings_about),
                         subtitle = stringResource(R.string.settings_about_subtitle),
-                        iconRes = R.drawable.ic_settings_about,
                         onClick = { aboutSheet = true },
                     )
                 }
@@ -417,7 +412,6 @@ fun SettingsPage(
                     SettingsRow(
                         title = stringResource(R.string.settings_check_update),
                         subtitle = stringResource(R.string.settings_check_update_subtitle),
-                        iconRes = R.drawable.ic_switch_repo,
                         valueText = versionName,
                         onClick = startUpdateCheck,
                     )

@@ -5,6 +5,9 @@ package com.github.tvbox.osc.ui.activity
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import com.github.tvbox.osc.util.LOG
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
@@ -414,6 +417,8 @@ private fun ChannelInfoSection(activity: LivePlayActivity) {
 @Composable
 private fun ChannelListSection(activity: LivePlayActivity, modifier: Modifier) {
     val listState = rememberLazyListState()
+    // 分组筛选:null = 全部。声明必须在下面 LaunchedEffect 之前(它在滚定逻辑里被读)
+    var groupFilter by remember { mutableStateOf<Int?>(null) }
     LaunchedEffect(activity.scrollTick, activity.channelVersion) {
         val rows = activity.buildChannelRows()
         var target = -1
@@ -427,15 +432,60 @@ private fun ChannelListSection(activity: LivePlayActivity, modifier: Modifier) {
                 break
             }
         }
-        if (target > 0) listState.animateScrollToItem(max(0, target - 2))
+        // 有筛选时索引与 allRows 不对应,跳过自动定位(筛选是用户主动操作,不需要滚到当前频道)
+        if (target > 0 && groupFilter == null) listState.animateScrollToItem(max(0, target - 2))
     }
-    val rows = activity.buildChannelRows()
+    val allRows = activity.buildChannelRows()
+    // 分组筛选胶囊(设计稿 04:全部/按分组):36 个频道分 4 组时,逐个展开找台太慢。
+    // 筛选只改"显示哪些行",不动折叠状态与选中状态 —— 组头仍可点开合。
+    val groups = remember(allRows) {
+        allRows.mapNotNull { it.group }.distinctBy { it.groupIndex }
+    }
+    val rows = if (groupFilter == null) {
+        allRows
+    } else {
+        allRows.filter { it.group?.groupIndex == groupFilter }
+    }
+    LaunchedEffect(groupFilter) {
+        LOG.i("echo-live-filter filter=${groupFilter ?: "all"} groups=${groups.size} rows=${rows.size}")
+    }
     val navBarInset = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxWidth(),
         contentPadding = PaddingValues(bottom = navBarInset + 24.dp),
     ) {
+        if (groups.size > 1) {
+            item(key = "groupFilter") {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    val all = listOf<Pair<Int?, String>>(null to stringResource(R.string.live_filter_all)) +
+                        groups.map { it.groupIndex to (it.groupName ?: "") }
+                    all.forEach { (idx, label) ->
+                        val on = groupFilter == idx
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (on) MaterialTheme.colorScheme.onPrimary
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(
+                                    if (on) MaterialTheme.colorScheme.primary
+                                    else MaterialTheme.colorScheme.surfaceContainer
+                                )
+                                .clickable { groupFilter = idx }
+                                .padding(horizontal = 14.dp, vertical = 7.dp),
+                        )
+                    }
+                }
+            }
+        }
         itemsIndexed(rows, key = { _, row -> row.key }) { _, row ->
             val channel = row.channel
             if (channel == null) {

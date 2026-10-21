@@ -161,8 +161,9 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
         },
         navigationIcon = {
             Box(
+                // 设计稿 01-A:34dp 圆底 + 20dp 线稿箭头(原 38dp 无底圆,浅底上几乎看不见)
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(34.dp)
                     .clip(CircleShape)
                     .background(MaterialTheme.colorScheme.surfaceContainer)
                     .clickable { activity?.finish() },
@@ -172,7 +173,7 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
                     painter = painterResource(R.drawable.ic_arrow_left),
                     contentDescription = stringResource(R.string.common_back),
                     tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(22.dp),
+                    modifier = Modifier.size(20.dp),
                 )
             }
         },

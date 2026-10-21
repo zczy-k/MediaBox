@@ -43,6 +43,7 @@
     <string name="live_epg_of">节目单 · %1$s</string>
     <string name="live_epg_empty">暂无节目单</string>
     <string name="live_settings">直播设置</string>
+    <string name="live_filter_all">全部</string>
     <string name="live_need_password">需密码</string>
     <string name="live_replaying">回看中</string>
     <string name="live_on_air">直播中</string>
@@ -540,6 +541,9 @@
     <string name="settings_title">设置</string>
     <string name="settings_config_manage">配置管理</string>
     <string name="settings_config_manage_subtitle">导入或删除订阅源</string>
+    <string name="settings_group_content_play">内容与播放</string>
+    <string name="settings_group_appearance">外观</string>
+    <string name="settings_group_data">订阅与数据</string>
     <string name="settings_theme">主题设置</string>
     <string name="settings_theme_subtitle">主题模式与首页布局</string>
     <string name="settings_play">播放设置</string>
