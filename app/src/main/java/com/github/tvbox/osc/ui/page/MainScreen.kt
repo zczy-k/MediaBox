@@ -36,6 +36,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
@@ -471,6 +472,16 @@ private fun MainContent() {
                         .windowInsetsPadding(WindowInsets.systemBars),
                     containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                 ) {
+                    // ⚠️ 必须显式指定选中色:色板里 secondaryContainer(#F4EFED) 与
+                    // NavigationRail 容器/页面背景(#F7F2F0) 只差 3 个色阶 —— 默认的选中指示器
+                    // 画了等于没画,平板上表现为"点了导航栏毫无状态变化"(2026-10-21 实测)。
+                    val railColors = NavigationRailItemDefaults.colors(
+                        selectedIconColor = MaterialTheme.colorScheme.primary,
+                        selectedTextColor = MaterialTheme.colorScheme.primary,
+                        indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     AppTab.entries.forEachIndexed { index, tab ->
                         if (!navLiveHidden && index == NavMetrics.actionSlotFor(AppTab.entries.size)) {
                             NavigationRailItem(
@@ -480,9 +491,11 @@ private fun MainContent() {
                                     Icon(
                                         painterResource(liveActionItem.iconRes),
                                         contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
                                     )
                                 },
                                 label = { Text(liveActionItem.label) },
+                                colors = railColors,
                             )
                         }
                         NavigationRailItem(
@@ -495,6 +508,7 @@ private fun MainContent() {
                                 )
                             },
                             label = { Text(stringResource(tab.labelRes)) },
+                            colors = railColors,
                         )
                     }
                 }
