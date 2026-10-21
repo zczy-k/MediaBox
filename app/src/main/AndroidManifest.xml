@@ -11,8 +11,15 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <!-- 旧存储权限在 Android 13+ 对 targetSdk>=33 的应用会被系统忽略,故限制到 12 及以下 -->
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <!--
+      ⚠️ 不能带 android:maxSdkVersion:XXPermissions 在 Android 10 上会校验 Manifest 声明,
+      发现 maxSdkVersion 就抛 IllegalArgumentException("please delete the android:maxSdkVersion")
+      ⇒ MainActivity 启动即崩(2026-10-21 平板 SCM-AL09 / Android 10 实测)。
+      手机 Android 12 走不到这条校验路径,所以只在平板上暴露。
+      Android 13+ 上这两个权限本就失效,声明保留只是为了让旧系统能申请。
+    -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <!-- Android 13+ 媒体权限 -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
