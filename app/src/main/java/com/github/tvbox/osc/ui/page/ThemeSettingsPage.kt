@@ -74,7 +74,7 @@ fun ThemeSettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = view
         ) {
             Spacer(Modifier.height(topPad - 20.dp))
 
-            SettingsGroup(title = stringResource(R.string.theme_color)) {
+            SettingsGroup(title = stringResource(R.string.theme_mode)) {
                 SettingsCard(SettingsCardPosition.SINGLE) {
                     Column(
                         modifier = Modifier
