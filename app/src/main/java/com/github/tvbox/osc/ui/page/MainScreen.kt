@@ -9,6 +9,8 @@ import androidx.activity.compose.BackHandler
 import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.ui.draw.clip
@@ -484,15 +486,26 @@ private fun MainContent() {
                     )
                     AppTab.entries.forEachIndexed { index, tab ->
                         if (!navLiveHidden && index == NavMetrics.actionSlotFor(AppTab.entries.size)) {
+                            // 直播是"动作"不是页签:用**描边圆**表示可点,
+                            // 实心主色圆留给"选中"语义 —— 原来它用实心圆,比页签的选中胶囊
+                            // 还抢眼,用户会误以为当前停在直播页(2026-10-21 真机反馈)。
                             NavigationRailItem(
                                 selected = false,
                                 onClick = openLive,
                                 icon = {
-                                    Icon(
-                                        painterResource(liveActionItem.iconRes),
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .size(28.dp)
+                                            .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Icon(
+                                            painter = painterResource(liveActionItem.iconRes),
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(16.dp),
+                                        )
+                                    }
                                 },
                                 label = { Text(liveActionItem.label) },
                                 colors = railColors,

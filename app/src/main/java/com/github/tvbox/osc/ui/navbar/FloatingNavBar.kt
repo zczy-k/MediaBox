@@ -6,6 +6,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -621,17 +622,20 @@ private fun NavTabItem(
                 ),
             contentAlignment = Alignment.Center,
         ) {
+            // 与侧栏保持一致:动作项用**描边圆 + 主色图标**,实心主色留给"选中"语义。
+            // 原来这里是实心主色圆 + 白图标,比页签的选中胶囊还抢眼,
+            // 用户会误以为当前停在直播页(2026-10-21 平板真机反馈,手机同改保持一致)。
             Box(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary),
+                    .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     painter = painterResource(tab.iconRes),
                     contentDescription = tab.label,
-                    tint = MaterialTheme.colorScheme.onPrimary,
+                    tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(20.dp),
                 )
             }
