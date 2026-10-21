@@ -458,13 +458,14 @@ private fun HomeHero(
             // 底层:同一张图放大裁切 + 模糊,做氛围背景。
             // 竖版海报(2:3)填横条(约 3:1),Crop 必然裁掉上下 —— 比例只能缓解不能消除;
             // 让"被裁的部分"变成故意虚化的背景,前景则完整显示,一个像素都不裁。
-            // blur 在 Android 12 以下静默失效,但底层还有压暗层兜底,不会不可读。
+            // ⚠️ 不加 blur:Android 12+ 上真模糊会把背景糊成一团颜色,
+            // 反而失去"放大图"的轮廓感(平板 Android 10 不支持 blur,恰好呈现清晰放大图,
+            // 用户对比两台设备后明确更喜欢后者)。压暗层保证文字可读。
             VodPoster(
                 name = video.name,
                 pic = video.pic,
                 modifier = Modifier
                     .fillMaxSize()
-                    .blur(20.dp)
                     .graphicsLayer {
                         scaleX = 1.18f
                         scaleY = 1.18f
