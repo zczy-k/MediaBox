@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -49,7 +50,6 @@ import com.github.tvbox.osc.ui.components.AppTopBarScaffold
 import com.github.tvbox.osc.ui.components.LoadState
 import com.github.tvbox.osc.ui.components.LoadStateBox
 import com.github.tvbox.osc.ui.components.SearchField
-import com.github.tvbox.osc.ui.components.SearchSettingsSheet
 import com.github.tvbox.osc.ui.components.VodCardMenu
 import com.github.tvbox.osc.ui.components.glassTopBarSurface
 import com.github.tvbox.osc.ui.components.rememberVodCardMenuState
@@ -86,9 +86,16 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
     val matchMode by vm.matchMode.collectAsStateWithLifecycle()
     val sitesEmpty by vm.sitesEmpty.collectAsStateWithLifecycle()
     val vodMenu = rememberVodCardMenuState()
-    var resultLayout by remember { mutableStateOf(SearchSettings.resultLayout()) }
+    // 搜索结果布局按屏宽自动(2026-10-21):竖排(左站点栏+右列表)是宽屏形态,
+    // 手机上左栏吃掉 100dp、右侧结果挤成一团 ⇒ 窄屏用横排(按源分区)。
+    // 手动开关已删,三点菜单随之移除。
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val resultLayout = if (screenWidthDp >= 600) {
+        SearchSettings.SearchLayout.Vertical
+    } else {
+        SearchSettings.SearchLayout.Horizontal
+    }
     // 搜索设置弹层:footer 的"勾选范围"提示行可直达(2026-10-09),改完自动按新范围重搜
-    var showSearchSettings by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         if (SearchViewModel.isCheckedSourcesStale()) {
@@ -149,15 +156,7 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(start = 4.dp),
-                trailing = {
-                    LayoutSwitchAction(
-                        selected = resultLayout,
-                        onSelect = {
-                            resultLayout = it
-                            SearchSettings.setResultLayout(it)
-                        },
-                    )
-                },
+
             )
         },
         navigationIcon = {
@@ -216,7 +215,7 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
                 pinyinNotice = pinyinNotice,
                 onLoadMore = { vm.loadNextBatch() },
                 onSearchAll = { vm.searchAllRemaining() },
-                onOpenSourceSettings = { showSearchSettings = true },
+                onOpenSourceSettings = { SearchSettingsActivity.start(context) },
                 // 点开影片即暂停自动续批:把线程与爬虫让给详情取数,别让剩余上百个源继续抢
                 onCardClick = {
                     vm.pauseBatching()
@@ -236,18 +235,6 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
                 onCardLongClick = { vodMenu.show(it) },
             )
         }
-    }
-
-    if (showSearchSettings) {
-        SearchSettingsSheet(
-            onDismiss = { showSearchSettings = false },
-            onSelectionChanged = {
-                // 与 HomePage 同口径刷新选择缓存;搜索页额外按新范围立即重搜当前关键词
-                SearchViewModel.loadCheckedSources()
-                selectedSource = null
-                submit(query)
-            },
-        )
     }
 
     val menuContext = LocalContext.current

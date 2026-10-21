@@ -76,7 +76,6 @@ import com.github.tvbox.osc.ui.components.FilterSheet
 import com.github.tvbox.osc.ui.components.LocalSheetDismiss
 import com.github.tvbox.osc.ui.components.MediaBoxBottomSheet
 import com.github.tvbox.osc.ui.components.SearchField
-import com.github.tvbox.osc.ui.components.SearchSettingsSheet
 import com.github.tvbox.osc.ui.components.SettingsCard
 import com.github.tvbox.osc.ui.components.SettingsCardPosition
 import com.github.tvbox.osc.ui.components.SettingsGroup
@@ -130,7 +129,6 @@ fun HomeFeedScreen(vm: HomeViewModel, contentPadding: PaddingValues = PaddingVal
     var selectedSortId by remember { mutableStateOf("") }
     var filterOpen by remember { mutableStateOf(false) }
     var showSourceSheet by remember { mutableStateOf(false) }
-    var showSearchSettings by remember { mutableStateOf(false) }
 
     LaunchedEffect(sorts) {
         val kept = selectedSortId.isNotEmpty() && sorts.any { it.id == selectedSortId }
@@ -182,7 +180,6 @@ fun HomeFeedScreen(vm: HomeViewModel, contentPadding: PaddingValues = PaddingVal
                 onSearchClick = {
                     context.startActivity(Intent(context, SearchActivity::class.java))
                 },
-                onMoreClick = { showSearchSettings = true },
             )
 
             when {
@@ -357,13 +354,6 @@ fun HomeFeedScreen(vm: HomeViewModel, contentPadding: PaddingValues = PaddingVal
         )
     }
 
-    if (showSearchSettings) {
-        SearchSettingsSheet(
-            onDismiss = { showSearchSettings = false },
-            onSelectionChanged = { SearchViewModel.loadCheckedSources() },
-        )
-    }
-
     val menuContext = LocalContext.current
     VodCardMenu(vodMenu) { menuContext.jumpToSearch(it) }
 }
@@ -375,7 +365,6 @@ private fun HomeSearchBar(
     sourceLabel: String,
     onSourceClick: () -> Unit,
     onSearchClick: () -> Unit,
-    onMoreClick: () -> Unit,
 ) {
     Row(
         modifier = Modifier
@@ -429,22 +418,6 @@ private fun HomeSearchBar(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Spacer(Modifier.width(8.dp))
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surfaceContainer)
-                .clickable(onClick = onMoreClick),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                painter = painterResource(R.drawable.ic_more_vert),
-                contentDescription = stringResource(R.string.search_settings),
-                tint = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.size(20.dp),
             )
         }
     }

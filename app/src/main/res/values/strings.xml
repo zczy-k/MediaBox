@@ -147,6 +147,7 @@
 
     <!-- 搜索 -->
     <string name="search_settings">搜索设置</string>
+    <string name="settings_search_subtitle">结果匹配严格度、参与搜索的站点</string>
     <string name="search_no_site">未选择搜索站点，请到首页「搜索设置」里勾选</string>
     <string name="search_history">搜索历史</string>
     <string name="search_history_clear">清空搜索历史</string>

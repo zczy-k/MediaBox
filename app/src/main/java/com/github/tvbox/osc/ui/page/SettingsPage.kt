@@ -53,6 +53,7 @@ import com.github.tvbox.osc.ui.components.SettingsRow
 import com.github.tvbox.osc.ui.activity.ConfigManageActivity
 import com.github.tvbox.osc.ui.activity.PlaySettingsActivity
 import com.github.tvbox.osc.ui.activity.PreferenceSettingsActivity
+import com.github.tvbox.osc.ui.activity.SearchSettingsActivity
 import com.github.tvbox.osc.ui.activity.ThemeSettingsActivity
 import com.github.tvbox.osc.util.DefaultConfig
 import com.github.tvbox.osc.util.FileUtils
@@ -347,12 +348,20 @@ fun SettingsPage(
                         onClick = { PlaySettingsActivity.start(context) },
                     )
                 }
-                SettingsCard(SettingsCardPosition.LAST) {
+                SettingsCard(SettingsCardPosition.MIDDLE) {
                     SettingsRow(
                         title = stringResource(R.string.settings_preference_title),
                         subtitle = stringResource(R.string.settings_preference_subtitle),
                         iconRes = R.drawable.ic_settings_preference,
                         onClick = { PreferenceSettingsActivity.start(context) },
+                    )
+                }
+                // 搜索设置:2026-10-21 从首页三点菜单搬来 —— 低频配置归设置页,首页不再挂三点
+                SettingsCard(SettingsCardPosition.LAST) {
+                    SettingsRow(
+                        title = stringResource(R.string.search_settings),
+                        subtitle = stringResource(R.string.settings_search_subtitle),
+                        onClick = { SearchSettingsActivity.start(context) },
                     )
                 }
             }
