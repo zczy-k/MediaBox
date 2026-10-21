@@ -1,6 +1,12 @@
 package com.github.tvbox.osc.ui.page
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.ui.res.painterResource
+import androidx.compose.material3.Icon
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -56,6 +62,7 @@ internal fun HistoryRow(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    onMoreClick: (() -> Unit)? = null,
 ) {
     var progressEntered by rememberSaveable { mutableStateOf(false) }
     Surface(
@@ -63,115 +70,131 @@ internal fun HistoryRow(
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.cardContainer,
     ) {
-        Row(
-            modifier = Modifier
-                .clip(RoundedCornerShape(12.dp))
-                .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-                .padding(10.dp)
-                .height(IntrinsicSize.Min),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
+        Column {
+            Row(
                 modifier = Modifier
-                    .width(82.dp)
-                    .aspectRatio(2f / 3f),
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
+                    .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+                    .height(64.dp)
+                    .padding(horizontal = 10.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                VodPoster(
-                    name = item.name,
-                    pic = item.pic,
+                // 设计稿 02-A:缩略图 88×50 横版(原 82dp 竖版海报 + 大卡片,行高失控)
+                Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .clip(RoundedCornerShape(8.dp)),
-                )
-                if (editMode) {
-                    SelectCircle(
-                        selected = selected,
+                        .width(88.dp)
+                        .height(50.dp),
+                ) {
+                    VodPoster(
+                        name = item.name,
+                        pic = item.pic,
                         modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .padding(6.dp),
+                            .fillMaxSize()
+                            .clip(RoundedCornerShape(6.dp)),
                     )
+                    if (editMode) {
+                        SelectCircle(
+                            selected = selected,
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(4.dp),
+                        )
+                    }
                 }
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .padding(vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Spacer(modifier = Modifier.width(10.dp))
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
                     Text(
                         text = item.name ?: "",
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.titleSmall,
                         color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 2,
+                        maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
                     )
-                }
-                Text(
-                    text = if (item.playNote.isNullOrEmpty()) {
+                    val numberedEpisode = item.playNote.isNullOrEmpty() || EpisodeTotals.isNumberedEpisode(item.playNote)
+                    val eps = if (numberedEpisode) {
+                        totalEpisodes ?: parseEpisodeTotal(item.note) ?: parseEpisodeTotal(item.state)
+                    } else {
+                        null
+                    }
+                    val episodeFraction = eps?.let { total ->
+                        (item.playIndex + 1).coerceIn(1, total).toFloat() / total
+                    }
+                    val barProgress = playedPercent?.let { it / 100f } ?: episodeFraction
+                    // 副行:观看位置 + 进度,合成一行(设计稿要求行高压到 64,进度文字不再单独占行)
+                    val where = if (item.playNote.isNullOrEmpty()) {
                         item.note ?: ""
                     } else {
                         stringResource(R.string.history_last_watched, item.playNote)
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    }
+                    val pct = barProgress?.let { (it * 100).roundToInt() }
+                    Text(
+                        text = buildString {
+                            append(where)
+                            if (pct != null && pct > 0) {
+                                if (isNotEmpty()) append(" · ")
+                                append("$pct%")
+                            }
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                // ⋯ 显式入口(设计稿:长按菜单保留,另给可见入口) —— 长按不可发现
+                if (!editMode && onMoreClick != null) {
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .clickable(onClick = onMoreClick),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_more_vert),
+                            contentDescription = stringResource(R.string.common_more),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+            }
+            // 底部 3dp 进度条:贴卡片底边,不占行高(设计稿 02-A)
+            val numberedEpisode2 = item.playNote.isNullOrEmpty() || EpisodeTotals.isNumberedEpisode(item.playNote)
+            val eps2 = if (numberedEpisode2) {
+                totalEpisodes ?: parseEpisodeTotal(item.note) ?: parseEpisodeTotal(item.state)
+            } else {
+                null
+            }
+            val fraction = eps2?.let { total ->
+                (item.playIndex + 1).coerceIn(1, total).toFloat() / total
+            }
+            val bar = playedPercent?.let { it / 100f } ?: fraction
+            if (bar != null && bar > 0f) {
+                val progressAnim = remember { Animatable(if (progressEntered) bar else 0f) }
+                LaunchedEffect(bar) {
+                    val spec = if (progressEntered) {
+                        ProgressIndicatorDefaults.ProgressAnimationSpec
+                    } else {
+                        tween(PROGRESS_ENTER_DURATION_MS)
+                    }
+                    progressEntered = true
+                    progressAnim.animateTo(bar, spec)
+                }
+                LinearProgressIndicator(
+                    progress = { progressAnim.value },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    drawStopIndicator = {},
                 )
-                val numberedEpisode = item.playNote.isNullOrEmpty() || EpisodeTotals.isNumberedEpisode(item.playNote)
-                val eps = if (numberedEpisode) {
-                    totalEpisodes ?: parseEpisodeTotal(item.note) ?: parseEpisodeTotal(item.state)
-                } else {
-                    null
-                }
-                val episodeFraction = eps?.let { total ->
-                    (item.playIndex + 1).coerceIn(1, total).toFloat() / total
-                }
-                val barProgress = playedPercent?.let { it / 100f } ?: episodeFraction
-                if (barProgress != null) {
-                    val barColor = MaterialTheme.colorScheme.primary
-                    val progressAnim = remember {
-                        Animatable(if (progressEntered) barProgress else 0f)
-                    }
-                    LaunchedEffect(barProgress) {
-                        val spec = if (progressEntered) {
-                            ProgressIndicatorDefaults.ProgressAnimationSpec
-                        } else {
-                            tween(PROGRESS_ENTER_DURATION_MS)
-                        }
-                        progressEntered = true
-                        progressAnim.animateTo(barProgress, spec)
-                    }
-                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        LinearProgressIndicator(
-                            progress = { progressAnim.value },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(5.dp),
-                            color = barColor,
-                            trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
-                            drawStopIndicator = {},
-                        )
-                        Text(
-                            text = if (eps != null) {
-                                stringResource(
-                                    R.string.history_episode_progress,
-                                    (item.playIndex + 1).coerceIn(1, eps),
-                                    eps,
-                                )
-                            } else {
-                                stringResource(R.string.history_watched_percent, (barProgress * 100).roundToInt())
-                            },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = barColor,
-                        )
-                    }
-                } else {
-                    Spacer(modifier = Modifier.height(5.dp))
-                }
             }
         }
     }

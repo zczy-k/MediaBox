@@ -443,6 +443,9 @@
     <string name="history_filter_today">今天</string>
     <string name="history_filter_week">本周</string>
     <string name="history_title">历史</string>
+    <string name="history_delete_selected">删除 %1$d 项</string>
+    <string name="history_selected_count">已选 %1$d 项</string>
+    <string name="history_stats_subtitle">共 %1$d 条 · 保留 30 天</string>
     <string name="history_clear">清空历史</string>
     <string name="history_empty">暂无观看历史</string>
     <string name="history_incognito">无痕模式：不显示观看记录</string>

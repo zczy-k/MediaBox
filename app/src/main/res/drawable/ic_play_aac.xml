@@ -1,11 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- MediaBox 图标 · play_aac (tools/rebrand_icons.py) -->
+<!-- MediaBox · 设计总案线稿图标(24dp / 2dp 描边 / 圆头) -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="24dp"
-    android:height="24dp"
-    android:viewportWidth="960"
-    android:viewportHeight="960">
-    <path
-        android:fillColor="@android:color/white"
-        android:pathData="M400,640q-50,0 -85,-35t-35,-85q0,-50 35,-85t85,-35q25,0 46,9v-269l220,-50v295q0,50 -35,85t-85,35q-25,0 -46,-9v89q0,50 -35,85t-85,35ZM620,120h60v240h-60ZM700,180h60v180h-60Z" />
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M4 12a8 8 0 0114 5" />
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M18 17l-4-1 1-4" />
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M9 9v6M12 11v2" />
 </vector>

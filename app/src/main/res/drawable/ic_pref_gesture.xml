@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- MediaBox 图标 · pref_gesture (tools/rebrand_icons.py) -->
+<!-- MediaBox · 设计总案线稿图标(24dp / 2dp 描边 / 圆头) -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="24dp"
-    android:height="24dp"
-    android:viewportWidth="960"
-    android:viewportHeight="960">
-    <path
-        android:fillColor="@android:color/white"
-        android:pathData="M120,120h300v90H210v210h-90ZM540,120h300v300h-90V210H540ZM120,540h90v210h210v90H120ZM750,540h90v300H540v-90h210Z" />
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M9 11V6a2 2 0 014 0v5" />
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M13 11V9a2 2 0 014 0v6a6 6 0 01-6 6h-1a5 5 0 01-5-5v-3a2 2 0 014 0" />
 </vector>

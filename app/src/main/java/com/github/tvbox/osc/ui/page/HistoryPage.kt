@@ -32,6 +32,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ContainedLoadingIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -116,12 +118,21 @@ fun HistoryPage(
     AppTopBarScaffold(
         topBarStartInset = navStart,
         titleContent = {
-            Text(
-                text = stringResource(R.string.history_title),
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
+            Column {
+                Text(
+                    text = stringResource(R.string.history_title),
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                if (items.isNotEmpty()) {
+                    Text(
+                        text = stringResource(R.string.history_stats_subtitle, items.size),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         },
         actions = {
             AnimatedContent(
@@ -137,16 +148,11 @@ fun HistoryPage(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (editing) {
+                        // 删除已移到下方固定操作条;顶栏只留"完成"退出编辑
                         ManageActionIcon(
                             iconRes = R.drawable.ic_check,
                             contentDescription = stringResource(R.string.common_done),
                             onClick = { exitEdit() },
-                        )
-                        ManageActionIcon(
-                            iconRes = R.drawable.ic_delete,
-                            contentDescription = stringResource(R.string.common_delete_selected),
-                            enabled = selected.isNotEmpty(),
-                            onClick = { showDeleteSelectedDialog = true },
                         )
                     } else {
                         if (!incognito && items.isNotEmpty()) {
@@ -287,11 +293,39 @@ fun HistoryPage(
                                         deleteTarget = item
                                     }
                                 },
+                                // ⋯ 显式入口 = 长按同一动作(单条删除确认);长按不可发现,必须有可见入口
+                                onMoreClick = { deleteTarget = item },
                             )
                         }
                     }
                 }
-            }
+                }
+                // 编辑态底部固定操作条(设计稿 02-B):顶栏"编辑/完成"文字改成拇指可达的双按钮
+                if (editMode) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 20.dp + navStart, end = 20.dp, top = 8.dp, bottom = 12.dp + navBottom),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = stringResource(R.string.history_selected_count, selected.size),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                        OutlinedButton(onClick = { exitEdit() }) {
+                            Text(stringResource(R.string.common_cancel))
+                        }
+                        Button(
+                            onClick = { if (selected.isNotEmpty()) showDeleteSelectedDialog = true },
+                            enabled = selected.isNotEmpty(),
+                        ) {
+                            Text(stringResource(R.string.history_delete_selected, selected.size))
+                        }
+                    }
+                }
             }
         }
     }
