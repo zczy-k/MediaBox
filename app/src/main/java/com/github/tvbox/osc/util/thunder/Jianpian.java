@@ -25,6 +25,10 @@ public class Jianpian {
                 if (replace.contains("xgplay://")) {
                     replace = split[0].replace("xgplay://", "ftp://");
                 }
+                // P2P 库不可用(32 位设备/缺 so)⇒ 不接管地址,原链路照常播放
+                if (!P2PClass.available) {
+                    return "";
+                }
                 if (!TextUtils.isEmpty(App.burl)) {
                     App.getp2p().P2Pdoxpause(App.burl.getBytes("GBK"));
                     App.getp2p().P2Pdoxdel(App.burl.getBytes("GBK"));

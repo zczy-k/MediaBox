@@ -73,7 +73,10 @@ android {
         buildConfigField("boolean", "FORCE_UPDATE_ENABLED", forceUpdateEnabled.toString())
         multiDexEnabled = true
         ndk {
-            abiFilters += setOf("arm64-v8a")
+            // 双架构:64 位(新手机/新电视) + 32 位(老电视/机顶盒/老盒子)。
+            // 32 位设备没有 libp2p.so,P2P 加速自动降级(见 P2PClass.available),
+            // 主播放链路走 HTTP 不受影响。
+            abiFilters += setOf("arm64-v8a", "armeabi-v7a")
         }
     }
 

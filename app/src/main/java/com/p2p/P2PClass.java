@@ -30,8 +30,23 @@ public class P2PClass {
         }
     }
 
+    /**
+     * P2P 加速库是否可用。
+     *
+     * <p>原生库只提供 arm64-v8a(见 player/src/main/jniLibs)。32 位设备(部分老电视/机顶盒)
+     * 上没有 libp2p.so —— 不 catch 的话类初始化会抛 ExceptionInInitializerError,
+     * 而那是 Error 不是 Exception,上层 catch(Exception) 接不住,整个进程直接崩。
+     * 这里降级为 available=false:主播放链路走 HTTP,不受影响,只是没有 P2P 加速。
+     */
+    public static boolean available = false;
+
     static {
-        System.loadLibrary("p2p");
+        try {
+            System.loadLibrary("p2p");
+            available = true;
+        } catch (Throwable ignored) {
+            available = false;
+        }
     }
 
     public P2PClass(String str) {

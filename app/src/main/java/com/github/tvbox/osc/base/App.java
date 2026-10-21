@@ -173,6 +173,9 @@ public class App extends Application {
     }
 
     public static P2PClass getp2p() {
+        // 原生库不可用(32 位设备/缺 so):构造函数里的 native 调用会抛 UnsatisfiedLinkError,
+        // 那是 Error 不是 Exception,下面的 catch 接不住 —— 必须在这里先挡住。
+        if (!P2PClass.available) return null;
         try {
             if (p == null) {
                 p = new P2PClass(FileUtils.getExternalCachePath());

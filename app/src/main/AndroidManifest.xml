@@ -2,8 +2,21 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!--
+      设备形态兼容(2026-10-21 兼容性加固):
+      - touchscreen=false:电视/机顶盒没有触摸屏,声明必需会导致**直接装不上**
+      - leanback=false:让 Android TV 桌面能列出本应用(不声明则 TV 启动器不显示)
+      - faketouch=false:遥控器模拟触摸的设备也能装
+      三者都必须是 false —— 否则平板上能装、电视上装不上。
+    -->
     <uses-feature
         android:name="android.hardware.touchscreen"
+        android:required="false" />
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.faketouch"
         android:required="false" />
 
     <uses-permission android:name="android.permission.INTERNET" />
@@ -65,6 +78,7 @@
         android:allowBackup="true"
         android:configChanges="orientation|keyboardHidden|screenSize"
         android:hardwareAccelerated="true"
+        android:largeHeap="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
