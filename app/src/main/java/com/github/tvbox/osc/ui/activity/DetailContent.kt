@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
-import kotlinx.coroutines.launch
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -41,7 +40,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -86,7 +84,6 @@ internal fun DetailContent(
     // 操作条 ⇄ 的行为 = 滚动到搜源卡(不再开弹层):换源是"过程性"内容 —— 搜索跑很久、
     // 候选/评分在变,放在卡片里让用户边看详情边瞟进度;弹层适合"选完就关"的短操作(选集就是)。
     val listState = rememberLazyListState()
-    val scrollScope = rememberCoroutineScope()
 
     LazyColumn(
         state = listState,
@@ -160,12 +157,6 @@ internal fun DetailContent(
                     onPlay = { vm.showEpisodeSheet() },
                     collected = collected,
                     onCollect = { vm.toggleCollect() },
-                    sourceCount = vm.totalCandidateCount(),
-                    onSwitchSource = {
-                        // related 恒在且是最后一个 item ⇒ 搜源卡 = 倒数第二
-                        val target = (listState.layoutInfo.totalItemsCount - 2).coerceAtLeast(0)
-                        scrollScope.launch { listState.animateScrollToItem(target) }
-                    },
                     onCast = { activity.playContainer?.showCast() },
                     onMusic = { activity.openMusicPlayer() },
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
@@ -250,7 +241,7 @@ internal fun DetailContent(
         }
 
         // 「搜源」白卡:换源是过程性内容(搜索跑很久、候选/评分在变),放卡片让用户
-        // 边看详情边瞟进度;操作条 ⇄ 只是滚动锚点(见 listState 注释),不再有第二套入口。
+        // 边看详情边瞟进度。这是换源的**唯一**入口(操作条上的 ⇄ 圆钮已移除)。
         // 候选源用 FlowRow 自动换行(平板一行铺满、手机折行),比原 LazyRow 横滑自适应。
         item(key = "sources") {
             SourceSection(vm, revision)

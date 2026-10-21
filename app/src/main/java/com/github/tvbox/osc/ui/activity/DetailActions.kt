@@ -64,8 +64,6 @@ internal fun DetailActionRow(
     onPlay: () -> Unit,
     collected: Boolean,
     onCollect: () -> Unit,
-    sourceCount: Int,
-    onSwitchSource: () -> Unit,
     onCast: () -> Unit,
     onMusic: () -> Unit,
     modifier: Modifier = Modifier,
@@ -117,19 +115,9 @@ internal fun DetailActionRow(
             withLabel = withLabels,
             onClick = onCollect,
         )
-        ActionItem(
-            // 图标必须是 ⇄(换源语义)。此前误用 ic_detail_quality(实心五角星),
-            // 和旁边的收藏星形图标挤在一起,用户分不清 —— 设计稿(总案 09)本来就是双向箭头。
-            iconRes = R.drawable.ic_detail_switch_source,
-            label = stringResource(R.string.detail_change_source),
-            size = btnSize,
-            withLabel = withLabels,
-            // 有实测候选源时高亮主色:这是"能看到可换"的可见性来源,
-            // 比角标数字更直观(角标只在 >1 时出现,且小)
-            active = sourceCount > 0,
-            badge = sourceCount.takeIf { it > 1 },
-            onClick = onSwitchSource,
-        )
+        // 「换源」圆钮已移除(2026-10-21 用户定案):下方「搜源」卡就在首屏,
+        // 两个 ⇄ 同屏、图标相同、功能同指 —— 圆钮只是个滚动快捷键,多余。
+        // 候选源数/搜索进度本来就在搜源卡的标题行里(「问过 63 个源…」),信息没丢。
         if (slots >= 4) {
             ActionItem(
                 iconRes = R.drawable.ic_detail_cast,
