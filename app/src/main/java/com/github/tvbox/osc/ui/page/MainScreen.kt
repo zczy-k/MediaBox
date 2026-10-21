@@ -486,9 +486,9 @@ private fun MainContent() {
                     )
                     AppTab.entries.forEachIndexed { index, tab ->
                         if (!navLiveHidden && index == NavMetrics.actionSlotFor(AppTab.entries.size)) {
-                            // 直播是"动作"不是页签:用**描边圆**表示可点,
-                            // 实心主色圆留给"选中"语义 —— 原来它用实心圆,比页签的选中胶囊
-                            // 还抢眼,用户会误以为当前停在直播页(2026-10-21 真机反馈)。
+                            // 直播是"动作"不是页签:**圆形轮廓 + 未选中灰**。
+                            // 形状区分"这是个按钮",颜色跟未选中走 —— 导航栏只允许当前页是彩色。
+                            // 试过实心主色圆、主色描边圆,两次都被读成"直播被选中"(2026-10-21 真机)。
                             NavigationRailItem(
                                 selected = false,
                                 onClick = openLive,
@@ -496,13 +496,17 @@ private fun MainContent() {
                                     Box(
                                         modifier = Modifier
                                             .size(28.dp)
-                                            .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape),
+                                            .border(
+                                                1.5.dp,
+                                                MaterialTheme.colorScheme.onSurfaceVariant,
+                                                CircleShape,
+                                            ),
                                         contentAlignment = Alignment.Center,
                                     ) {
                                         Icon(
                                             painter = painterResource(liveActionItem.iconRes),
                                             contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                             modifier = Modifier.size(16.dp),
                                         )
                                     }

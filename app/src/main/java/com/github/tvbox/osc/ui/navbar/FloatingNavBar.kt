@@ -622,20 +622,20 @@ private fun NavTabItem(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            // 与侧栏保持一致:动作项用**描边圆 + 主色图标**,实心主色留给"选中"语义。
-            // 原来这里是实心主色圆 + 白图标,比页签的选中胶囊还抢眼,
-            // 用户会误以为当前停在直播页(2026-10-21 平板真机反馈,手机同改保持一致)。
+            // 动作项 = **圆形轮廓 + 未选中灰**:形状上与页签区分("这是个按钮"),
+            // 颜色上跟着未选中走 —— 导航栏里只允许当前页是彩色的。
+            // 曾试过"实心主色圆"和"主色描边圆",两次都被读成"直播被选中"(2026-10-21 真机)。
             Box(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape),
+                    .border(1.5.dp, MaterialTheme.colorScheme.onSurfaceVariant, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     painter = painterResource(tab.iconRes),
                     contentDescription = tab.label,
-                    tint = MaterialTheme.colorScheme.primary,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp),
                 )
             }
