@@ -22,12 +22,15 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.layout.onGloballyPositioned
+import com.github.tvbox.osc.util.LOG
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.res.painterResource
@@ -61,6 +64,15 @@ fun SearchSettingsSheet(onDismiss: () -> Unit, onSelectionChanged: () -> Unit) {
         )
     }
 
+    // ── 调试日志(echo- 前缀兜底落盘):站点网格"空白"这类问题只能靠运行时尺寸定位 ──
+    val dbgScreenW = LocalConfiguration.current.screenWidthDp
+    LaunchedEffect(Unit) {
+        LOG.i(
+            "echo-searchsheet enter sources=${sources.size} keys=${allKeys.size} " +
+                "sel=${selected.size} screenW=$dbgScreenW",
+        )
+    }
+
     fun applySelection(next: Set<String>) {
         selected = next
         SearchSettings.putSourcesForSearch(next)
@@ -77,7 +89,14 @@ fun SearchSettingsSheet(onDismiss: () -> Unit, onSelectionChanged: () -> Unit) {
         // 必须固定高度:否则 Column 是 wrap 高度,站点网格 weight(1f) 拿到 0 被压扁
         fillHeight = true,
     ) {
-        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp)
+                .onGloballyPositioned { c ->
+                    LOG.i("echo-searchsheet column w=${c.size.width} h=${c.size.height}")
+                },
+        ) {
             SettingsGroup(title = null) {
                 SettingsCard(
                     position = SettingsCardPosition.SINGLE,
@@ -149,12 +168,19 @@ fun SearchSettingsSheet(onDismiss: () -> Unit, onSelectionChanged: () -> Unit) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        .padding(top = 8.dp),
+                        .padding(top = 8.dp)
+                        .onGloballyPositioned { g ->
+                            LOG.i(
+                                "echo-searchsheet grid cols=$cols w=${g.size.width} " +
+                                    "h=${g.size.height} count=${sources.size}",
+                            )
+                        },
                     contentPadding = PaddingValues(bottom = 20.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
                     items(sources.size, key = { sources[it].key }) { i ->
+                        if (i == 0) LOG.i("echo-searchsheet item0 rendered key=${sources[0].key}")
                         val src = sources[i]
                         SourceCard(
                             name = src.name?.takeIf { it.isNotEmpty() } ?: src.key,
