@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -474,13 +475,72 @@ private fun HomeHero(
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.28f)),
             )
-            // 上层:完整海报(Fit),不裁切
-            VodPoster(
-                name = video.name,
-                pic = video.pic,
-                fitContent = true,
-                modifier = Modifier.fillMaxSize(),
-            )
+            // ── 前景:海报靠左撑满高度(Fit 不裁) + 右侧信息列 ──
+            // 竖版海报 Fit 只占头图约 1/3 宽,两侧大片模糊背景很难看(2026-10-21 用户反馈);
+            // 信息移到海报旁边,空间被利用,视觉重心平衡(Netflix / Disney+ 式 hero)。
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                VodPoster(
+                    name = video.name,
+                    pic = video.pic,
+                    fitContent = true,
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .weight(0.62f),
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = video.name ?: "",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    val meta = buildString {
+                        if (video.year > 0) append(video.year)
+                        video.type?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                            if (isNotEmpty()) append(" · ")
+                            append(it)
+                        }
+                        ratingBadgeText(video.note)?.let {
+                            if (isNotEmpty()) append(" · ")
+                            append(it)
+                            append(" 分")
+                        }
+                    }
+                    if (meta.isNotEmpty()) {
+                        Text(
+                            text = meta,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.8f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        repeat(n.coerceAtMost(5)) { i ->
+                            val on = i == current
+                            Box(
+                                modifier = Modifier
+                                    .height(4.dp)
+                                    .width(if (on) 13.dp else 4.dp)
+                                    .clip(CircleShape)
+                                    .background(if (on) Color.White else Color.White.copy(alpha = 0.45f)),
+                            )
+                        }
+                    }
+                }
+            }
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -504,55 +564,6 @@ private fun HomeHero(
                     .background(Color(0xFFFFC0AE))
                     .padding(horizontal = 8.dp, vertical = 3.dp),
             )
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(start = 14.dp, end = 118.dp, bottom = 13.dp),
-            ) {
-                Text(
-                    text = video.name ?: "",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 20.sp,
-                    color = Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                val meta = buildString {
-                    if (video.year > 0) append(video.year)
-                    video.type?.trim()?.takeIf { it.isNotEmpty() }?.let {
-                        if (isNotEmpty()) append(" · ")
-                        append(it)
-                    }
-                    ratingBadgeText(video.note)?.let {
-                        if (isNotEmpty()) append(" · ")
-                        append(it)
-                        append(" 分")
-                    }
-                }
-                if (meta.isNotEmpty()) {
-                    Text(
-                        text = meta,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White.copy(alpha = 0.8f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                Spacer(Modifier.height(7.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    repeat(n.coerceAtMost(5)) { i ->
-                        val on = i == current
-                        Box(
-                            modifier = Modifier
-                                .height(4.dp)
-                                .width(if (on) 13.dp else 4.dp)
-                                .clip(CircleShape)
-                                .background(if (on) Color.White else Color.White.copy(alpha = 0.45f)),
-                        )
-                    }
-                }
-            }
             Text(
                 text = stringResource(R.string.home_hero_play),
                 style = MaterialTheme.typography.labelMedium,

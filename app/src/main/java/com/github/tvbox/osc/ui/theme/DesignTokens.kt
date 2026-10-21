@@ -138,7 +138,7 @@ object Fluid {
         // h×0.5 依旧成瓶颈,头图被压回 136dp 的扁条 —— 高度项在这里只会帮倒忙。
         // 宽屏内容更宽(700dp+),用更扁的比例,否则头图会吃掉半个屏幕;
         // 窄屏维持 0.46(手机 328dp → 151dp,与原来 166 基本一致)。
-        val ratio = if (w.value >= 600f) 0.33f else 0.46f
+        val ratio = if (w.value >= 600f) 0.33f else 0.50f
         return (w.value * ratio).coerceIn(150f, 280f).dp
     }
 
