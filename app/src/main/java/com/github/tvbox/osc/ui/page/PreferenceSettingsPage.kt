@@ -51,8 +51,6 @@ import org.greenrobot.eventbus.EventBus
 fun PreferenceSettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewModel()) {
     val state by vm.state
     val context = LocalContext.current
-    var sliderBuffer by remember(state.bufferTimes) { mutableStateOf(state.bufferTimes) }
-    var sliderThreads by remember(state.searchThreads) { mutableStateOf(state.searchThreads) }
 
     val listState = rememberScrollState()
     AppTopBarScaffold(
@@ -142,18 +140,14 @@ fun PreferenceSettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel =
             Spacer(Modifier.height(24.dp))
 
             SettingsGroup(title = stringResource(R.string.settings_group_play_search)) {
-                SettingsCard(SettingsCardPosition.FIRST) {
-                    SettingsSwitchRow(
-                        title = stringResource(R.string.settings_auto_switch_line),
-                        leadingIconRes = R.drawable.ic_pref_auto_switch_line,
-                        checked = state.autoSwitchLine,
-                        onCheckedChange = { vm.put(HawkConfig.AUTO_SWITCH_LINE, it) },
-                    )
-                }
-                SettingsCard(SettingsCardPosition.MIDDLE) {
+                // 自动换线已移除(2026-10-21):这是"播放失败自动补救",用户无从判断,
+                // 默认就该开。缓冲时间/搜索线程数/DOH 同理 —— 都是我们比用户更清楚该怎么配的项。
+                SettingsCard(
+                    if (state.blockedSourceCount > 0) SettingsCardPosition.FIRST
+                    else SettingsCardPosition.SINGLE
+                ) {
                     SettingsSwitchRow(
                         title = stringResource(R.string.settings_auto_block_bad_sources),
-                        leadingIconRes = R.drawable.ic_pref_auto_switch_line,
                         subtitle = stringResource(R.string.settings_auto_block_bad_sources_subtitle),
                         checked = state.autoBlockBadSources,
                         onCheckedChange = {
@@ -167,7 +161,7 @@ fun PreferenceSettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel =
                 // 只在真有被屏蔽的源时出现:没有就整行隐藏,不留一个"0 个"的噪声入口。
                 // ⚠️ 文案里**绝不能出现源名**(产品红线:用户不该知道 App 有哪些源),所以只给数量。
                 if (state.blockedSourceCount > 0) {
-                    SettingsCard(SettingsCardPosition.MIDDLE) {
+                    SettingsCard(SettingsCardPosition.LAST) {
                         SettingsRow(
                             title = stringResource(R.string.settings_source_blocked_count, state.blockedSourceCount),
                             valueText = stringResource(R.string.settings_source_unblock_all),
@@ -178,54 +172,6 @@ fun PreferenceSettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel =
                             },
                         )
                     }
-                }
-                SettingsCard(SettingsCardPosition.MIDDLE) {
-                    SettingsSliderRow(
-                        title = stringResource(R.string.settings_buffer_time),
-                        leadingIconRes = R.drawable.ic_pref_buffer_time,
-                        value = sliderBuffer.toFloat(),
-                        valueText = "${sliderBuffer}x",
-                        valueRange = 1f..10f,
-                        steps = 8,
-                        onValueChange = { sliderBuffer = (it - 1).roundToInt() + 1 },
-                        onValueChangeFinished = {
-                            if (sliderBuffer != state.bufferTimes) {
-                                vm.put(HawkConfig.BUFFER_TIMES, sliderBuffer)
-                            }
-                        },
-                    )
-                }
-                SettingsCard(SettingsCardPosition.MIDDLE) {
-                    SettingsSliderRow(
-                        title = stringResource(R.string.settings_search_threads),
-                        subtitle = stringResource(R.string.settings_search_threads_subtitle),
-                        leadingIconRes = R.drawable.ic_pref_search_threads,
-                        value = sliderThreads.toFloat(),
-                        valueText = "$sliderThreads",
-                        valueRange = 16f..64f,
-                        steps = 2,
-                        onValueChange = { sliderThreads = ((it - 16) / 16).roundToInt() * 16 + 16 },
-                        onValueChangeFinished = {
-                            if (sliderThreads != state.searchThreads) {
-                                vm.put(HawkConfig.SEARCH_THREADS, sliderThreads)
-                            }
-                        },
-                    )
-                }
-                SettingsCard(SettingsCardPosition.LAST) {
-                    SettingsOptionMenuRow(
-                        title = "DOH",
-                        subtitle = stringResource(R.string.settings_doh_subtitle),
-                        leadingIconRes = R.drawable.ic_settings_doh,
-                        valueText = if (state.dohIndex == 0) stringResource(R.string.common_off)
-                        else OkGoHelper.dnsHttpsList.getOrNull(state.dohIndex)
-                            ?: stringResource(R.string.common_off),
-                        options = OkGoHelper.dnsHttpsList.mapIndexed { index, name ->
-                            if (index == 0) context.getString(R.string.common_off) else name
-                        },
-                        selectedIndex = state.dohIndex,
-                        onSelect = { idx -> vm.put(HawkConfig.DOH_URL, idx) },
-                    )
                 }
             }
 

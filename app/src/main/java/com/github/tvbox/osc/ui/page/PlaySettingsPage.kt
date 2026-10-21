@@ -99,31 +99,6 @@ fun PlaySettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewM
 
             SettingsGroup(title = stringResource(R.string.settings_group_play_picture)) {
                 SettingsCard(SettingsCardPosition.FIRST) {
-                    val playerTypes = PlayerHelper.getExistPlayerTypes().sortedDescending()
-                    SettingsOptionMenuRow(
-                        title = stringResource(R.string.settings_play_kernel),
-                        leadingIconRes = R.drawable.ic_play_kernel,
-                        valueText = PlayerHelper.getPlayerName(state.playType),
-                        options = playerTypes.map { PlayerHelper.getPlayerName(it) },
-                        selectedIndex = playerTypes.indexOf(state.playType).coerceAtLeast(0),
-                        onSelect = { idx -> vm.put(HawkConfig.PLAY_TYPE, playerTypes[idx]) },
-                    )
-                }
-                SettingsCard(SettingsCardPosition.MIDDLE) {
-                    SettingsOptionMenuRow(
-                        title = stringResource(R.string.settings_play_render),
-                        leadingIconRes = R.drawable.ic_play_render,
-                        valueText = PlayerHelper.getRenderName(state.playRender),
-                        options = listOf("SurfaceView", "TextureView"),
-                        selectedIndex = 1 - state.playRender,
-                        onSelect = { idx ->
-                            val render = 1 - idx
-                            if (render == 0 && state.playTunnel) vm.put(HawkConfig.PLAY_TUNNEL, false)
-                            vm.put(HawkConfig.PLAY_RENDER, render)
-                        },
-                    )
-                }
-                SettingsCard(SettingsCardPosition.MIDDLE) {
                     val scales = listOf(
                         VideoView.SCREEN_SCALE_DEFAULT to stringResource(R.string.common_default),
                         VideoView.SCREEN_SCALE_16_9 to "16:9",
@@ -139,28 +114,6 @@ fun PlaySettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = viewM
                         options = scales.map { it.second },
                         selectedIndex = scales.indexOfFirst { it.first == state.playScale },
                         onSelect = { idx -> vm.put(HawkConfig.PLAY_SCALE, scales[idx].first) },
-                    )
-                }
-                SettingsCard(SettingsCardPosition.MIDDLE) {
-                    // 解码方式:软解 = 系统软件解码器 c2.android.*(仅视频渲染器);
-                    // 内核选外部播放器时该设置不生效,行置灰
-                    val codec = state.exoDecode
-                    val decodeLabels = listOf(
-                        stringResource(R.string.player_decode_hard),
-                        stringResource(R.string.player_decode_soft),
-                    )
-                    SettingsOptionMenuRow(
-                        title = stringResource(R.string.settings_play_decode),
-                        leadingIconRes = R.drawable.ic_play_decode,
-                        valueText = when (codec) {
-                            DecodeSoft -> decodeLabels[1]
-                            DecodeHard -> decodeLabels[0]
-                            else -> codec
-                        },
-                        enabled = state.playType == 2,
-                        options = decodeLabels,
-                        selectedIndex = if (codec == DecodeSoft) 1 else 0,
-                        onSelect = { idx -> vm.put(HawkConfig.EXO_DECODE, if (idx == 1) DecodeSoft else DecodeHard) },
                     )
                 }
                 SettingsCard(SettingsCardPosition.MIDDLE) {

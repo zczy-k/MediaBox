@@ -90,31 +90,14 @@ fun ThemeSettingsScreen(onNavigateBack: () -> Unit, vm: SettingsViewModel = view
             }
 
             SettingsGroup(title = stringResource(R.string.settings_group_layout)) {
-                SettingsCard(SettingsCardPosition.FIRST) {
-                    HomeColumnsRow(
-                        columns = state.homeColumns,
-                        onSelect = { columns ->
-                            // setColumns 同时落 KV 并推 columnsFlow(首页栅格立即重组);refreshState 只重读本页状态
-                            HomeSettings.setColumns(columns)
-                            vm.refreshState()
-                        },
-                    )
-                }
-                SettingsCard(SettingsCardPosition.MIDDLE) {
+                // 首页/收藏页列数已移除(2026-10-21):列数现在由 Fluid 按屏宽算,
+                // 手选 2/3 列反而会和自动布局打架。这里只剩「图片比例」一项。
+                SettingsCard(SettingsCardPosition.SINGLE) {
                     HomePosterRatioRow(
                         mode = state.homePosterRatioMode,
                         onSelect = {
                             HomeSettings.setPosterRatioMode(it)
                             vm.refreshState()
-                        },
-                    )
-                }
-                SettingsCard(SettingsCardPosition.LAST) {
-                    CollectColumnsRow(
-                        columns = state.collectColumns,
-                        onSelect = { columns ->
-                            vm.put(HawkConfig.COLLECT_COLUMNS, columns)
-                            EventBus.getDefault().post(RefreshEvent(RefreshEvent.TYPE_COLLECT_LAYOUT_CHANGE))
                         },
                     )
                 }
@@ -147,39 +130,7 @@ private fun HomePosterRatioRow(
     )
 }
 
-@Composable
-private fun HomeColumnsRow(columns: Int, onSelect: (Int) -> Unit) {
-    val options = listOf(
-        stringResource(R.string.settings_home_columns_three),
-        stringResource(R.string.settings_home_columns_two),
-    )
-    val selectedIndex = if (columns == 3) 0 else 1
-    SettingsOptionMenuRow(
-        title = stringResource(R.string.settings_home_columns),
-        leadingIconRes = R.drawable.ic_pref_collect_columns,
-        valueText = options[selectedIndex],
-        options = options,
-        selectedIndex = selectedIndex,
-        onSelect = { idx -> onSelect(if (idx == 0) 3 else 2) },
-    )
-}
 
-@Composable
-private fun CollectColumnsRow(columns: Int, onSelect: (Int) -> Unit) {
-    val options = listOf(
-        stringResource(R.string.settings_collect_columns_three),
-        stringResource(R.string.settings_collect_columns_two),
-    )
-    val selectedIndex = if (columns == 3) 0 else 1
-    SettingsOptionMenuRow(
-        title = stringResource(R.string.settings_collect_columns),
-        leadingIconRes = R.drawable.ic_pref_collect_columns,
-        valueText = options[selectedIndex],
-        options = options,
-        selectedIndex = selectedIndex,
-        onSelect = { idx -> onSelect(if (idx == 0) 3 else 2) },
-    )
-}
 
 @Composable
 private fun ThemeModeRow(currentMode: Int, onModeSelected: (Int) -> Unit) {
