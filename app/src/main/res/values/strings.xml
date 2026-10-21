@@ -538,7 +538,7 @@
     <string name="settings_config_manage">配置管理</string>
     <string name="settings_config_manage_subtitle">导入或删除订阅源</string>
     <string name="settings_theme">主题设置</string>
-    <string name="settings_theme_subtitle">配色、效果与界面布局</string>
+    <string name="settings_theme_subtitle">主题模式与首页布局</string>
     <string name="settings_play">播放设置</string>
     <string name="settings_play_subtitle">内核、画质与缓存</string>
     <string name="settings_preference_subtitle">修改应用的使用偏好</string>

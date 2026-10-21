@@ -96,14 +96,16 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 /**
  * 一级页签。
  *
- * <p>⚠️ 枚举顺序 = pager 页顺序 = 导航槽顺序(直播动作槽插在最左,见 [NavMetrics.actionSlotFor])。
- * 2026-10-19 改版把顺序调成「直播 · 历史 · 首页 · 收藏 · 设置」:
- * 直播(动作槽)占最左,首页因此落在正中 —— 中间是主入口,符合"点播为主"的产品定位。
- * 调整顺序时必须同步改 [pagerState] 的 initialPage,否则冷启动会停在"历史"而不是首页。
+ * <p>⚠️ 枚举顺序 = pager 页顺序 = 导航槽顺序(直播动作槽插在「历史」之后,见 [NavMetrics.actionSlotFor])。
+ * 2026-10-21 定案顺序:「首页 · 历史 · 直播 · 收藏 · 设置」。
+ * 首页占槽位 0 —— TV/大屏导航栏是竖向的,槽位 0 就在最上面。
+ * 调整顺序时必须同步改 [pagerState] 的 initialPage。
  */
 private enum class AppTab(@StringRes val labelRes: Int, @DrawableRes val icon: Int) {
-    HISTORY(R.string.history_title, R.drawable.ic_tab_history),
+    // 2026-10-21 用户定案:首页回到最左 —— TV/大屏的导航栏是竖向的,
+    // 槽位 0 在最上面,首页必须是第一个。直播(动作槽)落在「历史」之后 = 正中。
     HOME(R.string.tab_home, R.drawable.ic_tab_home),
+    HISTORY(R.string.history_title, R.drawable.ic_tab_history),
     COLLECT(R.string.common_collect, R.drawable.ic_tab_collect),
     SETTINGS(R.string.settings_title, R.drawable.ic_tab_settings),
 }

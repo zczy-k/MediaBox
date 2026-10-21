@@ -40,7 +40,7 @@ object NavMetrics {
      * <p>⚠️ 这个值必须与 [MainScreen.AppTab] 的枚举顺序一致:
      * 槽位 0 是动作槽,页面从槽位 1 开始依次排开。
      */
-    fun actionSlotFor(tabCount: Int): Int = 0
+    fun actionSlotFor(tabCount: Int): Int = if (tabCount >= 3) 2 else 0
 
     /** 页面下标 → 槽位下标(动作槽插在中间,它右侧的页面整体右移一格);只用于"定位",不做插值 */
     fun slotIndexOfTab(tab: Int, actionSlot: Int?): Int =
