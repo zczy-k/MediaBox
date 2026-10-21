@@ -81,6 +81,8 @@ internal fun VodPoster(
     modifier: Modifier = Modifier,
     fitContent: Boolean = false,
     onAspectRatio: ((Float) -> Unit)? = null,
+    /** Crop 时的裁切锚点:竖版海报填横条时,居中还顶部差别很大(头图用 TopCenter 保片名) */
+    alignment: Alignment = Alignment.Center,
 ) {
     var showFallback by remember(pic) { mutableStateOf(false) }
     var reportedAspect by remember(pic) { mutableStateOf(false) }
@@ -104,6 +106,7 @@ internal fun VodPoster(
             model = request,
             contentDescription = name,
             contentScale = if (fitContent) ContentScale.Fit else ContentScale.Crop,
+            alignment = alignment,
             onState = { state ->
                 showFallback = state is AsyncImagePainter.State.Error
                 if (!reportedAspect && onAspectRatio != null && state is AsyncImagePainter.State.Success) {

@@ -454,6 +454,8 @@ private fun HomeHero(
                 name = video.name,
                 pic = video.pic,
                 modifier = Modifier.fillMaxSize(),
+                // 竖版海报填横条:锚在顶部,片名/人脸大概率还在画面里
+                alignment = Alignment.TopCenter,
             )
             Box(
                 modifier = Modifier
