@@ -74,6 +74,8 @@ fun SearchSettingsSheet(onDismiss: () -> Unit, onSelectionChanged: () -> Unit) {
         // 固定 85% 高:标题与「全选/反选」常驻,站点列表在下方内部滚动。
         // 原来整页滚动 —— 滚到第 50 个站点时按钮已经不见了。
         maxHeightFraction = 0.85f,
+        // 必须固定高度:否则 Column 是 wrap 高度,站点网格 weight(1f) 拿到 0 被压扁
+        fillHeight = true,
     ) {
         Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
             SettingsGroup(title = null) {

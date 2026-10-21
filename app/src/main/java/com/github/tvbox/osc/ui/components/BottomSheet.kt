@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -67,6 +68,12 @@ fun MediaBoxBottomSheet(
     isScrollable: Boolean = true,
     /** 贴底弹层最大高度占屏比:默认 0.9;内容多的弹层(选集)传小值,给顶部留"下面还有页面"的语境 */
     maxHeightFraction: Float = SheetMaxHeightFraction,
+    /**
+     * 是否把面板高度**固定**为 maxHeightFraction(而非只限制上限)。
+     * 需要"标题常驻 + 内部列表 weight(1f) 滚动"的弹层必须开 ——
+     * 只给 heightIn(max) 时 Column 是 wrap 高度,weight 子项会拿到 0 高度被压扁。
+     */
+    fillHeight: Boolean = false,
     headerContent: (@Composable () -> Unit)? = null,
     /** 从右侧滑出（面板贴右、全高、左两角圆角），横屏全屏下的选集面板用；false = 原贴底形态 */
     slideFromEnd: Boolean = false,
@@ -78,6 +85,7 @@ fun MediaBoxBottomSheet(
     containerColor = containerColor,
     isScrollable = isScrollable,
     maxHeightFraction = maxHeightFraction,
+    fillHeight = fillHeight,
     headerContent = headerContent,
     variant = if (slideFromEnd) SheetVariant.END else SheetVariant.BOTTOM,
     content = content,
@@ -95,6 +103,7 @@ internal fun OverlayRequest(
     containerColor: Color? = null,
     isScrollable: Boolean = true,
     maxHeightFraction: Float = SheetMaxHeightFraction,
+    fillHeight: Boolean = false,
     headerContent: (@Composable () -> Unit)? = null,
     variant: SheetVariant = SheetVariant.BOTTOM,
     dismissible: Boolean = true,
@@ -108,6 +117,8 @@ internal fun OverlayRequest(
             title = title,
             containerColor = containerColor,
             isScrollable = isScrollable,
+        maxHeightFraction = maxHeightFraction,
+        fillHeight = fillHeight,
             headerContent = headerContent,
             variant = variant,
             dismissible = dismissible,
@@ -118,7 +129,8 @@ internal fun OverlayRequest(
         SideEffect {
             host.submit(
                 SheetRequest(
-                    id, onDismissRequest, modifier, title, containerColor, isScrollable, headerContent, variant,
+                    id, onDismissRequest, modifier, title, containerColor, isScrollable,
+                    maxHeightFraction, fillHeight, headerContent, variant,
                     dismissible, content,
                 ),
             )
@@ -214,6 +226,8 @@ internal class SheetRequest(
     val title: String?,
     val containerColor: Color?,
     val isScrollable: Boolean,
+    val maxHeightFraction: Float,
+    val fillHeight: Boolean,
     val headerContent: (@Composable () -> Unit)?,
     val variant: SheetVariant,
     val dismissible: Boolean,
@@ -258,6 +272,8 @@ fun SheetHost(state: SheetHostState) {
                 title = req.title,
                 containerColor = req.containerColor,
                 isScrollable = req.isScrollable,
+                maxHeightFraction = req.maxHeightFraction,
+                fillHeight = req.fillHeight,
                 headerContent = req.headerContent,
                 variant = req.variant,
                 dismissible = req.dismissible,
@@ -294,6 +310,8 @@ private fun SheetOverlay(
     title: String? = null,
     containerColor: Color? = null,
     isScrollable: Boolean = true,
+    maxHeightFraction: Float = SheetMaxHeightFraction,
+    fillHeight: Boolean = false,
     headerContent: (@Composable () -> Unit)? = null,
     variant: SheetVariant = SheetVariant.BOTTOM,
     dismissible: Boolean = true,
@@ -401,6 +419,8 @@ private fun SheetSurface(
     isScrollable: Boolean = true,
     /** 贴底弹层最大高度占屏比:默认 0.9;内容多的弹层(选集)传小值,给顶部留"下面还有页面"的语境 */
     maxHeightFraction: Float = SheetMaxHeightFraction,
+    /** true = 面板高度固定为 maxHeightFraction(内部列表 weight 才有高度可用) */
+    fillHeight: Boolean = false,
     headerContent: (@Composable () -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
@@ -467,7 +487,10 @@ private fun SheetSurface(
                             else -> Modifier
                                 .widthIn(max = SheetMaxWidth)
                                 .fillMaxWidth()
-                                .heightIn(max = panelMaxHeight)
+                                .then(
+                                    if (fillHeight) Modifier.height(panelMaxHeight)
+                                    else Modifier.heightIn(max = panelMaxHeight)
+                                )
                         },
                     )
                     .graphicsLayer {
