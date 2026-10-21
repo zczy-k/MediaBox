@@ -87,6 +87,17 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme.NoActionBar"
         android:usesCleartextTraffic="true">
+        <!--
+          XXPermissions 在 Android 10 上的第二道校验:
+          「The storage permission application is abnormal ... please register the
+          <meta-data android:name="ScopedStorage" android:value="true" />」
+          Android 11+ 靠 MANAGE_EXTERNAL_STORAGE 满足它,但 Android 10 没有这个权限,
+          必须显式声明已适配分区存储,否则 MainActivity 启动即崩(平板 SCM-AL09 实测)。
+        -->
+        <meta-data
+            android:name="ScopedStorage"
+            android:value="true" />
+
 
         <!-- 方向策略见 BaseActivity.applyOrientationPolicy:sw<600dp 锁竖屏,>=600dp 放开。
              在此写死 portrait 会让平板被信箱化,且 API 37 起系统在大屏本就会忽略它。 -->
