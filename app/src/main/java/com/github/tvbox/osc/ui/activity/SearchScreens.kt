@@ -379,6 +379,7 @@ internal fun RailResults(
                     top = if (done.size > 1) 8.dp else topPad + 8.dp,
                     bottom = 12.dp,
                 ),
+                showSiteName = selectedSource == null,
             )
             // 来源栏常驻底栏(2026-10-10):不随列表滚动,结果多时无需反复下滑即可续搜/调范围
             SearchLoadMoreFooter(
@@ -438,6 +439,7 @@ internal fun RailResults(
                 onLongClick = onCardLongClick,
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(start = 10.dp, end = 12.dp, top = topPad + 8.dp, bottom = 12.dp),
+                showSiteName = selectedSource == null,
             )
         }
         SearchLoadMoreFooter(
@@ -473,6 +475,7 @@ private fun RailResultList(
     onLongClick: (Movie.Video) -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues,
+    showSiteName: Boolean = false,
 ) {
     LazyColumn(
         state = listState,
@@ -492,11 +495,21 @@ private fun RailResultList(
         // 稳定 key = 组键("grp_归一化标题#子组序"/无标题回退行键):与列表位置无关,
         // 新结果并入同组只改组内容不改行身份;不同组之间键必然不同(同键身份冲突已拆子组)
         items(groups, key = { it.key }) { group ->
+            val rep = group.representative
             SearchResultRow(
-                video = group.representative,
+                video = rep,
                 sourceCount = group.videos.size,
-                onClick = { onCardClick(group.representative) },
-                onLongClick = { onLongClick(group.representative) },
+                // 真实来源站名:把该组内各成员的站名去重后拼起来。
+                // 普通剧集聚合时,同一部片的多个源可能跨站(sextb+123av),拼起来才不丢信息;
+                // 番号查询不聚合,每组只有一个成员,自然只有一枚站名。
+                siteName = if (showSiteName) {
+                    group.videos.mapNotNull { siteTagOf(it) }.distinct()
+                        .takeIf { it.isNotEmpty() }?.joinToString("/")
+                } else {
+                    null
+                },
+                onClick = { onCardClick(rep) },
+                onLongClick = { onLongClick(rep) },
             )
         }
         if (groups.isEmpty() && !running && !hasMore) {
@@ -763,6 +776,7 @@ internal fun SearchResultRow(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     sourceCount: Int = 1,
+    siteName: String? = null,
 ) {
     // 设计稿的清单行:66×42 缩略图 + 单行标题 + 元信息,不再用卡片底。
     // 搜索页用户是在**扫片名**,不是看海报:卡片(72×96)一屏只放 4 条,行样式能放 8 条以上。
@@ -804,6 +818,13 @@ internal fun SearchResultRow(
                 if (note.isNotEmpty() || meta.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(3.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
+                        // 来源站名(「一站多网」源的真实站名,见 sourceLabelOf):仅"全部"视图传入。
+                        // 与 note 胶囊是两回事 —— note 是"1 min / 150分"这类内容信息,
+                        // 站名是"这条来自 sextb 还是 123av"。两者都要显示,所以各自一枚标签。
+                        siteName?.let { site ->
+                            SearchTag(text = site, emphasized = true)
+                            Spacer(modifier = Modifier.width(6.dp))
+                        }
                         if (note.isNotEmpty()) {
                             SearchTag(text = note, emphasized = false)
                             if (meta.isNotEmpty()) Spacer(modifier = Modifier.width(6.dp))
@@ -867,3 +888,31 @@ internal fun searchMetaText(video: Movie.Video): String = listOfNotNull(
     video.area?.takeIf { it.isNotBlank() },
     video.type?.takeIf { it.isNotBlank() },
 ).joinToString(" · ")
+
+/**
+ * 「一站多网」源的**真实来源站名**。
+ *
+ * <p>背景(2026-10-22,真机实测):用户的订阅里只有 1 条源,但那条源装的爬虫是「多站合一」
+ * —— 一个 `.py` 里装着 sextb / av01 / javrate / 123av 四个网站。爬虫把这四个站的结果
+ * **合并在同一次搜索回包**里,并把站名写进了每条的 `vod_remarks`,形如:
+ * `"AV01 · MIDA-474 | 150分 | 播放6284"`、`"SEXTB · 1 min"`、`"123AV · 1:53:52"`。
+ *
+ * <p>经 [com.github.tvbox.osc.bean.AbsJson] 落到 `video.note`。
+ *
+ * <p>⚠️ 不能拿 `SourceResult.sourceName` 当站名用 —— 那是**源的名字**(此例为 "sextb_tvbox"),
+ * 与条目实际来自四个站中的哪一个毫无关系。用它会让每条结果的标签都写同一个字符串,
+ * 表现成"只搜到了 sextb"。
+ *
+ * @return 四个站名之一;`note` 里没有站名前缀(普通单站源)时返回 null,由调用方决定回落。
+ */
+private val SEARCH_SITE_TAG_RE = Regex("^(SEXTB|AV01|JAVRATE|123AV)\\b")
+
+internal fun siteTagOf(video: Movie.Video): String? =
+    video.note?.trim()?.let { SEARCH_SITE_TAG_RE.find(it)?.value }
+
+/**
+ * 搜索结果行要显示的来源文字,顺序:爬虫写在 note 里的真实站名 → 源自身的名字。
+ * 普通单站源走后者(名字就是站名);多站合一源走前者(名字是无意义的打包名)。
+ */
+internal fun sourceLabelOf(video: Movie.Video, fallbackSourceName: String?): String? =
+    siteTagOf(video) ?: fallbackSourceName?.takeIf { it.isNotBlank() }

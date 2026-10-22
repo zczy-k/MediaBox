@@ -224,8 +224,15 @@ internal fun SearchListResults(
                         .forEach { video ->
                             SearchResultRow(
                                 video = video,
-                                // 真实站名(首页源列表同款名字):仅"全部"视图标来源
-                                siteName = if (selectedSource == null) result.sourceName else null,
+                                // 真实来源站名:仅"全部"视图标来源。
+                                // ⚠️ 不能直接用 result.sourceName —— 「一站多网」源(见 sourceLabelOf KDoc)
+                                // 的源名是打包名("sextb_tvbox"),会让四条站的结果都写成同一个名字。
+                                // sourceLabelOf 先取爬虫写在 note 里的真实站名,取不到才回落到源名。
+                                siteName = if (selectedSource == null) {
+                                    sourceLabelOf(video, result.sourceName)
+                                } else {
+                                    null
+                                },
                                 onClick = { onCardClick(video) },
                                 onLongClick = { onCardLongClick(video) },
                             )
