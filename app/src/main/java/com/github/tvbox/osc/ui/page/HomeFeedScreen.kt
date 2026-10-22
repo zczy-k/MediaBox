@@ -2,6 +2,12 @@ package com.github.tvbox.osc.ui.page
 
 import android.content.Intent
 import android.widget.Toast
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -233,9 +239,15 @@ fun HomeFeedScreen(vm: HomeViewModel, contentPadding: PaddingValues = PaddingVal
                         item(key = "hero", span = { GridItemSpan(maxLineSpan) }) {
                             val heroVideos = rec.videos.take(5)
                                 .ifEmpty { partition?.videos?.take(5).orEmpty() }
+                            // 拼贴墙素材:当前源已加载的影片图(低分辨率解码,零额外请求)
+                            val wallPics = (rec.videos + (partition?.videos ?: emptyList()))
+                                .mapNotNull { it.pic?.takeIf { p -> p.isNotBlank() } }
+                                .distinct()
+                                .take(14)
                             if (heroVideos.isNotEmpty()) {
                                 HomeHero(
                                     videos = heroVideos,
+                                    wallPics = wallPics,
                                     height = heroHeight,
                                     radius = Fluid.heroRadius(maxWidth),
                                     onClick = { video -> context.dispatchVodCardClick(video) { vm.handleAction(it) } },
@@ -474,6 +486,7 @@ private fun HomeSearchBar(
 @Composable
 private fun HomeHero(
     videos: List<Movie.Video>,
+    wallPics: List<String>,
     height: androidx.compose.ui.unit.Dp,
     radius: androidx.compose.ui.unit.Dp,
     onClick: (Movie.Video) -> Unit,
@@ -504,25 +517,36 @@ private fun HomeHero(
             // 反而失去"放大图"的轮廓感(平板 Android 10 不支持 blur,恰好呈现清晰放大图,
             // 用户对比两台设备后明确更喜欢后者)。压暗层保证文字可读。
             var heroLandscape by remember(video.pic) { mutableStateOf(false) }
-            // 底层氛围图:lowRes 解码(48px 再拉伸) = 跨版本一致的柔化,
-            // 同时借 onAspectRatio 拿真实宽高比驱动前景分支
+            // 探针:当前页图的真实宽高比驱动前景分支(横图满区 / 竖图居中)
             VodPoster(
-                name = video.name,
+                name = null,
                 pic = video.pic,
                 lowRes = true,
                 onAspectRatio = { heroLandscape = it >= 1.2f },
+                modifier = Modifier.size(1.dp),
+            )
+            // ── 拼贴背景墙:当前分区影片图切小卡横竖混拼(2026-10-22 用户设计) ──
+            val wallShift by rememberInfiniteTransition(label = "wall").animateFloat(
+                initialValue = -14f,
+                targetValue = 14f,
+                animationSpec = infiniteRepeatable(tween(30000, easing = LinearEasing), RepeatMode.Reverse),
+                label = "wallShift",
+            )
+            MosaicWall(
+                pics = wallPics,
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
-                        scaleX = 1.18f
-                        scaleY = 1.18f
+                        scaleX = 1.12f
+                        scaleY = 1.12f
+                        translationX = wallShift.dp.toPx()
                     },
             )
             // 中层:整体压暗,让 Fit 后的亮部与背景不突兀
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.28f)),
+                    .background(Color.Black.copy(alpha = 0.45f)),
             )
             if (heroLandscape) {
                 // 横图(16:9 等):Fit 满区,自动完整显示;信息压在底部渐变上
@@ -530,6 +554,7 @@ private fun HomeHero(
                     name = video.name,
                     pic = video.pic,
                     fitContent = true,
+                    imageRadius = 14.dp,
                     modifier = Modifier.fillMaxSize(),
                 )
                 Column(
@@ -678,6 +703,53 @@ private fun HomeHero(
     }
 }
 
+/**
+ * 拼贴背景墙:把当前分区的影片图切成小卡片,横竖混拼铺满头图(2026-10-22 用户设计)。
+ *
+ * <p>布局:3 行,每行 3~4 张,列宽权重固定(伪随机观感、每次进入一致);
+ * 图片按 lowRes(96px) 解码,Crop 填格 —— 格子形状表达横竖方向。
+ * 墙体由外层 graphicsLayer 做缓慢平移(30s 往复)。
+ */
+@Composable
+private fun MosaicWall(pics: List<String>, modifier: Modifier) {
+    if (pics.isEmpty()) {
+        Box(modifier.background(Color(0xFF2A2422)))
+        return
+    }
+    // 固定权重表:观感随机但不闪烁(不用真随机,布局随 pics.hashCode 稳定)
+    val rows = listOf(
+        listOf(1.0f, 1.35f, 0.8f, 1.15f),
+        listOf(1.2f, 0.85f, 1.3f),
+        listOf(0.9f, 1.25f, 1.0f, 1.2f),
+    )
+    val seed = kotlin.math.abs(pics.hashCode())
+    Column(
+        modifier = modifier.background(Color(0xFF141210)),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        rows.forEachIndexed { r, weights ->
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                weights.forEachIndexed { c, w ->
+                    val idx = (seed + r * 7 + c * 13) % pics.size
+                    VodPoster(
+                        name = null,
+                        pic = pics[idx],
+                        lowRes = true,
+                        modifier = Modifier
+                            .weight(w)
+                            .fillMaxHeight(),
+                    )
+                }
+            }
+        }
+    }
+}
+
 // ───────────────────────── 胶囊 / 海报 / 状态 ─────────────────────────
 
 @Composable
@@ -764,7 +836,8 @@ private fun HomePoster(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(2f / 3f)
-                .clip(RoundedCornerShape(Fluid.cardRadius(cardWidth)))
+                // 圆角全局固定:按卡宽浮动会让 2/3 列切换时圆角不一致(2026-10-22 用户反馈)
+                .clip(RoundedCornerShape(12.dp))
                 .background(MaterialTheme.colorScheme.surfaceContainer)
                 .clickable(onClick = onClick),
         ) {
@@ -774,6 +847,7 @@ private fun HomePoster(
                 name = video.name,
                 pic = video.pic,
                 fitContent = true,
+                imageRadius = 12.dp,
                 modifier = Modifier.fillMaxSize(),
             )
             ratingBadgeText(video.note)?.let { score ->

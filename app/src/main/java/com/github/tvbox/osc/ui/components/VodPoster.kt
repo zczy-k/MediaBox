@@ -14,6 +14,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.Dp
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -85,6 +88,8 @@ internal fun VodPoster(
     alignment: Alignment = Alignment.Center,
     /** 解码期柔化:按 48px 解码再拉伸 = 天然模糊,与系统版本无关(Android 10/12+ 一致) */
     lowRes: Boolean = false,
+    /** 图片自身圆角:Fit 留白后图不满框,不给图圆角会露出直角(2026-10-22 用户反馈) */
+    imageRadius: Dp? = null,
 ) {
     var showFallback by remember(pic) { mutableStateOf(false) }
     var reportedAspect by remember(pic) { mutableStateOf(false) }
@@ -120,7 +125,11 @@ internal fun VodPoster(
                     }
                 }
             },
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .then(
+                    imageRadius?.let { r -> Modifier.clip(RoundedCornerShape(r)) } ?: Modifier
+                ),
         )
     }
 }
