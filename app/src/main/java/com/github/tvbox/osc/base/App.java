@@ -120,6 +120,31 @@ public class App extends Application {
         // 两者都只是"启动时清理",不参与任何初始化时序,放后台无副作用。
         // ⚠️ purgeExoCacheIfPending 必须排在前面:它须尽量早于首次 getSharedCache(见其方法注释),
         //    把 cleanPlayerCache 放前面会平白推迟它。
+        // Python 运行时预热(2026-10-22,启动优化)。
+        //
+        // 真机启动日志:进程起来后 +2.17s 才开始加载 py 爬虫,其中 `PyLoader echo-init`
+        // 一步就占 ~500ms(Chaquopy 首次把 Python VM 拉起来 + 导入标准库),
+        // 之后 +2.77s 才真正"加载spider",+4.75s 首页才有内容。
+        // 也就是说这 500ms 卡在"配置读完 → 首页请求"的**串行路径**上,用户白等。
+        //
+        // 这里把它挪到进程最早期,用**独立后台线程**与"读配置 / 首帧渲染"并行。
+        //
+        // ⚠️ 只预热运行时,**不加载任何具体 spider**:后续 `SpiderLoader.getSpider` 的逻辑
+        //    一个字都没改,只是轮到它时 VM 已经就绪 —— 功能语义完全等价。
+        // ⚠️ 任何异常一律吞掉:预热失败等价于"没有预热",退回原来的行为,绝不能影响启动。
+        //    所以这里不用 runCatching 之外的任何控制流。
+        new Thread(() -> {
+            long warmStart = android.os.SystemClock.elapsedRealtime();
+            try {
+                com.chaquo.python.Python.start(App.this);
+                com.github.tvbox.osc.util.LOG.i(
+                        "echo-warm-python done ms=" + (android.os.SystemClock.elapsedRealtime() - warmStart));
+            } catch (Throwable th) {
+                com.github.tvbox.osc.util.LOG.i(
+                        "echo-warm-python failed " + th.getClass().getSimpleName() +
+                                " ms=" + (android.os.SystemClock.elapsedRealtime() - warmStart));
+            }
+        }, "startup-python-warm").start();
         new Thread(() -> {
             FileUtils.purgeExoCacheIfPending();
             FileUtils.cleanPlayerCache();
