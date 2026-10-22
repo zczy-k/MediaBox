@@ -224,6 +224,8 @@ internal fun SearchListResults(
                         .forEach { video ->
                             SearchResultRow(
                                 video = video,
+                                // 真实站名(首页源列表同款名字):仅"全部"视图标来源
+                                siteName = if (selectedSource == null) result.sourceName else null,
                                 onClick = { onCardClick(video) },
                                 onLongClick = { onCardLongClick(video) },
                             )
@@ -256,6 +258,7 @@ internal fun SearchListResults(
 @Composable
 private fun SearchResultRow(
     video: com.github.tvbox.osc.bean.Movie.Video,
+    siteName: String? = null,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
@@ -302,6 +305,18 @@ private fun SearchResultRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+            // 来源站名标签(v1.0.0 设计恢复,2026-10-22 用户要求):
+            // sourceName 就是首页源列表显示的名字 —— "首页已亮出来"的前提天然满足。
+            // 仅"全部"视图传入(单源视图整屏同源,不用标);按剩余宽度自适应,不截断。
+            siteName?.let { site ->
+                Row(modifier = Modifier.padding(top = 2.dp)) {
+                    SearchTag(
+                        text = site,
+                        emphasized = false,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                }
             }
         }
         com.github.tvbox.osc.ui.components.ratingBadgeText(video.note)?.let { score ->

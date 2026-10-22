@@ -834,7 +834,7 @@ internal fun SearchResultRow(
 }
 
 @Composable
-private fun SearchTag(
+internal fun SearchTag(
     text: String,
     emphasized: Boolean,
     modifier: Modifier = Modifier,
