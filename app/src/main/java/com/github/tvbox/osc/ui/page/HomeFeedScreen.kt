@@ -41,8 +41,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.pullToRefresh
@@ -92,6 +95,7 @@ import com.github.tvbox.osc.ui.components.ratingBadgeText
 import com.github.tvbox.osc.ui.components.rememberVodCardMenuState
 import com.github.tvbox.osc.ui.theme.Fluid
 import com.github.tvbox.osc.ui.theme.MediaBoxRadius
+import com.github.tvbox.osc.util.HomeSettings
 import com.github.tvbox.osc.util.SiteSearch
 import com.github.tvbox.osc.util.SourceIdentityMask
 import kotlinx.coroutines.flow.first
@@ -184,6 +188,8 @@ fun HomeFeedScreen(vm: HomeViewModel, contentPadding: PaddingValues = PaddingVal
                 onSearchClick = {
                     context.startActivity(Intent(context, SearchActivity::class.java))
                 },
+                gridCols = HomeSettings.currentColumns(),
+                onGridColsChange = { HomeSettings.setColumns(it) },
             )
 
             when {
@@ -194,7 +200,9 @@ fun HomeFeedScreen(vm: HomeViewModel, contentPadding: PaddingValues = PaddingVal
                 else -> BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                     val pad = Fluid.padding(maxWidth)
                     val gap = Fluid.gap(maxWidth)
-                    val columns = Fluid.columns(maxWidth, 3)
+                    // 用户偏好(3点菜单):0=自适应按屏宽算,2/3=固定列数
+                    val colsPref by HomeSettings.columnsFlow.collectAsStateWithLifecycle()
+                    val columns = if (colsPref == 2 || colsPref == 3) colsPref else Fluid.columns(maxWidth, 3)
                     val cardWidth = Fluid.cardWidth(maxWidth, columns)
                     val heroHeight = Fluid.heroHeight(maxWidth, maxHeight)
 
@@ -369,7 +377,10 @@ private fun HomeSearchBar(
     sourceLabel: String,
     onSourceClick: () -> Unit,
     onSearchClick: () -> Unit,
+    gridCols: Int,
+    onGridColsChange: (Int) -> Unit,
 ) {
+    var gridMenuOpen by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -424,6 +435,37 @@ private fun HomeSearchBar(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        Spacer(Modifier.width(10.dp))
+        // 3点:首页布局(卡片每行列数)。下拉选择,全局记住。
+        Box {
+            Icon(
+                imageVector = Icons.Filled.MoreVert,
+                contentDescription = stringResource(R.string.common_more),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .clickable { gridMenuOpen = true }
+                    .padding(8.dp)
+                    .size(20.dp),
+            )
+            DropdownMenu(expanded = gridMenuOpen, onDismissRequest = { gridMenuOpen = false }) {
+                listOf(HomeSettings.AUTO_COLUMNS to "自适应", 2 to "2 列", 3 to "3 列").forEach { (v, label) ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = label,
+                                color = if (gridCols == v) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurface,
+                            )
+                        },
+                        onClick = {
+                            gridMenuOpen = false
+                            onGridColsChange(v)
+                        },
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -461,9 +503,14 @@ private fun HomeHero(
             // ⚠️ 不加 blur:Android 12+ 上真模糊会把背景糊成一团颜色,
             // 反而失去"放大图"的轮廓感(平板 Android 10 不支持 blur,恰好呈现清晰放大图,
             // 用户对比两台设备后明确更喜欢后者)。压暗层保证文字可读。
+            var heroLandscape by remember(video.pic) { mutableStateOf(false) }
+            // 底层氛围图:lowRes 解码(48px 再拉伸) = 跨版本一致的柔化,
+            // 同时借 onAspectRatio 拿真实宽高比驱动前景分支
             VodPoster(
                 name = video.name,
                 pic = video.pic,
+                lowRes = true,
+                onAspectRatio = { heroLandscape = it >= 1.2f },
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
@@ -477,6 +524,50 @@ private fun HomeHero(
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.28f)),
             )
+            if (heroLandscape) {
+                // 横图(16:9 等):Fit 满区,自动完整显示;信息压在底部渐变上
+                VodPoster(
+                    name = video.name,
+                    pic = video.pic,
+                    fitContent = true,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(start = 14.dp, end = 118.dp, bottom = 13.dp),
+                ) {
+                    Text(
+                        text = video.name ?: "",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    val metaL = buildString {
+                        if (video.year > 0) append(video.year)
+                        video.type?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                            if (isNotEmpty()) append(" · ")
+                            append(it)
+                        }
+                        ratingBadgeText(video.note)?.let {
+                            if (isNotEmpty()) append(" · ")
+                            append(it)
+                            append(" 分")
+                        }
+                    }
+                    if (metaL.isNotEmpty()) {
+                        Text(
+                            text = metaL,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.8f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            } else {
             // ── 前景:海报靠左撑满高度(Fit 不裁) + 右侧信息列 ──
             // 竖版海报 Fit 只占头图约 1/3 宽,两侧大片模糊背景很难看(2026-10-21 用户反馈);
             // 信息移到海报旁边,空间被利用,视觉重心平衡(Netflix / Disney+ 式 hero)。
@@ -545,6 +636,7 @@ private fun HomeHero(
                         }
                     }
                 }
+            }
             }
             Box(
                 modifier = Modifier
@@ -676,9 +768,12 @@ private fun HomePoster(
                 .background(MaterialTheme.colorScheme.surfaceContainer)
                 .clickable(onClick = onClick),
         ) {
+            // Fit 完整显示:竖图撑满,横图居中上下留白(底色 surfaceContainer)
+            // —— 卡片图一律不裁(2026-10-22 用户要求)
             VodPoster(
                 name = video.name,
                 pic = video.pic,
+                fitContent = true,
                 modifier = Modifier.fillMaxSize(),
             )
             ratingBadgeText(video.note)?.let { score ->

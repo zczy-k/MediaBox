@@ -54,11 +54,20 @@ object HomeSettings {
         mutableLayout.value = layout
     }
 
-    /** 归一:只接受 2,其余(含 3 与非法值)一律返回 3 */
-    fun currentColumns(): Int = if (KV.get(KEY_COLUMNS, DEFAULT_COLUMNS) == 2) 2 else 3
+    /**
+     * 首页栅格列数:0 = 自适应(按屏宽算),2 / 3 = 固定列数。
+     * 2026-10-22 加自适应档:用户要求"默认自适应,可切 2/3"。
+     */
+    const val AUTO_COLUMNS = 0
+
+    fun currentColumns(): Int = when (KV.get(KEY_COLUMNS, AUTO_COLUMNS)) {
+        2 -> 2
+        3 -> 3
+        else -> AUTO_COLUMNS
+    }
 
     fun setColumns(columns: Int) {
-        val normalized = if (columns == 2) 2 else DEFAULT_COLUMNS
+        val normalized = if (columns == 2 || columns == 3) columns else AUTO_COLUMNS
         KV.put(KEY_COLUMNS, normalized)
         mutableColumns.value = normalized
     }

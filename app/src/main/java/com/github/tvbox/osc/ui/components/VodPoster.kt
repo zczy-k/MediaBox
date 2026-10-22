@@ -83,6 +83,8 @@ internal fun VodPoster(
     onAspectRatio: ((Float) -> Unit)? = null,
     /** Crop 时的裁切锚点:竖版海报填横条时,居中还顶部差别很大(头图用 TopCenter 保片名) */
     alignment: Alignment = Alignment.Center,
+    /** 解码期柔化:按 48px 解码再拉伸 = 天然模糊,与系统版本无关(Android 10/12+ 一致) */
+    lowRes: Boolean = false,
 ) {
     var showFallback by remember(pic) { mutableStateOf(false) }
     var reportedAspect by remember(pic) { mutableStateOf(false) }
@@ -90,6 +92,7 @@ internal fun VodPoster(
     val request = remember(context, pic) {
         ImageRequest.Builder(context)
             .data(pic)
+            .apply { if (lowRes) size(48) }
             // Avoid a crossfade flashing the fallback through the image.
             .transitionFactory(Transition.Factory.NONE)
             .build()
