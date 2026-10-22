@@ -136,7 +136,11 @@ public class App extends Application {
         new Thread(() -> {
             long warmStart = android.os.SystemClock.elapsedRealtime();
             try {
-                com.chaquo.python.Python.start(App.this);
+                // ⚠️ 用 getInstance() 而不是 start(...):后者的签名要 com.chaquo.python.Platform,
+                //    传 Application 直接编译不过(CI 39751941497 就是这样挂的)。
+                //    getInstance() 的契约正是"取实例,必要时把运行时启动起来",且幂等 ——
+                //    后续任何一处真正用到 Python 时拿到的还是同一个实例。
+                com.chaquo.python.Python.getInstance();
                 com.github.tvbox.osc.util.LOG.i(
                         "echo-warm-python done ms=" + (android.os.SystemClock.elapsedRealtime() - warmStart));
             } catch (Throwable th) {
