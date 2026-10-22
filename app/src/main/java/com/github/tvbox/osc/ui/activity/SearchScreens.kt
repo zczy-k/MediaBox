@@ -880,12 +880,16 @@ internal fun SearchThumb(
             )
         }
         // 第 2 层:清晰主图。fitContent = true ⇒ ContentScale.Fit,整图可见、绝不裁切
+        // ⚠️ fillBackground = false 是必须的:VodPoster 在 fitContent 时会铺一层不透明的
+        // surfaceContainer,那一层会把**下面**的铺底整个盖住 —— 真机实测 backdrop=true
+        // 但截图左右仍是纯色块,就是它干的。底色由外层 Box 提供,这里不能重复铺。
         VodPoster(
             name = video.name,
             pic = video.pic,
             modifier = Modifier.fillMaxSize(),
             fitContent = true,
             imageRadius = 9.dp,
+            fillBackground = false,
             onAspectRatio = { ratio ->
                 aspect = ratio
                 com.github.tvbox.osc.util.LOG.i(

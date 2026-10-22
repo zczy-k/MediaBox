@@ -90,6 +90,16 @@ internal fun VodPoster(
     lowRes: Boolean = false,
     /** 图片自身圆角:Fit 留白后图不满框,不给图圆角会露出直角(2026-10-22 用户反馈) */
     imageRadius: Dp? = null,
+    /**
+     * `fitContent = true` 时是否给整块区域铺 `surfaceContainer` 底色。
+     *
+     * <p>默认 true —— 首页网格依赖它填住 Fit 留下的空白,**行为与改动前完全一致**。
+     *
+     * <p>搜索页缩略图传 false(2026-10-22):那一层是不透明的,会把画在它**下面**的
+     * "同图模糊铺底"整个盖住 —— 真机日志显示 `backdrop=true` 但截图里左右仍是纯色块,
+     * 就是这层背景干的。关掉它,铺底才能透出来。
+     */
+    fillBackground: Boolean = true,
 ) {
     var showFallback by remember(pic) { mutableStateOf(false) }
     var reportedAspect by remember(pic) { mutableStateOf(false) }
@@ -103,7 +113,7 @@ internal fun VodPoster(
             .build()
     }
 
-    val posterModifier = if (fitContent) {
+    val posterModifier = if (fitContent && fillBackground) {
         modifier.background(MaterialTheme.colorScheme.surfaceContainer)
     } else {
         modifier
