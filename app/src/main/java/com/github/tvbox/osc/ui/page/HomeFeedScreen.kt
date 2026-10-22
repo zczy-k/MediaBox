@@ -66,6 +66,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
@@ -179,6 +180,21 @@ fun HomeFeedScreen(vm: HomeViewModel, contentPadding: PaddingValues = PaddingVal
         ?: fallbackLabel
 
     val partition = partitions.firstOrNull { it.sort.id == selectedSortId }
+
+    // 卡片框形自适应:采样当前分区前几张图的真实宽高比,中位数 >= 1.2 ⇒ 整区切 16:10 横框
+    // (同一分区所有卡同框同圆角,规格一致;图 Crop 贴满框,无 Fit 直角外露)
+    var cardAspect by remember(selectedSortId) { mutableStateOf(2f / 3f) }
+    var aspectSamples by remember(selectedSortId) { mutableStateOf(listOf<Float>()) }
+    val onCardAspect: (Float) -> Unit = { a ->
+        if (aspectSamples.size < 6) {
+            val next = aspectSamples + a
+            aspectSamples = next
+            if (next.size >= 4) {
+                val median = next.sorted()[next.size / 2]
+                cardAspect = if (median >= 1.2f) 16f / 10f else 2f / 3f
+            }
+        }
+    }
     val sort = partition?.sort ?: sorts.firstOrNull { it.id == selectedSortId }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -239,15 +255,9 @@ fun HomeFeedScreen(vm: HomeViewModel, contentPadding: PaddingValues = PaddingVal
                         item(key = "hero", span = { GridItemSpan(maxLineSpan) }) {
                             val heroVideos = rec.videos.take(5)
                                 .ifEmpty { partition?.videos?.take(5).orEmpty() }
-                            // 拼贴墙素材:当前源已加载的影片图(低分辨率解码,零额外请求)
-                            val wallPics = (rec.videos + (partition?.videos ?: emptyList()))
-                                .mapNotNull { it.pic?.takeIf { p -> p.isNotBlank() } }
-                                .distinct()
-                                .take(14)
                             if (heroVideos.isNotEmpty()) {
                                 HomeHero(
                                     videos = heroVideos,
-                                    wallPics = wallPics,
                                     height = heroHeight,
                                     radius = Fluid.heroRadius(maxWidth),
                                     onClick = { video -> context.dispatchVodCardClick(video) { vm.handleAction(it) } },
@@ -324,6 +334,8 @@ fun HomeFeedScreen(vm: HomeViewModel, contentPadding: PaddingValues = PaddingVal
                                     HomePoster(
                                         video = video,
                                         cardWidth = cardWidth,
+                                        aspect = cardAspect,
+                                        onAspect = onCardAspect,
                                         onClick = {
                                             context.dispatchVodCardClick(video) { vm.handleAction(it) }
                                         },
@@ -486,7 +498,6 @@ private fun HomeSearchBar(
 @Composable
 private fun HomeHero(
     videos: List<Movie.Video>,
-    wallPics: List<String>,
     height: androidx.compose.ui.unit.Dp,
     radius: androidx.compose.ui.unit.Dp,
     onClick: (Movie.Video) -> Unit,
@@ -533,7 +544,7 @@ private fun HomeHero(
                 label = "wallShift",
             )
             MosaicWall(
-                pics = wallPics,
+                pic = video.pic,
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
@@ -704,46 +715,60 @@ private fun HomeHero(
 }
 
 /**
- * 拼贴背景墙:把当前分区的影片图切成小卡片,横竖混拼铺满头图(2026-10-22 用户设计)。
- *
- * <p>布局:3 行,每行 3~4 张,列宽权重固定(伪随机观感、每次进入一致);
- * 图片按 lowRes(96px) 解码,Crop 填格 —— 格子形状表达横竖方向。
- * 墙体由外层 graphicsLayer 做缓慢平移(30s 往复)。
+ * 拼贴背景墙 v2(2026-10-22 用户定案):
+ * 全部小格用**当前轮播这一张图**,每格按位置偏移取样 —— 拼起来是"被打碎的完整海报"。
+ * 行数/行内格数不等 + 行高权重不同 ⇒ 格子横竖扁方混合,不是机械等分。
+ * 每格 lowRes 柔化 + 55% 透明叠深色底,若隐若现不抢前景;轮播翻页整面墙跟着换。
  */
+private val ALIGNMENT_GRID = listOf(
+    listOf(Alignment.TopStart, Alignment.TopCenter, Alignment.TopEnd),
+    listOf(Alignment.CenterStart, Alignment.Center, Alignment.CenterEnd),
+    listOf(Alignment.BottomStart, Alignment.BottomCenter, Alignment.BottomEnd),
+)
+
 @Composable
-private fun MosaicWall(pics: List<String>, modifier: Modifier) {
-    if (pics.isEmpty()) {
-        Box(modifier.background(Color(0xFF2A2422)))
+private fun MosaicWall(pic: String, modifier: Modifier) {
+    if (pic.isBlank()) {
+        Box(modifier.background(Color(0xFF141210)))
         return
     }
-    // 固定权重表:观感随机但不闪烁(不用真随机,布局随 pics.hashCode 稳定)
+    // 手排布局表:行高权重 + 每行格数(格数不同 ⇒ 格子横扁/竖长混合)
     val rows = listOf(
-        listOf(1.0f, 1.35f, 0.8f, 1.15f),
-        listOf(1.2f, 0.85f, 1.3f),
-        listOf(0.9f, 1.25f, 1.0f, 1.2f),
+        listOf(1.0f, 1.4f, 0.9f, 1.2f, 0.8f),
+        listOf(1.6f, 0.9f, 1.3f, 1.1f),
+        listOf(0.9f, 1.2f, 1.5f, 0.8f, 1.1f, 1.0f),
+        listOf(1.3f, 0.9f, 1.1f, 1.4f, 0.9f),
     )
-    val seed = kotlin.math.abs(pics.hashCode())
+    val rowWeights = listOf(1.0f, 0.85f, 1.15f, 0.9f)
     Column(
         modifier = modifier.background(Color(0xFF141210)),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        rows.forEachIndexed { r, weights ->
+        rows.forEachIndexed { r, cols ->
             Row(
                 modifier = Modifier
-                    .weight(1f)
+                    .weight(rowWeights[r])
                     .fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                weights.forEachIndexed { c, w ->
-                    val idx = (seed + r * 7 + c * 13) % pics.size
-                    VodPoster(
-                        name = null,
-                        pic = pics[idx],
-                        lowRes = true,
+                cols.forEachIndexed { c, w ->
+                    // 每格按(行,列)位置取图的九宫格不同区域 —— 碎拼观感的关键
+                    val ri = if (rows.size <= 1) 1 else (r * 2 / (rows.size - 1))
+                    val ci = if (cols.size <= 1) 1 else (c * 2 / (cols.size - 1))
+                    Box(
                         modifier = Modifier
                             .weight(w)
-                            .fillMaxHeight(),
-                    )
+                            .fillMaxHeight()
+                            .alpha(0.55f),
+                    ) {
+                        VodPoster(
+                            name = null,
+                            pic = pic,
+                            lowRes = true,
+                            alignment = ALIGNMENT_GRID[ri.coerceIn(0, 2)][ci.coerceIn(0, 2)],
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                 }
             }
         }
@@ -828,6 +853,8 @@ private val EPISODE_REGEX = Regex("(\\d+)\\s*集")
 private fun HomePoster(
     video: Movie.Video,
     cardWidth: androidx.compose.ui.unit.Dp,
+    aspect: Float = 2f / 3f,
+    onAspect: ((Float) -> Unit)? = null,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
 ) {
@@ -835,19 +862,18 @@ private fun HomePoster(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(2f / 3f)
+                .aspectRatio(aspect)
                 // 圆角全局固定:按卡宽浮动会让 2/3 列切换时圆角不一致(2026-10-22 用户反馈)
                 .clip(RoundedCornerShape(12.dp))
                 .background(MaterialTheme.colorScheme.surfaceContainer)
                 .clickable(onClick = onClick),
         ) {
-            // Fit 完整显示:竖图撑满,横图居中上下留白(底色 surfaceContainer)
-            // —— 卡片图一律不裁(2026-10-22 用户要求)
+            // Crop 贴满框:框形已按分区图片主流比例自适应,横图在横框/竖图在竖框都几乎不裁;
+            // 同区所有卡同框同圆角(2026-10-22 用户定案:规格一致优先)
             VodPoster(
                 name = video.name,
                 pic = video.pic,
-                fitContent = true,
-                imageRadius = 12.dp,
+                onAspectRatio = onAspect,
                 modifier = Modifier.fillMaxSize(),
             )
             ratingBadgeText(video.note)?.let { score ->
