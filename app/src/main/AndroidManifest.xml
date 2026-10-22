@@ -3,11 +3,15 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!--
-      设备形态兼容(2026-10-21 兼容性加固):
+      设备形态兼容(2026-10-21 加固,2026-10-22 补 TV 入口):
       - touchscreen=false:电视/机顶盒没有触摸屏,声明必需会导致**直接装不上**
-      - leanback=false:让 Android TV 桌面能列出本应用(不声明则 TV 启动器不显示)
+      - leanback=false:让设备**允许安装**本应用(声明成必需反而会把手机/平板挡在门外)
       - faketouch=false:遥控器模拟触摸的设备也能装
-      三者都必须是 false —— 否则平板上能装、电视上装不上。
+
+      ⚠️ 2026-10-22 纠正一处旧注释:leanback=false 只影响"能不能装 / 商店是否过滤",
+      **不会**让 Android TV 桌面列出应用。桌面列出靠的是 MainActivity 上那个
+      LEANBACK_LAUNCHER category + application 上的 android:banner —— 两者此前都缺,
+      所以电视上装完"找不到入口"。现已补齐。
     -->
     <uses-feature
         android:name="android.hardware.touchscreen"
@@ -76,6 +80,7 @@
     <application
         android:name=".base.App"
         android:allowBackup="true"
+        android:banner="@drawable/tv_banner"
         android:configChanges="orientation|keyboardHidden|screenSize"
         android:hardwareAccelerated="true"
         android:largeHeap="true"
@@ -110,6 +115,19 @@
                 <action android:name="android.intent.action.MAIN" />
 
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!--
+              电视桌面入口(2026-10-22):Android TV / Google TV 的 LeanbackLauncher
+              **只列**带 LEANBACK_LAUNCHER 的应用,只有 LAUNCHER 的装完在电视桌面上找不到。
+              ⚠️ 单独一个 intent-filter,不与上面那个 LAUNCHER 合并:两个 category 放同一个
+              filter 里虽然也能匹配,但那是靠"意图的 category 是 filter 的子集"这条规则,
+              语义上含混;分开写是 Android TV 官方示例的写法。
+              ⚠️ 手机/平板不受影响:普通 launcher 匹配的是 LAUNCHER,不认这个 category。
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
 

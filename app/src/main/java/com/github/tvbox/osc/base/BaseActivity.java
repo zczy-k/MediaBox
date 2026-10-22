@@ -186,6 +186,17 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
     /** 当前窗口档下的策略值;播放器退出全屏时恢复到此值,而不是硬写竖屏 */
     public int orientationPolicyValue() {
         try {
+            // 电视恒定横屏(2026-10-22 兼容性加固)。
+            //
+            // ⚠️ 这条不是"顺手加的",是**必须**的:Android TV 把 1080p 面板报成
+            //    960×540dp(密度 2.0),smallestScreenWidthDp = 540 < 600 ⇒ 会被下面的
+            //    "窄屏锁竖屏"策略判成手机 ⇒ 电视上整屏被强制竖屏、左右两大条黑边,
+            //    遥控器也没法转屏。用系统权威判据(UiModeManager)短路掉。
+            // ⚠️ 手机/平板走不到这里:isTv 只在系统声明 UI_MODE_TYPE_TELEVISION 时为 true,
+            //    普通设备行为与改动前完全一致。
+            if (com.github.tvbox.osc.util.ScreenUtils.isTv(this)) {
+                return ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
+            }
             Configuration configuration = super.getResources().getConfiguration();
             return WindowSize.shouldLockPortrait(configuration.smallestScreenWidthDp)
                     ? ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT

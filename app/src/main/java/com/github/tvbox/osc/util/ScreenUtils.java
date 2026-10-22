@@ -32,6 +32,11 @@ public class ScreenUtils {
      * 见 avbox-mobile-ui-spec §1):真正需要防的反而是"大屏手机被 SCREENLAYOUT_SIZE_LARGE
      * 误判成 TV"(会莫名隐藏锁屏钮)。故只保留"系统声明为 TV"这一个权威判据,
      * 电话权限随之从清单移除。
+     *
+     * <p>⚠️ 2026-10-22 更新:上面那段"纯手机定位 / TV 适配已全删"**已过期**。
+     * abiFilters 现在是 arm64-v8a + armeabi-v7a;清单已补 LEANBACK_LAUNCHER + banner;
+     * BaseActivity.orientationPolicyValue 用本方法给电视恒定横屏;搜索页有 TvSearchKeyboardPanel。
+     * 本方法的语义没变(仍是"系统声明为 TV"),继续作为电视判定的**唯一**权威入口。
      */
     public static boolean isTv(Context context) {
         UiModeManager uiModeManager = (UiModeManager) context.getSystemService(UI_MODE_SERVICE);
