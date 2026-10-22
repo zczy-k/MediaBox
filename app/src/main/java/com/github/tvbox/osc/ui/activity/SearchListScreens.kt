@@ -2,6 +2,7 @@ package com.github.tvbox.osc.ui.activity
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Spacer
@@ -70,6 +71,8 @@ internal fun SearchListResults(
     onOpenSourceSettings: () -> Unit,
     onCardClick: (Movie.Video) -> Unit,
     onCardLongClick: (Movie.Video) -> Unit,
+    /** 点缩略图看原图;null ⇒ 点图等价于点整行(播放),保证任何一处漏传都不会出现死区 */
+    onPosterClick: ((Movie.Video) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     // 只有用户自己在往下滑、且快到列表尾部时才续搜(与竖排列表同口径)
@@ -236,6 +239,7 @@ internal fun SearchListResults(
                                 },
                                 onClick = { onCardClick(video) },
                                 onLongClick = { onCardLongClick(video) },
+                                onPosterClick = onPosterClick?.let { cb -> { cb(video) } },
                             )
                         }
                 }
@@ -258,10 +262,14 @@ internal fun SearchListResults(
 }
 
 /**
- * 搜索结果行 —— 设计稿的紧凑清单样式。
+ * 搜索结果行 —— 紧凑清单样式。
  *
- * <p>66×42 缩略图 + 单行标题 + 元信息。为什么不用海报卡:搜索页用户是在**扫片名**,
- * 海报卡(110dp 宽、2:3)一屏只放得下 3 个,行样式能放 8 个以上。
+ * <p>固定画框 66×44 缩略图 + 两行标题 + 一行"站名/备注/元信息"。
+ * 为什么不用海报卡:搜索页用户是在**扫片名**,海报卡(110dp 宽、2:3)一屏只放得下 3 个,
+ * 行样式能放 8 个以上。
+ *
+ * <p>**双热区**(2026-10-22):点缩略图看原图,点文字进详情播放。
+ * 缩略图自带 clickable,子节点先消费事件 ⇒ 点图不会冒泡成"播放"。
  */
 @Composable
 private fun SearchResultRow(
@@ -269,28 +277,27 @@ private fun SearchResultRow(
     siteName: String? = null,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
+    onPosterClick: (() -> Unit)? = null,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
+            // ⚠️ 必须是 combinedClickable,不能是 clickable(2026-10-22):
+            // 本函数一直声明了 onLongClick 参数,但外层只挂了 `.clickable(onClick)`,
+            // 于是**手机列表里长按结果行完全没反应** —— 换源/收藏菜单根本打不开。
+            // 这是既有缺陷,顺手在这里修掉(横排行一直是好的,只有手机行漏了)。
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .width(66.dp)
-                .height(42.dp)
-                .clip(RoundedCornerShape(9.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainer),
-        ) {
-            VodPoster(
-                name = video.name,
-                pic = video.pic,
-                modifier = Modifier.fillMaxSize(),
-            )
-        }
+        // 缩略图:固定画框 + 三层结构 + 双热区,详见 SearchThumb 的 KDoc
+        SearchThumb(
+            video = video,
+            onPlay = onClick,
+            onPosterClick = onPosterClick,
+            onLongClick = onLongClick,
+        )
         Spacer(modifier = Modifier.width(11.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -317,49 +324,46 @@ private fun SearchResultRow(
                     }
                 },
             )
-            val note = video.note?.trim().orEmpty()
             val meta = listOfNotNull(
                 if (video.year > 0) video.year.toString() else null,
                 video.type?.takeIf { it.isNotBlank() },
             ).joinToString(" · ")
-            // 站名与元信息**同一行**:以前站名独占一行,叠在单行标题下面,
-            // 整行变成"标题 / 站名"两截,右边大片空白 —— 视觉上就像卡片没画完。
-            if (siteName != null || meta.isNotEmpty()) {
+            // 站名 / 备注正文 / 元信息**合并成一行**。
+            //
+            // ⚠️ 备注必须用 noteBodyOf 而不是 video.note:爬虫写的原文是
+            // `"123AV · 3:21:59"` 这种"站名 · 备注",站名已由左边那枚标签画过一遍,
+            // 再整条原样显示就会看到 `123AV` 出现两次(真机截图里就是这样)。
+            //
+            // 为什么不再给备注单独一行:单行标题时站名曾独占一行,叠成"标题 / 站名"两截、
+            // 右边大片空白,视觉上就像卡片没画完 —— 用户 2026-10-22 报的"卡片显示不全"。
+            val noteBody = noteBodyOf(video)
+            val info = listOfNotNull(
+                noteBody.takeIf { it.isNotEmpty() },
+                meta.takeIf { it.isNotEmpty() },
+            ).joinToString(" · ")
+            if (siteName != null || info.isNotEmpty()) {
                 Row(
                     modifier = Modifier.padding(top = 3.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     // 来源站名标签:仅"全部"视图、且仅**多站源**传入(见 sourceLabelOf)。
-                    // 站名短(2~12 字符),按自身宽度占位,不参与权重分配。
+                    // 站名短(2~12 字符),按自身宽度占位,不参与权重分配 ——
+                    // 空间不够时让右边那行文字截断,站名不能被挤成半截。
                     siteName?.let { site ->
                         SearchTag(text = site, emphasized = false)
-                        if (meta.isNotEmpty()) Spacer(modifier = Modifier.width(6.dp))
+                        if (info.isNotEmpty()) Spacer(modifier = Modifier.width(6.dp))
                     }
-                    if (meta.isNotEmpty()) {
+                    if (info.isNotEmpty()) {
                         Text(
-                            text = meta,
+                            text = info,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            // 权重给在**最后一个**元素上:空间不够时由它让位,
-                            // 站名标签不会被挤成半截。
                             modifier = Modifier.weight(1f, fill = false),
                         )
                     }
                 }
-            }
-            // note(如 "1:53:52" / "MIDA-474 | 150分")只在没有评分角标时补一行,
-            // 避免与右侧 ratingBadgeText 把同一段文字画两遍。
-            if (note.isNotEmpty() && com.github.tvbox.osc.ui.components.ratingBadgeText(note) == null) {
-                Text(
-                    text = note,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(top = 2.dp),
-                )
             }
         }
         com.github.tvbox.osc.ui.components.ratingBadgeText(video.note)?.let { score ->

@@ -31,6 +31,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.FilterChip
@@ -49,9 +50,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -237,6 +240,8 @@ internal fun RailResults(
     onOpenSourceSettings: () -> Unit,
     onCardClick: (Movie.Video) -> Unit,
     onCardLongClick: (Movie.Video) -> Unit,
+    /** 点缩略图看原图;null ⇒ 点图等价于点整行(播放),保证任何一处漏传都不会出现死区 */
+    onPosterClick: ((Movie.Video) -> Unit)? = null,
 ) {
     // 只有用户自己在往下滑、且快到列表尾部时才续搜:初始布局或"列表不够长"都不会自动把源搜完
     LaunchedEffect(listState, hasMore) {
@@ -386,6 +391,7 @@ internal fun RailResults(
                 ),
                 showSiteName = selectedSource == null,
                 multiSiteKeys = multiSiteKeys,
+                onPosterClick = onPosterClick,
             )
             // 来源栏常驻底栏(2026-10-10):不随列表滚动,结果多时无需反复下滑即可续搜/调范围
             SearchLoadMoreFooter(
@@ -447,6 +453,7 @@ internal fun RailResults(
                 contentPadding = PaddingValues(start = 10.dp, end = 12.dp, top = topPad + 8.dp, bottom = 12.dp),
                 showSiteName = selectedSource == null,
                 multiSiteKeys = multiSiteKeys,
+                onPosterClick = onPosterClick,
             )
         }
         SearchLoadMoreFooter(
@@ -485,6 +492,8 @@ private fun RailResultList(
     showSiteName: Boolean = false,
     /** 多站源(一站多网)的 sourceKey 集合;只有落在集合里的条目才画站名标签 */
     multiSiteKeys: Set<String> = emptySet(),
+    /** 点缩略图看原图;null ⇒ 点图等价于点整行(播放) */
+    onPosterClick: ((Movie.Video) -> Unit)? = null,
 ) {
     LazyColumn(
         state = listState,
@@ -522,6 +531,7 @@ private fun RailResultList(
                 },
                 onClick = { onCardClick(rep) },
                 onLongClick = { onLongClick(rep) },
+                onPosterClick = onPosterClick?.let { cb -> { cb(rep) } },
             )
         }
         if (groups.isEmpty() && !running && !hasMore) {
@@ -782,6 +792,132 @@ internal fun SearchLoadMoreFooter(
  * 2. 内容角标(中文字幕/无码影片…,主色胶囊)—— 与来源无关的内容信息,保留突出;
  * 3. 元信息(年份/地区/类型)—— 一行完整显示,不再被来源标签挤占。
  */
+/** 缩略图画框宽度:全列表统一,决定左边界那条竖线 */
+internal val SearchThumbWidth = 66.dp
+
+/**
+ * 缩略图画框高度 —— **只改这一个数就能校准画框比例**。
+ *
+ * <p>44.dp = 66 / 1.5,即与横版 DVD 封面 3:2 对齐。
+ *
+ * <p>留白的唯一成因是"画框比例 ≠ 图片比例"(留白量 = |框比 − 图比| / 较大者),
+ * 所以让画框等于横版封面的比例,横版图就严丝合缝、**零留白**。
+ * 首次构建后看 `echo-searchrow thumb aspect=` 的真实分布:若主流比例不是 1.5,
+ * 按 `H = 66 / 主流比例` 改这里即可,其余代码一行都不用动。
+ */
+internal val SearchThumbHeight = 44.dp
+
+/** 画框比例,必须与 [SearchThumbHeight] 同步;用于日志与"要不要画铺底"的判定 */
+private const val THUMB_FRAME_ASPECT = 1.5f
+
+/**
+ * 比这个更"竖"的图才需要模糊铺底。
+ *
+ * <p>取 1.48 而不是 1.5:给浮点误差留 0.02 的余量 —— 一张 1.49 的图在 1.5 的框里
+ * 只差 0.4dp,肉眼不可见,没必要为它多画一层。
+ */
+private const val THUMB_BACKDROP_MIN_ASPECT = 1.48f
+
+/**
+ * 搜索结果缩略图 —— **固定画框 + 三层结构 + 双热区**。
+ *
+ * <p>## 为什么要三层
+ * 画框宽高都固定(66×44,3:2)。横版封面比例与画框一致 ⇒ 主图直接铺满、零留白;
+ * 竖版封面必然左右留白 —— 那块"空白"用**同一张图放大模糊后的暗色延展**填掉,
+ * 于是框永远是满的,而图一点没裁。YouTube 缩略图、播放器竖屏画面都是这套做法。
+ *
+ * <p>## 铺底按需绘制
+ * `aspect ≥ 1.48` 的横版图根本不需要铺底(它自己就铺满了)。横版是绝大多数,
+ * 所以整体绘制成本与改动前基本一致;只有竖版行才多画一张。
+ * 未加载出来(`aspect == 0`)时也不画 —— 否则会先闪一块放大的糊图。
+ *
+ * <p>## 点击分流
+ * 缩略图自带 `combinedClickable`:单击 = 看原图(无图时回退成播放),长按 = 菜单。
+ * 外层行的 clickable **保持原样**,Compose 子节点先消费事件 ⇒ 点图不会冒泡成"播放"。
+ *
+ * @param onPlay 点图但**没有图**时的回退动作(等价于点整行)
+ * @param onPosterClick 点图且有图时打开原图浮层;为 null 时一律回退到 [onPlay]
+ */
+@Composable
+internal fun SearchThumb(
+    video: Movie.Video,
+    onPlay: () -> Unit,
+    onPosterClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
+) {
+    val pic = video.pic?.trim().orEmpty()
+    val hasPic = pic.isNotEmpty()
+    var aspect by remember(pic) { mutableStateOf(0f) }
+    val needsBackdrop = aspect > 0f && aspect < THUMB_BACKDROP_MIN_ASPECT
+
+    Box(
+        modifier = modifier
+            .width(SearchThumbWidth)
+            .height(SearchThumbHeight)
+            .clip(RoundedCornerShape(9.dp))
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .combinedClickable(
+                onLongClick = onLongClick,
+                onClick = { if (hasPic && onPosterClick != null) onPosterClick() else onPlay() },
+            ),
+    ) {
+        // 第 1 层:同图铺底(只有竖版图才画)。Crop 铺满 + 模糊 + 压暗
+        if (needsBackdrop) {
+            VodPoster(
+                name = video.name,
+                pic = video.pic,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = 0.45f }
+                    .blur(14.dp),
+            )
+            // 模糊后的图往往偏亮,不压一层黑会和主图抢视线
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.25f)),
+            )
+        }
+        // 第 2 层:清晰主图。fitContent = true ⇒ ContentScale.Fit,整图可见、绝不裁切
+        VodPoster(
+            name = video.name,
+            pic = video.pic,
+            modifier = Modifier.fillMaxSize(),
+            fitContent = true,
+            imageRadius = 9.dp,
+            onAspectRatio = { ratio ->
+                aspect = ratio
+                com.github.tvbox.osc.util.LOG.i(
+                    "echo-searchrow thumb aspect=" + ratio +
+                        " frame=" + THUMB_FRAME_ASPECT +
+                        " hasPic=" + hasPic +
+                        " backdrop=" + (ratio < THUMB_BACKDROP_MIN_ASPECT),
+                )
+            },
+        )
+        // 第 3 层:放大镜角标。不画的话用户不可能猜到"图能点"
+        if (hasPic) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(3.dp)
+                    .size(16.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.38f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Search,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.92f),
+                    modifier = Modifier.size(10.dp),
+                )
+            }
+        }
+    }
+}
+
 @Composable
 internal fun SearchResultRow(
     video: Movie.Video,
@@ -789,6 +925,7 @@ internal fun SearchResultRow(
     onLongClick: () -> Unit,
     sourceCount: Int = 1,
     siteName: String? = null,
+    onPosterClick: (() -> Unit)? = null,
 ) {
     // 设计稿的清单行:66×42 缩略图 + 单行标题 + 元信息,不再用卡片底。
     // 搜索页用户是在**扫片名**,不是看海报:卡片(72×96)一屏只放 4 条,行样式能放 8 条以上。
@@ -804,13 +941,12 @@ internal fun SearchResultRow(
                 .padding(vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            VodPoster(
-                name = video.name,
-                pic = video.pic,
-                modifier = Modifier
-                    .width(66.dp)
-                    .height(42.dp)
-                    .clip(RoundedCornerShape(9.dp)),
+            // 缩略图:固定画框 66×44 + 三层结构 + 双热区,详见 SearchThumb 的 KDoc
+            SearchThumb(
+                video = video,
+                onPlay = onClick,
+                onPosterClick = onPosterClick,
+                onLongClick = onLongClick,
             )
             Column(
                 modifier = Modifier
@@ -836,7 +972,7 @@ internal fun SearchResultRow(
                         }
                     },
                 )
-                val note = video.note?.trim().orEmpty()
+                val note = noteBodyOf(video)
                 val meta = searchMetaText(video)
                 if (note.isNotEmpty() || meta.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(3.dp))
@@ -992,6 +1128,28 @@ internal fun siteTagOf(video: Movie.Video): String? {
     if (head.none { it.isLetter() }) return null
     if (SITE_TAG_DENIED.matches(head)) return null
     return head
+}
+
+/**
+ * `video.note` **去掉站名前缀之后**的正文部分 —— 结果行要显示的内容信息。
+ *
+ * <p>爬虫写进 `vod_remarks` 的原始形态是 `"<站名> · <原始备注>"`,例如
+ * `"123AV · 3:21:59"`、`"SEXTB · 3 min"`、`"JAVRATE · YMDD-370"`。
+ * 站名已经由 [siteTagOf] 单独取出来画成标签了,再把整条 note 原样显示一遍,
+ * 用户会看到 `123AV` 出现两次(标签一次、信息行一次)—— 真机截图里就是这样。
+ *
+ * <p>剥不到站名前缀(单站源的普通备注、或前缀不像站名)⇒ **原样返回**,
+ * 一个字都不动 —— 这条只负责"别重复",不负责"改写备注"。
+ */
+internal fun noteBodyOf(video: Movie.Video): String {
+    val note = video.note?.trim().orEmpty()
+    if (note.isEmpty()) return ""
+    // 必须与 siteTagOf 用**同一个判据**:两处各写一套,迟早漂移成
+    // "标签剥掉了、信息行没剥"(或反过来),又变成重复显示。
+    if (siteTagOf(video) == null) return note
+    val cut = note.indexOf(SITE_TAG_SEPARATOR)
+    if (cut <= 0) return note
+    return note.substring(cut + SITE_TAG_SEPARATOR.length).trim()
 }
 
 /**

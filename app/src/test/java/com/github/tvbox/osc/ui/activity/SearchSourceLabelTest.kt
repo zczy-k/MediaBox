@@ -201,4 +201,48 @@ class SearchSourceLabelTest {
         assertNull(sourceLabelOf(video("HD"), multiSite = true))
         assertNull(sourceLabelOf(video(null), multiSite = true))
     }
+
+    // ---------- noteBodyOf:信息行要显示的那部分 ----------
+
+    @Test
+    fun `站名前缀被剥掉`() {
+        // 这是"站名出现两次"的修复点:标签画了 123AV,信息行不该再写一遍 123AV
+        assertEquals("3:21:59", noteBodyOf(video("123AV · 3:21:59")))
+        assertEquals("3 min", noteBodyOf(video("SEXTB · 3 min")))
+        assertEquals("ADN-811", noteBodyOf(video("JAVRATE · ADN-811")))
+        assertEquals("MIDA-474 | 150分 | 播放6284", noteBodyOf(video("AV01 · MIDA-474 | 150分 | 播放6284")))
+    }
+
+    @Test
+    fun `没有站名前缀时原样返回`() {
+        // 单站源的普通备注:一个字都不能动 —— 这条只负责"别重复",不负责"改写备注"
+        assertEquals("共30集,更新至12集", noteBodyOf(video("共30集,更新至12集")))
+        assertEquals("HD", noteBodyOf(video("HD")))
+        assertEquals("HD · 1080P", noteBodyOf(video("HD · 1080P")))
+        assertEquals("艾旦影视 · 采集", noteBodyOf(video("艾旦影视 · 采集")))
+        assertEquals("", noteBodyOf(video("")))
+        assertEquals("", noteBodyOf(video(null)))
+    }
+
+    @Test
+    fun `站名与正文的分隔符两侧空白被清掉`() {
+        assertEquals("3:21:59", noteBodyOf(video("123AV  ·  3:21:59")))
+    }
+
+    @Test
+    fun `剥前缀与画标签用的是同一个判据`() {
+        // 回归护栏:如果 siteTagOf 认了、noteBodyOf 没剥(或反过来),站名就会重复显示。
+        // 这里对同一批样本同时断言两者,任何一处判据漂移都会让这条失败。
+        val samples = listOf(
+            "123AV · 3:21:59" to ("123AV" to "3:21:59"),
+            "SEXTB · 1 min" to ("SEXTB" to "1 min"),
+            "HD · 1080P" to (null to "HD · 1080P"),
+            "共30集" to (null to "共30集"),
+        )
+        for ((raw, expected) in samples) {
+            val v = video(raw)
+            assertEquals("标签口径: $raw", expected.first, siteTagOf(v))
+            assertEquals("正文口径: $raw", expected.second, noteBodyOf(v))
+        }
+    }
 }

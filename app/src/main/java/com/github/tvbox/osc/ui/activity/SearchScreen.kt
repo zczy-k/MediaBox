@@ -51,6 +51,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.github.tvbox.osc.R
 import com.github.tvbox.osc.bean.Movie
 import com.github.tvbox.osc.ui.components.AppTopBarScaffold
+import com.github.tvbox.osc.ui.components.ImagePreviewOverlay
 import com.github.tvbox.osc.ui.components.LoadState
 import com.github.tvbox.osc.ui.components.LoadStateBox
 import com.github.tvbox.osc.ui.components.SearchField
@@ -390,6 +391,10 @@ private fun SearchResultsContent(
     // 否则拼音搜索时顶部会多出约 2×topPad 的空白(提示条一次 + 列表 contentPadding 一次)。
     // 这正是"包一层"带来的连带账,必须显式还掉。
     val childTopPad = if (pinyinNotice != null) 0.dp else topPad
+    // 原图预览的宿主(2026-10-22):挂在**页面级**而不是结果行里。
+    // 手机布局与横排布局是二选一渲染的,页面级只有一个浮层实例;
+    // 挂在行里则每个可见行各持一个 dialog 状态,几百行就是几百个,还会在切布局时残留。
+    var previewVideo by remember { mutableStateOf<Movie.Video?>(null) }
     AnimatedContent(
         targetState = resultLayout,
         transitionSpec = {
@@ -425,6 +430,7 @@ private fun SearchResultsContent(
                 onOpenSourceSettings = onOpenSourceSettings,
                 onCardClick = onCardClick,
                 onCardLongClick = onCardLongClick,
+                onPosterClick = { previewVideo = it },
             )
         } else {
             SearchListResults(
@@ -445,8 +451,19 @@ private fun SearchResultsContent(
                 onOpenSourceSettings = onOpenSourceSettings,
                 onCardClick = onCardClick,
                 onCardLongClick = onCardLongClick,
+                onPosterClick = { previewVideo = it },
             )
         }
+    }
+    // 浮层放在 AnimatedContent 之外:切换布局(横排/竖排)时它不该跟着做动画
+    previewVideo?.let { v ->
+        ImagePreviewOverlay(
+            pic = v.pic,
+            title = v.name,
+            // 站名只有"一站多网"的源才有意义,判据与结果行标签同源(见 siteTagOf)
+            siteName = siteTagOf(v),
+            onDismiss = { previewVideo = null },
+        )
     }
     }
 }
