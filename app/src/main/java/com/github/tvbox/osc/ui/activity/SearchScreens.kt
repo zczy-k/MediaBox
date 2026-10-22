@@ -822,8 +822,19 @@ internal fun SearchResultRow(
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
+                    // ⚠️ 两行 —— 与上方 KDoc 第 1 条("最多两行,番号标题普遍偏长")一致。
+                    // 这里曾写成 maxLines = 1,KDoc 与代码互相矛盾;番号标题被截成前缀后
+                    // 用户看不出是哪一部(2026-10-22 用户报"卡片显示不全")。
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
+                    onTextLayout = { result ->
+                        if (result.didOverflowHeight) {
+                            com.github.tvbox.osc.util.LOG.i(
+                                "echo-searchrow title-overflow name-len=" + (video.name?.length ?: 0) +
+                                    " lines=" + result.lineCount + " h=" + result.size.height,
+                            )
+                        }
+                    },
                 )
                 val note = video.note?.trim().orEmpty()
                 val meta = searchMetaText(video)

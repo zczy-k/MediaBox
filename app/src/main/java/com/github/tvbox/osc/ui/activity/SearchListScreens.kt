@@ -298,33 +298,68 @@ private fun SearchResultRow(
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
+                // ⚠️ **两行**,不是一行(2026-10-22 用户报"卡片显示不全")。
+                // 番号类标题普遍偏长:`ymdd-370-rm [Reducing Mosaic] St...` /
+                // `YMDD-370 温泉频道【温泉女子】被...` —— 单行只剩个前缀,
+                // 用户看不出这是哪一部。单行时代码与 SearchScreens 里那段 KDoc
+                // ("标题最多两行,番号标题普遍偏长")本来就是矛盾的,这里对齐 KDoc。
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
+                // 这条是「标题到底有没有被截断」的唯一可观测点:只在**真的溢出**时打,
+                // 否则每帧刷屏。排查"卡片显示不全"时先看有没有这行日志。
+                onTextLayout = { result ->
+                    if (result.didOverflowHeight) {
+                        com.github.tvbox.osc.util.LOG.i(
+                            "echo-searchrow title-overflow name-len=" + (video.name?.length ?: 0) +
+                                " lines=" + result.lineCount +
+                                " h=" + result.size.height,
+                        )
+                    }
+                },
             )
+            val note = video.note?.trim().orEmpty()
             val meta = listOfNotNull(
                 if (video.year > 0) video.year.toString() else null,
                 video.type?.takeIf { it.isNotBlank() },
             ).joinToString(" · ")
-            if (meta.isNotEmpty()) {
+            // 站名与元信息**同一行**:以前站名独占一行,叠在单行标题下面,
+            // 整行变成"标题 / 站名"两截,右边大片空白 —— 视觉上就像卡片没画完。
+            if (siteName != null || meta.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.padding(top = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    // 来源站名标签:仅"全部"视图、且仅**多站源**传入(见 sourceLabelOf)。
+                    // 站名短(2~12 字符),按自身宽度占位,不参与权重分配。
+                    siteName?.let { site ->
+                        SearchTag(text = site, emphasized = false)
+                        if (meta.isNotEmpty()) Spacer(modifier = Modifier.width(6.dp))
+                    }
+                    if (meta.isNotEmpty()) {
+                        Text(
+                            text = meta,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            // 权重给在**最后一个**元素上:空间不够时由它让位,
+                            // 站名标签不会被挤成半截。
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                    }
+                }
+            }
+            // note(如 "1:53:52" / "MIDA-474 | 150分")只在没有评分角标时补一行,
+            // 避免与右侧 ratingBadgeText 把同一段文字画两遍。
+            if (note.isNotEmpty() && com.github.tvbox.osc.ui.components.ratingBadgeText(note) == null) {
                 Text(
-                    text = meta,
+                    text = note,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp),
                 )
-            }
-            // 来源站名标签(v1.0.0 设计恢复,2026-10-22 用户要求):
-            // sourceName 就是首页源列表显示的名字 —— "首页已亮出来"的前提天然满足。
-            // 仅"全部"视图传入(单源视图整屏同源,不用标);按剩余宽度自适应,不截断。
-            siteName?.let { site ->
-                Row(modifier = Modifier.padding(top = 2.dp)) {
-                    SearchTag(
-                        text = site,
-                        emphasized = false,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                }
             }
         }
         com.github.tvbox.osc.ui.components.ratingBadgeText(video.note)?.let { score ->
