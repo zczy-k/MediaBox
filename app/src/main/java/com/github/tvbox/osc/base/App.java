@@ -120,35 +120,16 @@ public class App extends Application {
         // 两者都只是"启动时清理",不参与任何初始化时序,放后台无副作用。
         // ⚠️ purgeExoCacheIfPending 必须排在前面:它须尽量早于首次 getSharedCache(见其方法注释),
         //    把 cleanPlayerCache 放前面会平白推迟它。
-        // Python 运行时预热(2026-10-22,启动优化)。
-        //
-        // 真机启动日志:进程起来后 +2.17s 才开始加载 py 爬虫,其中 `PyLoader echo-init`
-        // 一步就占 ~500ms(Chaquopy 首次把 Python VM 拉起来 + 导入标准库),
-        // 之后 +2.77s 才真正"加载spider",+4.75s 首页才有内容。
-        // 也就是说这 500ms 卡在"配置读完 → 首页请求"的**串行路径**上,用户白等。
-        //
-        // 这里把它挪到进程最早期,用**独立后台线程**与"读配置 / 首帧渲染"并行。
-        //
-        // ⚠️ 只预热运行时,**不加载任何具体 spider**:后续 `SpiderLoader.getSpider` 的逻辑
-        //    一个字都没改,只是轮到它时 VM 已经就绪 —— 功能语义完全等价。
-        // ⚠️ 任何异常一律吞掉:预热失败等价于"没有预热",退回原来的行为,绝不能影响启动。
-        //    所以这里不用 runCatching 之外的任何控制流。
-        new Thread(() -> {
-            long warmStart = android.os.SystemClock.elapsedRealtime();
-            try {
-                // ⚠️ 用 getInstance() 而不是 start(...):后者的签名要 com.chaquo.python.Platform,
-                //    传 Application 直接编译不过(CI 39751941497 就是这样挂的)。
-                //    getInstance() 的契约正是"取实例,必要时把运行时启动起来",且幂等 ——
-                //    后续任何一处真正用到 Python 时拿到的还是同一个实例。
-                com.chaquo.python.Python.getInstance();
-                com.github.tvbox.osc.util.LOG.i(
-                        "echo-warm-python done ms=" + (android.os.SystemClock.elapsedRealtime() - warmStart));
-            } catch (Throwable th) {
-                com.github.tvbox.osc.util.LOG.i(
-                        "echo-warm-python failed " + th.getClass().getSimpleName() +
-                                " ms=" + (android.os.SystemClock.elapsedRealtime() - warmStart));
-            }
-        }, "startup-python-warm").start();
+        // ⚠️ 2026-10-22 尝试过在这里预热 Python 运行时,**已撤回**,原因记录在此免得再试:
+        //   ① `Python.start(App.this)` 编译不过 —— 形参是 com.chaquo.python.Platform;
+        //   ② 换成 `Python.getInstance()` 编译过了,但运行时抛 RuntimeException(未启动);
+        //   ③ 正确写法 `Python.start(new AndroidPlatform(app))` 会与
+        //      PythonLoader.setApplication 里的 `if (!Python.isStarted())` 形成竞态:
+        //      两边同时看到"未启动"就各自 start,一旦撞上,setApplication 会抛
+        //      RuntimeException ⇒ 爬虫加载失败 ⇒ 首页空白。
+        //   预热失败只省 ~0.5s,换一个"首页可能空白"的风险不划算,故放弃。
+        //   另外核实:那 500ms 其实是本地 HTTP(127.0.0.1:9978)取 .py 再落盘,
+        //   不是 Python VM 启动 —— 想省它要改取文件的方式,属结构性改动,另行评估。
         new Thread(() -> {
             FileUtils.purgeExoCacheIfPending();
             FileUtils.cleanPlayerCache();
