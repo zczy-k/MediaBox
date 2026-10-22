@@ -412,7 +412,12 @@ class SearchViewModel : ViewModel() {
         // 没命中就**原样退回普通关键词搜索**(源站本就支持番号搜索,这是它原本的能力)。
         // 这样即使 looksLikePinyin 再判错,最坏也只是"多查一次本地索引",
         // 绝不会让用户搜不了东西。
-        val t = if (PinyinQuery.looksLikePinyin(typed)) {
+        // 拼音劫持收窄(2026-10-22):纯大写字母串(长度>=2)大概率是番号(NHDTC/ABC),
+        // 不是拼音首字母输入 —— 不做拼音解析,原样进普通搜索(归一化后变小写,源站能搜番号)。
+        // 否则 resolve 从观看历史捞出相近片名,搜索词被偷换,用户看到"大写搜不出"。
+        val looksPinyin = PinyinQuery.looksLikePinyin(typed) &&
+            !(typed.length >= 2 && typed.all { it.isUpperCase() })
+        val t = if (looksPinyin) {
             val resolved = TitleIndexMemory.resolve(typed)
             if (resolved.isNotEmpty()) {
                 LOG.i("echo-pinyin resolved q=" + typed + " -> " + resolved.joinToString("|"))

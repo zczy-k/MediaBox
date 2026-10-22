@@ -126,7 +126,9 @@ internal fun SearchListResults(
     LazyColumn(
         state = listState,
         modifier = Modifier.weight(1f),
-        contentPadding = PaddingValues(top = topPad - 4.dp, bottom = 12.dp),
+        // 2026-10-22 闪退止血:pinyinNotice 弹出时 topPad 为 0,0-4=-4dp ⇒ PaddingValues 负值
+        // IllegalArgumentException(真机崩溃栈实锤)。下限保护必须有。
+        contentPadding = PaddingValues(top = (topPad - 4.dp).coerceAtLeast(0.dp), bottom = 12.dp),
     ) {
         if (running || done.size > 1) {
             item(key = "search_leading") {

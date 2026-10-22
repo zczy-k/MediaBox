@@ -12,11 +12,15 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import com.github.tvbox.osc.ui.theme.MediaBoxRadius
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyListState
@@ -50,6 +54,7 @@ import com.github.tvbox.osc.ui.components.AppTopBarScaffold
 import com.github.tvbox.osc.ui.components.LoadState
 import com.github.tvbox.osc.ui.components.LoadStateBox
 import com.github.tvbox.osc.ui.components.SearchField
+import com.github.tvbox.osc.ui.components.TvSearchKeyboardPanel
 import com.github.tvbox.osc.ui.components.VodCardMenu
 import com.github.tvbox.osc.ui.components.glassTopBarSurface
 import com.github.tvbox.osc.ui.components.rememberVodCardMenuState
@@ -128,6 +133,14 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
     // 进入搜索页即聚焦并弹键盘:否则用户要多点一次输入框才能打字
     val searchFocus = remember { FocusRequester() }
 
+    // TV 端(2026-10-22):系统 IME 遥控器输入体验差,改为自绘全屏键盘面板(Netflix/YouTube 模式)。
+    // 手机/平板不受影响(继续系统 IME)。
+    val isTv = remember {
+        (context.resources.configuration.uiMode and
+            android.content.res.Configuration.UI_MODE_TYPE_TELEVISION) != 0
+    }
+    var showTvPanel by remember { mutableStateOf(false) }
+
     val resultListState = rememberLazyListState()
 
     LaunchedEffect(resultLayout) {
@@ -144,20 +157,54 @@ fun SearchScreen(vm: SearchViewModel = viewModel()) {
         history = KV.get(HawkConfig.SEARCH_HISTORY, ArrayList())
     }
 
+    if (isTv && showTvPanel) {
+        TvSearchKeyboardPanel(
+            query = query,
+            onQueryChange = { q ->
+                query = q
+                vm.search(q)
+            },
+            onDismiss = { showTvPanel = false },
+        )
+    }
+
     AppTopBarScaffold(
         collapseEnabled = false,
         titleContent = {
-            SearchField(
-                query = query,
-                onQueryChange = { query = it },
-                onSearch = { submit(query) },
-                focusRequester = searchFocus,
-                autoFocus = true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 4.dp),
+            if (isTv) {
+                // 假输入条:纯回显 + 点击开键盘面板(TV 不弹系统 IME)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 4.dp)
+                        .height(44.dp)
+                        .clip(RoundedCornerShape(MediaBoxRadius.Pill))
+                        .background(MaterialTheme.colorScheme.surfaceContainer)
+                        .clickable { showTvPanel = true }
+                        .padding(horizontal = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = query.ifEmpty { stringResource(R.string.home_search_hint) },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (query.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                    )
+                }
+            } else {
+                SearchField(
+                    query = query,
+                    onQueryChange = { query = it },
+                    onSearch = { submit(query) },
+                    focusRequester = searchFocus,
+                    autoFocus = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 4.dp),
 
-            )
+                )
+            }
         },
         navigationIcon = {
             Box(
