@@ -809,6 +809,69 @@ object SearchSettings {
         return variants.toList()
     }
 
+    /**
+     * **番号原生形**:`"ymdd370"` → `"YMDD-370"`(字母块与数字块之间补 `-`,整体大写)。
+     *
+     * <p>规则只有一条 —— 去分隔符后必须是**恰好一段字母 + 一段数字**。
+     * 之所以不"先把所有分隔符去掉再按固定位置重排":`FC2-PPV-4925855` 这种
+     * "字母块里夹数字"的番号会被重排成 `FC2PPV4925855`,与站方写法差得更远 ——
+     * 这种形态直接返回 null(不重排),保持调用方的原顺序。
+     *
+     * <p>取不到"字母段 + 数字段"形态(纯数字、纯字母、中文、夹数字字母块)⇒ 返回 null。
+     */
+    fun canonicalCodeForm(keyword: String?): String? {
+        val raw = keyword?.trim().orEmpty()
+        if (raw.isEmpty()) return null
+        val compact = raw.filterNot { ch ->
+            ch.isWhitespace() || ch == '-' || ch == '_' || ch == '.' ||
+                ch == '－' || ch == '—' || ch == '–' || ch == '−'
+        }
+        if (!hasLetterAndDigit(compact)) return null
+        val m = CODE_SHAPE_PATTERN.find(compact) ?: return null
+        return m.groupValues[1].uppercase(java.util.Locale.ROOT) + "-" + m.groupValues[2]
+    }
+
+    /** 去分隔符后"恰好一段字母 + 一段数字"(`adn811` ✓ / `fc2ppv4925855` ✗) */
+    private val CODE_SHAPE_PATTERN = Regex("(?i)^([a-z]+)(\\d+)$")
+
+    /**
+     * 与 [queryVariants] 同一组候选,但**顺序/首词**按"番号该先问哪种写法"规范化(2026-10-22)。
+     *
+     * <p>## 修的是什么
+     * 用户输入 `ymdd370` 得到的结果数**少于** `ymdd-370`。两个原因叠在一起:
+     * ① [queryVariants] 恒把用户的**原词**放第一,而 `runSourceSearch` 只在原词
+     * **零命中**时才补发下一个变体 —— `ymdd370` 恰好能被不少站点的模糊匹配捞到几条,
+     * 于是判定 [ResultState.Done] 收工,带横杠的写法**一次都没问出去**;
+     * ② 敲 `ymdd370`(无分隔符)时,"去分隔符的紧凑形"与原词相等、被集合去重掉 ⇒
+     * 变体表里**根本不存在**带横杠的写法 —— 想补的候选压根没有。
+     *
+     * <p>## 改法
+     * 番号查询一律**先问站方惯用形**([canonicalCodeForm]:字母块与数字块之间带 `-`、
+     * 整体大写,如 `YMDD-370`),用户的原始写法退居第二。四种输入
+     * (`ymdd370` / `ymdd-370` / `YMDD370` / `YMDD-370`)因此**首个查询词完全相同**,
+     * 交到源站手里的问题一模一样 ⇒ 结果数一致(这才是用户要的"四种写法一样多")。
+     *
+     * <p>⚠️ 大小写差异本身不影响命中(2026-10-22 实测 `adn811` 与 `ADN811` 同为 11 条),
+     * 真正的影响因素是**横杠**;统一成大写只是为了跟站方写法对齐。
+     *
+     * <p>非番号查询("功夫女足"这类)原序一位不动;`FC2-PPV-4925855` 这类
+     * "字母块里夹数字"的形态取不到规范形 ⇒ 也不动 —— 行为与改动前完全一致。
+     */
+    fun orderedQueryVariants(keyword: String?): List<String> {
+        val list = queryVariants(keyword)
+        if (list.isEmpty()) return list
+        if (!looksLikeCodeQuery(keyword)) return list
+        val raw = keyword?.trim().orEmpty()
+        val canonical = canonicalCodeForm(raw) ?: return list
+        // ⚠️ 必须能**新增**候选,不能只在既有列表里重排:见上面原因 ②。
+        if (canonical in list) return list
+        val head = ArrayList<String>(list.size + 1)
+        head.add(canonical)
+        head.addAll(list)
+        // 总长不得超上限:规范形占掉一个名额时,砍掉尾部最不值钱的那个(通常已是简繁变体)。
+        return if (head.size > MAX_QUERY_VARIANTS) head.subList(0, MAX_QUERY_VARIANTS) else head
+    }
+
     private fun collapse(text: String): String =
         text.replace(MULTI_SPACE_PATTERN, " ").trim()
 

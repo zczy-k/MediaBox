@@ -224,12 +224,13 @@ internal fun SearchListResults(
                         .forEach { video ->
                             SearchResultRow(
                                 video = video,
-                                // 真实来源站名:仅"全部"视图标来源。
-                                // ⚠️ 不能直接用 result.sourceName —— 「一站多网」源(见 sourceLabelOf KDoc)
-                                // 的源名是打包名("sextb_tvbox"),会让四条站的结果都写成同一个名字。
-                                // sourceLabelOf 先取爬虫写在 note 里的真实站名,取不到才回落到源名。
+                                // 真实来源站名:仅"全部"视图标来源,且**只有多站源才标**。
+                                // ⚠️ 不能直接用 result.sourceName —— 那是**源名**("sextb_tvbox" 这种打包名),
+                                // 与条目来自源里哪个网站无关;一站多网的源会让几个站的结果全写成同一个名字。
+                                // ⚠️ 单站源**一条都不标**(用户 2026-10-22 明确要求):单站源的源名就是站名,
+                                // 在首页已经露过一遍,搜索列表再标是纯噪音。
                                 siteName = if (selectedSource == null) {
-                                    sourceLabelOf(video, result.sourceName)
+                                    sourceLabelOf(video, result.isMultiSite)
                                 } else {
                                     null
                                 },

@@ -355,6 +355,11 @@ internal fun RailResults(
     // 横屏/TV)屏幕宽,侧栏保留 —— 侧栏能同时呈现 pending/queued/failed/timeout 状态点,
     // 是信息量更高的形态,宽屏没有理由放弃。
     val done = remember(results) { results.filter { it.videos.isNotEmpty() } }
+    // 多站源集合(2026-10-22):只有这些源的条目才有"站名"可言 —— 单站源标出来是纯噪音,用户明确要求不显示。
+    // 挂在 results 上算一次,不要挪到行渲染里逐条判(isMultiSite 本身是按源算好的,这里只是收拢成集合)。
+    val multiSiteKeys = remember(results) {
+        results.filter { it.isMultiSite }.map { it.sourceKey }.toHashSet()
+    }
     if (currentWindowWidthClass() == WindowWidthClass.Compact) {
         Column(modifier = Modifier.fillMaxSize()) {
             if (done.size > 1) {
@@ -380,6 +385,7 @@ internal fun RailResults(
                     bottom = 12.dp,
                 ),
                 showSiteName = selectedSource == null,
+                multiSiteKeys = multiSiteKeys,
             )
             // 来源栏常驻底栏(2026-10-10):不随列表滚动,结果多时无需反复下滑即可续搜/调范围
             SearchLoadMoreFooter(
@@ -440,6 +446,7 @@ internal fun RailResults(
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(start = 10.dp, end = 12.dp, top = topPad + 8.dp, bottom = 12.dp),
                 showSiteName = selectedSource == null,
+                multiSiteKeys = multiSiteKeys,
             )
         }
         SearchLoadMoreFooter(
@@ -476,6 +483,8 @@ private fun RailResultList(
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues,
     showSiteName: Boolean = false,
+    /** 多站源(一站多网)的 sourceKey 集合;只有落在集合里的条目才画站名标签 */
+    multiSiteKeys: Set<String> = emptySet(),
 ) {
     LazyColumn(
         state = listState,
@@ -502,8 +511,11 @@ private fun RailResultList(
                 // 真实来源站名:把该组内各成员的站名去重后拼起来。
                 // 普通剧集聚合时,同一部片的多个源可能跨站(sextb+123av),拼起来才不丢信息;
                 // 番号查询不聚合,每组只有一个成员,自然只有一枚站名。
+                // ⚠️ 成员**必须来自多站源**(multiSiteKeys)才画 —— 单站源一条都不标(用户 2026-10-22 要求)。
                 siteName = if (showSiteName) {
-                    group.videos.mapNotNull { siteTagOf(it) }.distinct()
+                    group.videos
+                        .filter { it.sourceKey in multiSiteKeys }
+                        .mapNotNull { siteTagOf(it) }.distinct()
                         .takeIf { it.isNotEmpty() }?.joinToString("/")
                 } else {
                     null
@@ -890,29 +902,126 @@ internal fun searchMetaText(video: Movie.Video): String = listOfNotNull(
 ).joinToString(" · ")
 
 /**
- * 「一站多网」源的**真实来源站名**。
+ * 多站源里**单条结果**的站名标签。
  *
- * <p>背景(2026-10-22,真机实测):用户的订阅里只有 1 条源,但那条源装的爬虫是「多站合一」
- * —— 一个 `.py` 里装着 sextb / av01 / javrate / 123av 四个网站。爬虫把这四个站的结果
- * **合并在同一次搜索回包**里,并把站名写进了每条的 `vod_remarks`,形如:
- * `"AV01 · MIDA-474 | 150分 | 播放6284"`、`"SEXTB · 1 min"`、`"123AV · 1:53:52"`。
+ * <p>背景(2026-10-22 真机实测):有的源是「一站多网」—— 一个 `.py` 里装着 sextb / av01 /
+ * javrate / 123av 四个网站,四站的搜索结果**合并在同一次回包**里。爬虫把站名写进每条的
+ * `vod_remarks`,形如 `"AV01 · MIDA-474 | 150分"`、`"SEXTB · 1 min"`、`"123AV · 1:53:52"`,
+ * 经 [com.github.tvbox.osc.bean.AbsJson] 落到 `video.note`。
  *
- * <p>经 [com.github.tvbox.osc.bean.AbsJson] 落到 `video.note`。
+ * <p>⚠️ 不能用 `SourceResult.sourceName` 当站名 —— 那是**源的名字**("sextb_tvbox",打包名),
+ * 与条目来自四个站中的哪一个无关,会让四条站的结果全写成同一个名字。
  *
- * <p>⚠️ 不能拿 `SourceResult.sourceName` 当站名用 —— 那是**源的名字**(此例为 "sextb_tvbox"),
- * 与条目实际来自四个站中的哪一个毫无关系。用它会让每条结果的标签都写同一个字符串,
- * 表现成"只搜到了 sextb"。
+ * <p>⚠️ **单站源不许显示**(2026-10-22 用户明确要求)。判据不在本函数,而在
+ * [isMultiSiteSource]:只有"同一源同一轮搜索出现 ≥2 种站名"才认定多站源。
+ * 单站源的源名本身就是站名,再标一遍是纯噪音。
  *
- * @return 四个站名之一;`note` 里没有站名前缀(普通单站源)时返回 null,由调用方决定回落。
+ * <p>站名形态识别:爬虫写入的格式恒为 `"<站名> · <原始备注>"`,取第一个 `·` 之前的部分;
+ * 该部分必须是**纯 ASCII 字母数字**且长度 2~12 才认作站名:
+ * - `"AV01 · MIDA-474"` → `AV01`
+ * - `"共30集,更新至12集"` → 无分隔符 ⇒ null(单站源普通备注)
+ * - `"艾旦影视采集"` → 无分隔符 ⇒ null(中文不误判为站名)
+ * - `"HD · 1080P"` → 候选 "HD",但只有一种,由 [isMultiSiteSource] 的 ≥2 门槛挡掉
  */
-private val SEARCH_SITE_TAG_RE = Regex("^(SEXTB|AV01|JAVRATE|123AV)\\b")
+private const val SITE_TAG_SEPARATOR = "·"
 
-internal fun siteTagOf(video: Movie.Video): String? =
-    video.note?.trim()?.let { SEARCH_SITE_TAG_RE.find(it)?.value }
+/** 站名候选允许的字符集:纯 ASCII 字母数字(SEXTB / AV01 / JAVRATE / 123AV 这类) */
+private val SITE_TAG_ALLOWED = Regex("^[A-Za-z0-9]{2,12}$")
 
 /**
- * 搜索结果行要显示的来源文字,顺序:爬虫写在 note 里的真实站名 → 源自身的名字。
- * 普通单站源走后者(名字就是站名);多站合一源走前者(名字是无意义的打包名)。
+ * 「看着像站名、其实是画质/编码备注」的黑名单。
+ *
+ * <p>为什么非要有它:[isMultiSiteSource] 的判据是"≥2 个**重复出现**的站名候选"。
+ * 单站源的备注里 `"HD · 国语"` / `"BD · 粤语"` 这类写法完全可能出现,`HD` 与 `BD`
+ * 各自重复 ≥2 次 ⇒ 被误判成多站源 ⇒ 又在单站源上标出灰字 —— 正是用户 2026-10-22
+ * 反复要求去掉的东西。宁可漏标(多站源少标一次,信息量损失小),不可误标。
  */
-internal fun sourceLabelOf(video: Movie.Video, fallbackSourceName: String?): String? =
-    siteTagOf(video) ?: fallbackSourceName?.takeIf { it.isNotBlank() }
+private val SITE_TAG_DENIED = Regex(
+    "(?i)^(?:" +
+        "\\d+" +                                        // 纯数字:年份 / 集数
+        "|\\d{3,4}[pP]" +                               // 1080P / 720P
+        "|\\d+[kK]" +                                   // 4K / 8K
+        "|[hHbB][dD]|[tT][cC]|[cC][dD]|[sS][dD]|[hH][qQ]|[dD][vV][dD]" +
+        "|[hH][dD][tT][vV]|[wW][eE][bB]|[bB][dD][mM][vV]|[rR][eE][mM][uU][xX]" +
+        "|[bB][lL][uU][rR][aA][yY]|[hH][dD][rR]|[sS][dD][rR]" +
+        "|[xX]26[45]|[hH]26[45]|[hH][eE][vV][cC]|[aA][vV][cC]|[aA][aA][cC]" +
+        "|[mM][pP][34]|[mM][kK][vV]|[fF][lL][aA][cC]|[aA][tT][vV]" +
+        ")$",
+)
+
+/**
+ * 多站源里**单条结果**的站名标签。
+ *
+ * <p>背景(2026-10-22 真机实测):有的源是「一站多网」—— 一个 `.py` 里装着 sextb / av01 /
+ * javrate / 123av 四个网站,四站的搜索结果**合并在同一次回包**里。爬虫把站名写进每条的
+ * `vod_remarks`,形如 `"AV01 · MIDA-474 | 150分"`、`"SEXTB · 1 min"`、`"123AV · 1:53:52"`,
+ * 经 [com.github.tvbox.osc.bean.AbsJson] 落到 `video.note`。
+ *
+ * <p>⚠️ 不能用 `SourceResult.sourceName` 当站名 —— 那是**源的名字**("sextb_tvbox",打包名),
+ * 与条目来自四个站中的哪一个无关,会让四条站的结果全写成同一个名字。
+ *
+ * <p>⚠️ **单站源不许显示**(2026-10-22 用户明确要求)。本函数只负责"这一条的站名叫什么",
+ * "该不该显示"由 [isMultiSiteSource] 按**整个源**决定。
+ *
+ * <p>形态识别:爬虫写入的格式恒为 `"<站名> · <原始备注>"`,取第一个 `·` 之前的部分,
+ * 且该部分必须 ① 纯 ASCII 字母数字、长度 2~12;② 至少含 1 个字母;
+ * ③ 不在 [SITE_TAG_DENIED] 里。于是:
+ * - `"AV01 · MIDA-474"` → `AV01`
+ * - `"共30集,更新至12集"` → null(无分隔符)
+ * - `"艾旦影视采集"` → null(无分隔符;且中文过不了字母数字校验)
+ * - `"HD · 1080P"` → null(黑名单)
+ */
+internal fun siteTagOf(video: Movie.Video): String? {
+    val note = video.note?.trim().orEmpty()
+    if (note.isEmpty()) return null
+    val cut = note.indexOf(SITE_TAG_SEPARATOR)
+    if (cut <= 0) return null
+    val head = note.substring(0, cut).trim()
+    if (!SITE_TAG_ALLOWED.matches(head)) return null
+    if (head.none { it.isLetter() }) return null
+    if (SITE_TAG_DENIED.matches(head)) return null
+    return head
+}
+
+/**
+ * 这个**源**是不是多站源 —— 即"一个源里装着多个网站"。
+ *
+ * <p>判据(运行时自证,不需要配置或人工标注):该源本轮结果里,站名候选**重复出现 ≥2 次**
+ * 且这样的候选**有 ≥2 种** ⇒ 多站源。
+ *
+ * <p>为什么要求"重复 ≥2 次"而不是只数种类:真站名在多站源的每一次回包里**成批出现**
+ * (每个站贡献很多条),而单站源的备注头是零散的(`"1080P · 国语"` 与 `"720P · 中字"`
+ * 各来一条,种类就能凑够 2)。加上重复门槛后,单站源要靠"两种反复出现的备注头"才会
+ * 被误判,再叠 [SITE_TAG_DENIED] 把画质/编码词挡掉,剩余误判空间已经很小。
+ *
+ * <p>代价是**漏标**:多站源某轮每个站只命中 1 条时(番号冷门查询)不标站名。
+ * 这个方向是故意的 —— 用户要求的是"单站源不许出现灰字",误标比漏标严重得多。
+ *
+ * <p>⚠️ 必须按**整个源**算,不要逐条算 —— 逐条算会让同一源里有的行有标签、有的行没有,
+ * 视觉上像 bug。
+ */
+internal fun isMultiSiteSource(videos: List<Movie.Video>): Boolean {
+    if (videos.size < 2) return false
+    val counts = HashMap<String, Int>(4)
+    for (v in videos) {
+        val t = siteTagOf(v) ?: continue
+        counts[t] = (counts[t] ?: 0) + 1
+    }
+    var repeated = 0
+    for (n in counts.values) {
+        if (n >= 2) {
+            repeated++
+            if (repeated >= 2) return true
+        }
+    }
+    return false
+}
+
+/**
+ * 搜索结果行要显示的来源文字。
+ *
+ * @param multiSite 该**源**是否多站源(由 [isMultiSiteSource] 按整个源算)
+ * @return 多站源 ⇒ 本条自己的站名;单站源 ⇒ **null(不显示)**;多站源但本条认不出站名 ⇒ null
+ */
+internal fun sourceLabelOf(video: Movie.Video, multiSite: Boolean): String? =
+    if (multiSite) siteTagOf(video) else null

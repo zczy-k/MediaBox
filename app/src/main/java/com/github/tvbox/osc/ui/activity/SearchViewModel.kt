@@ -85,6 +85,17 @@ class SearchViewModel : ViewModel() {
         val arrivedAt: Int = Int.MAX_VALUE,
         /** 本源耗时(ms),仅终态有值;来源不可用时为 -1 */
         val elapsedMs: Long = -1L,
+        /**
+         * 本源是不是**多站源**(一个源里装着多个网站)—— 见 [isMultiSiteSource]。
+         *
+         * <p>按**整个源**算一次(≥2 种站名才为 true),结果行据此决定标不标站名:
+         * 多站源逐条标真实站名,单站源**一条都不标** —— 用户 2026-10-22 明确要求
+         * "单站源搜索列表中不显示灰色字来源"。单站源的源名本身就是站名,再标一遍是纯噪音。
+         *
+         * <p>⚠️ 必须挂在 SourceResult 上按源算,不能逐条算:逐条算会让同一源里
+         * 有的行有标签、有的行没有,视觉上像 bug。
+         */
+        val isMultiSite: Boolean = false,
     )
 
 
@@ -483,7 +494,14 @@ class SearchViewModel : ViewModel() {
         if (cached.isNotEmpty()) {
             results.value = results.value.map { r ->
                 val hit = cached[r.sourceKey]
-                if (hit.isNullOrEmpty()) r else r.copy(videos = hit, state = ResultState.Done, arrivedAt = ++arriveSeq)
+                if (hit.isNullOrEmpty()) r else r.copy(
+                    videos = hit,
+                    state = ResultState.Done,
+                    arrivedAt = ++arriveSeq,
+                    // 多站源判定按源的**全部**结果算一次:站名候选 ≥2 种 ⇒ 一站多网。
+                    // 单站源恒为 false ⇒ 结果行不画站名标签(用户 2026-10-22 要求)。
+                    isMultiSite = isMultiSiteSource(hit),
+                )
             }
             LOG.i("echo-searchplan cache-hydrate kw=" + searchedTitle.value + " sources=" + cached.size)
         }
@@ -492,8 +510,10 @@ class SearchViewModel : ViewModel() {
         timeoutCount.value = 0
         // 查询变体:番号类关键词(带横杠/下划线等)除原词外还有一个紧凑形式。
         // ⚠️ 变体不再对每个源无条件双发:由 runSourceSearch 逐源推进,
-        // 原词没有任何有效命中时才补紧凑形式(见 runSourceSearch)。
-        queryVariants = SearchSettings.queryVariants(t)
+        // 原词没有任何有效命中(或只命中少量)时才补其它形式(见 runSourceSearch)。
+        //
+        // ⚠️ 2026-10-22 顺序:番号查询时把**带横杠的原生形**排第一 —— 见 SearchSettings.orderedQueryVariants。
+        queryVariants = SearchSettings.orderedQueryVariants(t)
         startedNonFastRound = false
         // 首轮只搜"首页源 + quickSearch 源",其余排到后面按需展开(2026-10-08)。
         // 队列顺序 = 快速源在前、延后源在后(降权源垫底),所以批大小策略能自然形成"先快后全"。
@@ -532,6 +552,14 @@ class SearchViewModel : ViewModel() {
                 " fast=" + fastKeys.size + " deferred=" + deferredKeys.size +
                 " weight-known=" + weightScores.size +
                 " variants=" + queryVariants.size + " threads=" + semaphorePermits
+        )
+        // 变体顺序是本轮"番号带不带横杠结果数不一致"的唯一可观测点:
+        // 只打个数看不出"原生形排在紧凑形之后"这件事,必须把词逐一打出来。
+        // 前缀 echo-searchplan 已在落盘白名单里,无需另行登记。
+        LOG.i(
+            "echo-searchplan variants raw=" + t +
+                " ordered=" + queryVariants.joinToString("|") +
+                " isCode=" + SearchSettings.looksLikeCodeQuery(t)
         )
         if (sources.isEmpty()) {
             running.value = false
@@ -1134,6 +1162,9 @@ class SearchViewModel : ViewModel() {
             existing.copy(
                 videos = sorted,
                 arrivedAt = arrivedAt,
+                // 多站源判定跟着**合并后的全集**走:多次变体回包可能各自只命中一站,
+                // 只看单次回包会把多站源误判成单站源(站名标签突然消失)。
+                isMultiSite = isMultiSiteSource(sorted),
             )
         }
     }

@@ -2,6 +2,7 @@ package com.github.tvbox.osc.util
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -60,5 +61,85 @@ class SearchQueryVariantsTest {
         // JVM 环境没有 android.icu —— 这里就是跑那条降级路径:能出其余变体、不抛异常
         val variants = SearchSettings.queryVariants("夢華錄")
         assertTrue("至少要返回原词", variants.isNotEmpty())
+    }
+
+    // ---------- 番号写法归一(2026-10-22:ymdd370 搜得比 ymdd-370 少) ----------
+
+    @Test
+    fun `番号规范形补横杠并转大写`() {
+        assertEquals("YMDD-370", SearchSettings.canonicalCodeForm("ymdd370"))
+        assertEquals("YMDD-370", SearchSettings.canonicalCodeForm("YMDD370"))
+        assertEquals("YMDD-370", SearchSettings.canonicalCodeForm("ymdd-370"))
+        assertEquals("YMDD-370", SearchSettings.canonicalCodeForm("YMDD-370"))
+        assertEquals("ADN-811", SearchSettings.canonicalCodeForm("adn811"))
+        assertEquals("ADN-811", SearchSettings.canonicalCodeForm("adn_811"))
+    }
+
+    @Test
+    fun `取不到规范形的输入返回 null`() {
+        // 纯数字 / 纯字母 / 中文 / 字母块里夹数字 —— 都不重排,保持调用方原顺序
+        assertNull(SearchSettings.canonicalCodeForm("2024"))
+        assertNull(SearchSettings.canonicalCodeForm("abc"))
+        assertNull(SearchSettings.canonicalCodeForm("三体"))
+        assertNull(SearchSettings.canonicalCodeForm("fc2ppv4925855"))
+        assertNull(SearchSettings.canonicalCodeForm(""))
+        assertNull(SearchSettings.canonicalCodeForm(null))
+    }
+
+    @Test
+    fun `四种番号写法的首个查询词完全相同`() {
+        // 这就是用户要的"四种输入搜到的数量一样多"的**机制保证**:
+        // 交到源站手里的第一个问题一模一样,源站凭什么给出不同的条数?
+        val firsts = listOf("ymdd370", "ymdd-370", "YMDD370", "YMDD-370")
+            .map { SearchSettings.orderedQueryVariants(it).first() }
+            .distinct()
+        assertEquals("四种写法的首词必须一致,实际=$firsts", 1, firsts.size)
+        assertEquals("YMDD-370", firsts.first())
+    }
+
+    @Test
+    fun `粘连形会补出带横杠的候选`() {
+        // 回归:queryVariants 只"去分隔符",不"补分隔符",所以 ymdd370 的变体表里
+        // 原本**没有**带横杠的写法 —— 想补的候选压根不存在,也就谈不上排到第一位。
+        assertTrue(SearchSettings.orderedQueryVariants("ymdd370").contains("YMDD-370"))
+        assertTrue(SearchSettings.orderedQueryVariants("adn811").contains("ADN-811"))
+    }
+
+    @Test
+    fun `原词仍然保留在变体表里`() {
+        // 规范形只抢"第一位",不许把用户的输入挤掉 —— 有些源站恰好只认用户那种写法
+        assertTrue(SearchSettings.orderedQueryVariants("ymdd370").contains("ymdd370"))
+        assertTrue(SearchSettings.orderedQueryVariants("adn811").contains("adn811"))
+    }
+
+    @Test
+    fun `非番号查询顺序一位不动`() {
+        // 普通片名不该被这条改动影响:首词必须还是用户敲的那个
+        assertEquals("功夫女足", SearchSettings.orderedQueryVariants("功夫女足").first())
+        assertEquals("猎鹰 2024 HD", SearchSettings.orderedQueryVariants("猎鹰 2024 HD").first())
+        assertEquals(
+            SearchSettings.queryVariants("功夫女足"),
+            SearchSettings.orderedQueryVariants("功夫女足"),
+        )
+    }
+
+    @Test
+    fun `番号重排后仍不超上限且无重复`() {
+        listOf("ymdd370", "ymdd-370", "YMDD370", "ADN811", "MIAA195", "FC2-PPV-4925855").forEach { k ->
+            val v = SearchSettings.orderedQueryVariants(k)
+            assertTrue("$k 变体数=${v.size}", v.size <= 4)
+            assertEquals("$k 有重复:$v", v.size, v.distinct().size)
+            assertFalse("$k 有空串", v.any { it.isBlank() })
+        }
+    }
+
+    @Test
+    fun `夹数字的字母块番号不被重排`() {
+        // FC2-PPV-4925855:去分隔符后是 fc2ppv4925855,不是"一段字母+一段数字",
+        // 硬补横杠会得到 FC2PPV-4925855,比用户输入的 FC2-PPV-4925855 离站方写法更远
+        assertEquals(
+            listOf("FC2-PPV-4925855", "FC2PPV4925855"),
+            SearchSettings.orderedQueryVariants("FC2-PPV-4925855"),
+        )
     }
 }
