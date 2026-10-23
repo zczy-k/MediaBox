@@ -55,9 +55,22 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.platform.LocalContext
@@ -86,10 +99,12 @@ import com.github.tvbox.osc.ui.navbar.FloatingNavBar
 import com.github.tvbox.osc.ui.navbar.GlassTabItem
 import com.github.tvbox.osc.ui.navbar.NavAxis
 import com.github.tvbox.osc.ui.navbar.NavMetrics
+import com.github.tvbox.osc.ui.components.rememberIsTelevision
 import com.github.tvbox.osc.ui.theme.LiquidGlassState
 import com.github.tvbox.osc.util.AppManager
 import com.github.tvbox.osc.util.BootGuard
 import com.github.tvbox.osc.util.HawkConfig
+import com.github.tvbox.osc.util.LOG
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.github.tvbox.osc.util.KV
@@ -233,6 +248,99 @@ private fun MainContent() {
     // 形态由窗口档决定、玻璃由用户配置决定,两者正交:关掉玻璃是回退到 M3 surface 导航,不是取消竖条
     val railMode = navAxis == NavAxis.Vertical
     val surfaceNavVisible = !liquidGlassEnabled
+
+    // ── TV 遥控器方向键（2026-10-22 真机实测定位）───────────────────────────────
+    // 现象：焦点进了左侧导航栏就再也出不来 —— 按 RIGHT/DOWN 无任何反应，首页和设置页
+    // （几十行可获焦内容）都一样。用户描述为"部分区域根本去不了、无法移动过去选择"。
+    //
+    // 已排除的原因（均有实测）：
+    //  · 不是节点不可获焦 —— TAB（一维遍历）能在导航栏与内容区之间双向走通；
+    //  · 不是没有初始焦点 —— 启动后焦点在导航栏首项，上下移动正常；
+    //  · 不是内容区没有目标 —— 设置页有整列可获焦设置项，同样出不去；
+    //  · 不是内容区内部坏了 —— 内容区内部 DOWN/LEFT/RIGHT 都正常。
+    //
+    // 真正原因：导航栏是 Box 里的**后置浮层**，与内容层平级。二维焦点搜索从导航项向上回溯，
+    // 在"外层 Box 的兄弟"这一级就找不到可用候选（内容层整棵子树铺满全屏、x 从 0 起，
+    // 包围盒与导航栏完全重叠，判不出"在右边/在下边"）⇒ 返回"没有候选"，焦点锁死在导航栏里。
+    // 反向能走通，是因为内容里的首个可获焦元素（顶栏，x≥144）确实落在导航栏右侧。
+    //
+    // 第二个独立问题：内容区里横向键没有候选时会冒泡到 HorizontalPager 的 scrollable，
+    // 把整页翻走（实测：首页按 1 次 RIGHT 直接跳到「历史」页）。
+    //
+    // 修法：两件事都用"显式接管方向键"解决，不再依赖几何搜索的判据 ——
+    //  ① 导航栏按"离开方向"的键 → 直接 requestFocus 到内容区锚点；
+    //  ② 内容区左/右键 → 先在本层做 moveFocus，左边没有候选才回导航栏，并**消费按键**，
+    //     不让它继续冒泡到 pager。
+    // 全部用 isTelevision 兜住：手机/平板的焦点路径与触摸滑动一点不动。
+    val isTelevision = rememberIsTelevision()
+    val focusManager = LocalFocusManager.current
+    val navFocus = remember { FocusRequester() }
+    val contentAnchor = remember { FocusRequester() }
+
+    LaunchedEffect(isTelevision) {
+        if (isTelevision) {
+            // 等导航栏完成挂载。requestFocus 打在未挂载的 requester 上会抛异常，
+            // 那时用户按方向键就是"没反应" —— 所以要重试到成功为止，而不是 try 一次就放弃。
+            repeat(10) {
+                withFrameNanos { }
+                val ok = runCatching { navFocus.requestFocus() }.isSuccess
+                LOG.i("echo-tvfocus initial-nav attempt=$it ok=$ok")
+                if (ok) return@LaunchedEffect
+            }
+        }
+    }
+
+    // 导航栏要"离开"的方向：竖条向右出，横条（手机档）向上出
+    val navExitKey = if (railMode) Key.DirectionRight else Key.DirectionUp
+
+    // 进内容区：把焦点交给内容组的锚点（focusRestorer ⇒ 落到组内首个可获焦元素，
+    // 再进来时回到上次的位置）。失败才退回几何搜索。
+    val enterContent: () -> Unit = {
+        val ok = runCatching { contentAnchor.requestFocus() }.isSuccess ||
+            focusManager.moveFocus(if (railMode) FocusDirection.Right else FocusDirection.Up)
+        LOG.i("echo-tvfocus enter-content ok=$ok")
+    }
+
+    val backToNav: () -> Unit = {
+        val ok = runCatching { navFocus.requestFocus() }.isSuccess
+        LOG.i("echo-tvfocus back-to-nav ok=$ok")
+    }
+
+    val navKeyHandler: (KeyEvent) -> Boolean = { event ->
+        // 不必判断"焦点是否在导航栏内"：onPreviewKeyEvent 只沿焦点路径派发，
+        // 挂在这一层就天然只在焦点属于导航栏子树时被调用。
+        if (!isTelevision || event.type != KeyEventType.KeyDown) {
+            false
+        } else if (event.key == navExitKey) {
+            enterContent()
+            true
+        } else {
+            false
+        }
+    }
+
+    val contentKeyHandler: (KeyEvent) -> Boolean = { event ->
+        if (!isTelevision || event.type != KeyEventType.KeyDown) {
+            false
+        } else {
+            when (event.key) {
+                Key.DirectionRight -> {
+                    val moved = focusManager.moveFocus(FocusDirection.Right)
+                    LOG.i("echo-tvfocus content-right moved=$moved")
+                    true   // 无论是否移动都消费：否则会冒泡给 pager 翻页
+                }
+
+                Key.DirectionLeft -> {
+                    val moved = focusManager.moveFocus(FocusDirection.Left)
+                    if (!moved) backToNav()
+                    LOG.i("echo-tvfocus content-left moved=$moved")
+                    true
+                }
+
+                else -> false
+            }
+        }
+    }
     val layoutDirection = LocalLayoutDirection.current
     val navBarsPadding = WindowInsets.navigationBars.asPaddingValues()
     val navBandExtent = NavMetrics.BAND_EXTENT_DP.dp
@@ -371,30 +479,52 @@ private fun MainContent() {
                             }
                         ),
                 ) {
-                    HorizontalPager(
-                        state = pagerState,
-                        beyondViewportPageCount = 3,
+                    // ── TV：内容区作为一个焦点组，用自己的锚点接住"从导航栏进来"的焦点 ──
+                    // focusRequester + focusGroup + focusRestorer 三件套的效果是：
+                    // 对该组 requestFocus 时，焦点自动落到组内**第一个可获焦的后代**（各页顶栏），
+                    // 不必改任何页面文件，也就碰不到首页/历史/收藏/设置的内部布局。
+                    // focusRestorer 还保证"离开内容区再回来"能回到上次的位置。
+                    // 手机上这些 Modifier 全部不挂，行为与改动前完全一致。
+                    Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .then(if (liquidGlassEnabled) Modifier else Modifier.padding(innerPadding)),
-                    ) { page ->
-                        val pageLifecycleOwner = rememberLifecycleOwner(
-                            maxLifecycle = if (page == pagerState.currentPage) {
-                                Lifecycle.State.RESUMED
-                            } else {
-                                Lifecycle.State.STARTED
-                            }
-                        )
-                        CompositionLocalProvider(LocalLifecycleOwner provides pageLifecycleOwner) {
-                            // 作为"内容内边距"下发,不用容器 padding:页面必须保持全出血,
-                            // 否则背景被缩到导航栏之上,玻璃就取不到内容、退化成一块纯色
-                            when (AppTab.entries[page]) {
-                                // 首页改用全新实现:旧 HomePage / HomeGridLayout 是"标题栏 + 下划线页签 +
-                                // 横滑分区"的旧结构,在它上面调尺寸只会得到"换了颜色的旧界面"
-                                AppTab.HOME -> HomeFeedScreen(homeViewModel, pageContentPadding)
-                                AppTab.HISTORY -> HistoryPage(contentPadding = pageContentPadding)
-                                AppTab.COLLECT -> CollectPage(contentPadding = pageContentPadding)
-                                AppTab.SETTINGS -> SettingsPage(contentPadding = pageContentPadding)
+                            .then(if (isTelevision) Modifier.focusGroup() else Modifier)
+                            .then(
+                                if (isTelevision) {
+                                    Modifier
+                                        .focusRequester(contentAnchor)
+                                        .focusRestorer()
+                                        .onPreviewKeyEvent(contentKeyHandler)
+                                } else {
+                                    Modifier
+                                }
+                            ),
+                    ) {
+                        HorizontalPager(
+                            state = pagerState,
+                            beyondViewportPageCount = 3,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .then(if (liquidGlassEnabled) Modifier else Modifier.padding(innerPadding)),
+                        ) { page ->
+                            val pageLifecycleOwner = rememberLifecycleOwner(
+                                maxLifecycle = if (page == pagerState.currentPage) {
+                                    Lifecycle.State.RESUMED
+                                } else {
+                                    Lifecycle.State.STARTED
+                                }
+                            )
+                            CompositionLocalProvider(LocalLifecycleOwner provides pageLifecycleOwner) {
+                                // 作为"内容内边距"下发,不用容器 padding:页面必须保持全出血,
+                                // 否则背景被缩到导航栏之上,玻璃就取不到内容、退化成一块纯色
+                                when (AppTab.entries[page]) {
+                                    // 首页改用全新实现:旧 HomePage / HomeGridLayout 是"标题栏 + 下划线页签 +
+                                    // 横滑分区"的旧结构,在它上面调尺寸只会得到"换了颜色的旧界面"
+                                    AppTab.HOME -> HomeFeedScreen(homeViewModel, pageContentPadding)
+                                    AppTab.HISTORY -> HistoryPage(contentPadding = pageContentPadding)
+                                    AppTab.COLLECT -> CollectPage(contentPadding = pageContentPadding)
+                                    AppTab.SETTINGS -> SettingsPage(contentPadding = pageContentPadding)
+                                }
                             }
                         }
                     }
@@ -450,7 +580,19 @@ private fun MainContent() {
                             .windowInsetsPadding(WindowInsets.systemBars)
                             .padding(vertical = 16.dp)
                             .padding(start = NavMetrics.MARGIN_DP.dp)
-                    },
+                    }
+                        // TV：导航栏接住初始焦点，并在"离开方向"上显式交给内容区。
+                        // 几何搜索在这一层不可靠（见上方长注释），只能显式接管。
+                        .then(
+                            if (isTelevision) {
+                                Modifier
+                                    .focusRequester(navFocus)
+                                    .focusGroup()
+                                    .onPreviewKeyEvent(navKeyHandler)
+                            } else {
+                                Modifier
+                            }
+                        ),
                 ) {
                     FloatingNavBar(
                         backdrop = liquidBackdrop,
@@ -471,7 +613,21 @@ private fun MainContent() {
                     modifier = Modifier
                         .align(Alignment.CenterStart)
                         .fillMaxHeight()
-                        .windowInsetsPadding(WindowInsets.systemBars),
+                        .windowInsetsPadding(WindowInsets.systemBars)
+                        // TV：导航栏接住初始焦点，并在"离开方向"上显式交给内容区。
+                        // 几何搜索在这一层不可靠（见上方长注释），只能显式接管。
+                        // NavigationRail 内部自带 selectableGroup，这里再包一层并挂 onPreviewKeyEvent，
+                        // 目的是在按键**冒泡到父级之前**就拦下来。
+                        .then(
+                            if (isTelevision) {
+                                Modifier
+                                    .focusRequester(navFocus)
+                                    .focusGroup()
+                                    .onPreviewKeyEvent(navKeyHandler)
+                            } else {
+                                Modifier
+                            }
+                        ),
                     containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                 ) {
                     // ⚠️ 必须显式指定选中色:色板里 secondaryContainer(#F4EFED) 与
